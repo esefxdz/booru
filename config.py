@@ -21,9 +21,6 @@ BOORUS = {
 
 # API Credentials
 CREDENTIALS = {'gelbooru': {'api_key': '', 'user_id': ''}, 'safebooru': {'user_id': '123', 'api_key': '123'}, 'rule34': {'user_id': '123', 'api_key': '123'}}
-    'gelbooru': {'api_key': '', 'user_id': ''},
-    'safebooru': {'api_key': '', 'user_id': ''}
-}
 
 # --- NETWORK SETTINGS ---
 DEFAULT_HEADERS = {

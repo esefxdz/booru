@@ -111,7 +111,7 @@ class BooruGui(ctk.CTk):
             print(f"Fetch Error: {e}")
             self.after(0, lambda: self.status_lbl.configure(text="Error!", text_color="red"))
         finally:
-            self._is_loading = False # Crucial: Unlock the UI
+            self._is_loading = False
             loop.close()
 
     def queue_display(self, pil_img, post, idx):
