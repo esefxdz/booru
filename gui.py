@@ -244,3 +244,4 @@ class BooruGui(ctk.CTk):
 
 if __name__ == "__main__":
     BooruGui().mainloop()
+    #ayyy
