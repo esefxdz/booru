@@ -1,5 +1,4 @@
 import asyncio
-import httpx
 import config
 from downloader import BooruDownloader
 
@@ -26,16 +25,9 @@ async def run_workflow():
     final_folder.mkdir(parents=True, exist_ok=True)
     print(f"Downloading to: {final_folder}")
 
-    # Start Download Engine
-    semaphore = asyncio.Semaphore(config.MAX_CONNECTIONS)
-    
-    async def limited_task(client, post):
-        async with semaphore:
-            await bot.download_task(client, post, final_folder)
-
-    async with httpx.AsyncClient(headers=bot.headers, timeout=config.TIMEOUT) as client:
-        tasks = [limited_task(client, post) for post in posts]
-        await asyncio.gather(*tasks)
+    # Start Download Engine using built-in httpx connection pooling
+    tasks = [bot.download_task(None, post, final_folder) for post in posts]
+    await asyncio.gather(*tasks)
     
     print("\n--- Download Task Complete ---")
 
