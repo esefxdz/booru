@@ -1,7 +1,7 @@
 from pathlib import Path
 
 # --- CORE SETTINGS ---
-ACTIVE_BOORU = "gelbooru"
+ACTIVE_BOORU = "safebooru"
 SEARCH_LIMIT = 50
 TIMEOUT = 30.0
 
@@ -11,16 +11,20 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 # --- BOORU DATABASE ---
 BOORUS = {
+    "safebooru": {"url": "https://safebooru.org",   "api_path": "/index.php", "post_key": None},
     "gelbooru":  {"url": "https://gelbooru.com",     "api_path": "/index.php", "post_key": "post"},
     "rule34":    {"url": "https://api.rule34.xxx",  "api_path": "/index.php", "post_key": None},
-    "safebooru": {"url": "https://safebooru.org",   "api_path": "/index.php", "post_key": None},
     "realbooru": {"url": "https://realbooru.com",   "api_path": "/index.php", "post_key": None},
     "hypnohub":  {"url": "https://hypnohub.net",    "api_path": "/index.php", "post_key": None},
     "xbooru":    {"url": "https://xbooru.com",      "api_path": "/index.php", "post_key": None}
 }
 
 # API Credentials
-CREDENTIALS = {'gelbooru': {'api_key': '', 'user_id': ''}, 'safebooru': {'user_id': '123', 'api_key': '123'}, 'rule34': {'user_id': '123', 'api_key': '123'}}
+CREDENTIALS = {
+    'gelbooru': {'api_key': '', 'user_id': ''},
+    'rule34': {'api_key': '123', 'user_id': '123'},
+    'safebooru': {'api_key': '123', 'user_id': '123'}
+}
 
 # --- NETWORK SETTINGS ---
 DEFAULT_HEADERS = {
@@ -29,6 +33,7 @@ DEFAULT_HEADERS = {
 }
 
 # --- SEARCH & UI ---
+SEARCH_TAGS = "scenery"  # Added to prevent main.py from crashing
 BLACKLIST = ""
 THUMBNAIL_SIZE = 250
 PREVIEW_QUALITY = "sample_url"

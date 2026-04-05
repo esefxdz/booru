@@ -13,13 +13,6 @@ class BooruDownloader:
     def __init__(self):
         self.site_data = config.BOORUS[config.ACTIVE_BOORU]
         self.headers = config.DEFAULT_HEADERS.copy()
-
-        self.client = httpx.AsyncClient(
-            headers=self.headers,
-            timeout=config.TIMEOUT,
-            http2=True
-        )
-
         self.thumb_cache = {}
 
     # ---------------------------------------------------------
@@ -51,7 +44,8 @@ class BooruDownloader:
             params["user_id"] = creds.get("user_id")
 
         try:
-            r = await self.client.get(url, params=params)
+            async with httpx.AsyncClient(headers=self.headers, timeout=config.TIMEOUT, http2=True) as client:
+                r = await client.get(url, params=params)
             if r.status_code != 200:
                 return []
 
@@ -77,53 +71,54 @@ class BooruDownloader:
 
         loop = asyncio.get_running_loop()
 
-        async def fetch_one(post, index):
-            post_id = post.get("id")
+        async with httpx.AsyncClient(headers=self.headers, timeout=config.TIMEOUT, http2=True) as client:
+            async def fetch_one(post, index):
+                post_id = post.get("id")
 
-            if post_id in self.thumb_cache:
-                callback(self.thumb_cache[post_id], post, index)
-                return
-
-            url = (
-                post.get(config.PREVIEW_QUALITY)
-                or post.get("preview_url")
-                or post.get("sample_url")
-                or post.get("file_url")
-            )
-
-            if not url:
-                return
-
-            if url.startswith("//"):
-                url = "https:" + url
-
-            try:
-                r = await self.client.get(url, timeout=5.0)
-                if r.status_code != 200:
+                if post_id in self.thumb_cache:
+                    callback(self.thumb_cache[post_id], post, index)
                     return
 
-                raw = r.content
+                url = (
+                    post.get(config.PREVIEW_QUALITY)
+                    or post.get("preview_url")
+                    or post.get("sample_url")
+                    or post.get("file_url")
+                )
 
-                # decode PIL image in worker thread
-                def decode():
-                    img = Image.open(BytesIO(raw))
-                    img.thumbnail(
-                        (config.THUMBNAIL_SIZE, config.THUMBNAIL_SIZE),
-                        Image.LANCZOS
-                    )
-                    return img
+                if not url:
+                    return
 
-                img = await loop.run_in_executor(None, decode)
+                if url.startswith("//"):
+                    url = "https:" + url
 
-                self.thumb_cache[post_id] = img
-                callback(img, post, index)
+                try:
+                    r = await client.get(url, timeout=5.0)
+                    if r.status_code != 200:
+                        return
 
-            except Exception:
-                pass
+                    raw = r.content
 
-        await asyncio.gather(
-            *(fetch_one(post, i) for i, post in enumerate(posts))
-        )
+                    # decode PIL image in worker thread
+                    def decode():
+                        img = Image.open(BytesIO(raw))
+                        img.thumbnail(
+                            (config.THUMBNAIL_SIZE, config.THUMBNAIL_SIZE),
+                            Image.LANCZOS
+                        )
+                        return img
+
+                    img = await loop.run_in_executor(None, decode)
+
+                    self.thumb_cache[post_id] = img
+                    callback(img, post, index)
+
+                except Exception:
+                    pass
+
+            await asyncio.gather(
+                *(fetch_one(post, i) for i, post in enumerate(posts))
+            )
 
     # ---------------------------------------------------------
     # FULL DOWNLOAD
@@ -142,7 +137,8 @@ class BooruDownloader:
         path = folder / name
 
         try:
-            r = await self.client.get(url, timeout=60)
+            async with httpx.AsyncClient(headers=self.headers, timeout=config.TIMEOUT, http2=True) as temp_client:
+                r = await temp_client.get(url, timeout=60)
             if r.status_code == 200:
                 path.write_bytes(r.content)
         except Exception:
@@ -169,15 +165,21 @@ class BooruDownloader:
         return []
 
     def save_credentials(self, name, uid, api_key):
-        config.CREDENTIALS[name] = {
-            "user_id": uid,
-            "api_key": api_key
-        }
-
-        return self._update_config_file(
-            "CREDENTIALS =",
-            f"CREDENTIALS = {config.CREDENTIALS}\n"
-        )
+        import pprint
+        config.CREDENTIALS[name] = {"user_id": uid, "api_key": api_key}
+        
+        try:
+            lines = open("config.py", encoding="utf-8").read().splitlines()
+            start = next(i for i, l in enumerate(lines) if l.startswith("CREDENTIALS ="))
+            end = next(i for i, l in enumerate(lines) if l.startswith("# --- NETWORK SETTINGS ---"))
+            
+            new_block = f"CREDENTIALS = {pprint.pformat(config.CREDENTIALS, indent=4)}".splitlines()
+            lines[start:end] = new_block + [""]
+            
+            open("config.py", "w", encoding="utf-8").write("\n".join(lines) + "\n")
+            return True
+        except Exception:
+            return False
 
     def _update_config_file(self, prefix, newline):
         try:
@@ -195,7 +197,4 @@ class BooruDownloader:
             return False
 
     async def close(self):
-        try:
-            await self.client.aclose()
-        except Exception:
-            pass
+        pass

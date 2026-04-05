@@ -14,7 +14,7 @@ class BooruGui(ctk.CTk):
         
         # State Control
         self.downloader = BooruDownloader()
-        self.current_page = 0
+        self.current_page = 1
         self.booru_buttons = {}
         self._is_loading = False # LOCK: Prevents double-clicks from breaking the app
 
@@ -28,6 +28,9 @@ class BooruGui(ctk.CTk):
         
         self.select_booru(config.ACTIVE_BOORU)
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Automatically trigger a fetch on boot
+        self.after(100, lambda: self.trigger_fetch(new=True))
 
     def setup_topbar(self):
         self.topbar = ctk.CTkFrame(self, height=70)
@@ -48,7 +51,7 @@ class BooruGui(ctk.CTk):
         nav = ctk.CTkFrame(self.sidebar, fg_color="transparent")
         nav.pack(pady=10)
         ctk.CTkButton(nav, text="<", width=40, command=lambda: self.change_page(-1)).grid(row=0, column=0, padx=5)
-        self.page_lbl = ctk.CTkLabel(nav, text="Pg 0")
+        self.page_lbl = ctk.CTkLabel(nav, text="Pg 1")
         self.page_lbl.grid(row=0, column=1, padx=10)
         ctk.CTkButton(nav, text=">", width=40, command=lambda: self.change_page(1)).grid(row=0, column=2, padx=5)
 
@@ -83,7 +86,7 @@ class BooruGui(ctk.CTk):
     # --- FETCH LOGIC
     def trigger_fetch(self, new=False):
         if self._is_loading: return # Stop spam clicks
-        if new: self.current_page = 0
+        if new: self.current_page = 1
         
         self._is_loading = True
         self.page_lbl.configure(text=f"Pg {self.current_page}")
@@ -100,7 +103,7 @@ class BooruGui(ctk.CTk):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            posts = loop.run_until_complete(self.downloader.get_image_urls(tags, config.SEARCH_LIMIT, self.current_page))
+            posts = loop.run_until_complete(self.downloader.get_image_urls(tags, config.SEARCH_LIMIT, self.current_page - 1))
             if posts:
                 # fetch_previews uses gather(), making page turns instant
                 loop.run_until_complete(self.downloader.fetch_previews(posts, self.queue_display))
@@ -148,7 +151,7 @@ class BooruGui(ctk.CTk):
 
     def change_page(self, delta):
         if not self._is_loading:
-            self.current_page = max(0, self.current_page + delta)
+            self.current_page = max(1, self.current_page + delta)
             self.trigger_fetch()
 
     def update_tags(self, post):
