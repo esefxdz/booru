@@ -1,0 +1,5 @@
+NAME     = "gelbooru"
+URL      = "https://gelbooru.com"
+API_PATH = "/index.php"
+POST_KEY = "post"
+API_TYPE = "gelbooru"

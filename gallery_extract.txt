@@ -1,0 +1,53 @@
+    def queue_display(self, pil_img, post, idx):
+        self.after(0, self.display_item, pil_img, post, idx)
+
+    def display_item(self, pil_img, post, idx):
+        try:
+            f = ctk.CTkFrame(self.gallery, fg_color="transparent")
+            f.grid(row=idx//4, column=idx%4, padx=5, pady=5)
+            
+            ctk_img = ctk.CTkImage(pil_img, size=(settings.THUMBNAIL_SIZE, settings.THUMBNAIL_SIZE))
+            btn = ctk.CTkButton(f, image=ctk_img, text="", fg_color="transparent", 
+                                command=lambda: self.open_preview(post))
+            btn._ref = ctk_img # Prevent garbage collection
+            btn.pack()
+            
+            # Bookmark overlay
+            post_id = str(post.get("id"))
+            
+            def toggle_bm():
+                is_bm = any(str(p.get("id")) == post_id for p in settings.BOOKMARKS)
+                if is_bm:
+                    settings.BOOKMARKS = [p for p in settings.BOOKMARKS if str(p.get("id")) != post_id]
+                    bm_btn.configure(text="☆", text_color="white")
+                else:
+                    settings.BOOKMARKS.append(post)
+                    bm_btn.configure(text="★", text_color="gold")
+                settings.save_bookmarks()
+                
+            is_bm_init = any(str(p.get("id")) == post_id for p in settings.BOOKMARKS)
+            bm_btn = ctk.CTkButton(f, text="★" if is_bm_init else "☆", width=30, height=30,
+                                   fg_color="#222", hover_color="#444", 
+                                   text_color="gold" if is_bm_init else "white",
+                                   font=("Arial", 18), command=toggle_bm)
+            bm_btn.place(relx=0.95, rely=0.05, anchor="ne")
+            
+        except Exception as e:
+            print(f"[gui] display_item error at idx={idx}: {e}")
+
+    # --- SHARED FEATURES ---
+    def _repack_rows(self):
+        for r in self.booru_rows:
+            r.pack_forget()
+        for r in self.booru_rows:
+            r.pack(fill="x", pady=2)
+
+    def open_preview(self, post):
+        self.update_tags(post)
+        UniversalViewer(self, post)
+
+    def save_img(self, post):
+        folder = self.downloader.get_valid_folder(self.search_entry.get())
+        threading.Thread(target=lambda: asyncio.run(self.downloader.download_task(None, post, folder)), daemon=True).start()
+        self.status_lbl.configure(text=f"Saved {post.get('id')}", text_color="cyan")
+
