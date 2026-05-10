@@ -1,203 +1,393 @@
-import customtkinter as ctk
-import settings
+import os
+import ctypes
+from ui import colors
+from PyQt6.QtWidgets import (
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
+    QLineEdit, QPushButton, QFrame, QListWidget, QListWidgetItem, QLabel,
+    QStackedWidget,
+)
+from PyQt6.QtCore import Qt, QSize, QTimer, QThread, pyqtSlot, pyqtSignal, QPoint
+from PyQt6.QtGui import QFont, QColor, QIcon
+
+from ui import settings_view as settings
 import boorus
 from downloader import BooruDownloader
 from controller import AppController
-from ui.sidebar import Sidebar, TagPanel
+from displayers.overlay import MediaOverlay
+from ui.sidebar import Sidebar
 from ui.gallery import Gallery
-from ui.dialogs import APISettingsDialog, GlobalSettingsDialog, BulkDownloadDialog, AddBooruDialog
+from ui.tag_panel import TagPanel
+from ui.search_bar import BooruSearchBar
+from ui.server_bar import ServerBar
+from ui.icons import Icons
+from ui.blacklist_view import BlacklistView
+from ui.favorites_view import FavoritesView
+from ui.settings_view import SettingsView
+from ui.cheat_sheet import CheatSheetView
+from validation import validate_search_term
 
-class BooruGui(ctk.CTk):
+
+
+
+
+class BooruGui(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.title("Booru Engine Pro - Lite")
-        self.geometry("1300x900")
+        self.setWindowTitle(f"Booru Browser v{settings.VERSION}")
 
-        # State Control
-        self.downloader = BooruDownloader()
-        self.controller = AppController(self, self.downloader)
+        self.resize(1400, 900)
         
+        # Set App Icon
+        icon_path = os.path.join(os.path.dirname(__file__), "appico.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            
+        # Apply Windows Dark Title Bar
+        self._apply_dark_title_bar()
+
+        self.downloader = BooruDownloader()
+        self.controller = AppController(self.downloader)
+
         self.current_page = 1
-        self.booru_buttons = {}
-        self._is_loading = False
         self.is_bookmarks_mode = False
         self.bookmark_filter = None
 
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self._build_ui()
 
-        self.setup_topbar()
+        self.controller.status_updated.connect(self._on_status_updated)
+        self.controller.loading_started.connect(self._on_loading_started)
+        self.controller.loading_finished.connect(self._on_loading_finished)
+        self.controller.preview_ready.connect(self.gallery.add_item)
+        self.controller.posts_fetched.connect(self._on_posts_fetched)
+        self.gallery.load_more_requested.connect(self._load_more)
+
+        self.server_bar.rebuild_list()
+        self.trigger_fetch(new=True)
+
+    def open_preview(self, post):
+        self.tag_panel.update_tags(post)
+        if settings.manager.use_legacy_viewer:
+            try:
+                # pyrefly: ignore [missing-import]
+                from displayer import UniversalViewer
+                UniversalViewer(self, post)
+            except ImportError:
+                print("Legacy viewer not found, using overlay.")
+                self.overlay.show_post(post)
+        else:
+            self.overlay.show_post(post)
+
+    # ─────────────────────────────────────────────────────────
+    # UI construction
+    # ─────────────────────────────────────────────────────────
+    def _build_ui(self):
+        root = QWidget()
+        root.setStyleSheet(f"background-color: {colors.MAIN_BG};")
+        self.setCentralWidget(root)
+
+        main_h = QHBoxLayout(root)
+        main_h.setContentsMargins(0, 0, 0, 0)
+        main_h.setSpacing(0)
+
+        # 1. Server Bar (Far Left)
+        self.server_bar = ServerBar(self)
+        main_h.addWidget(self.server_bar)
+
+        # 2. Sidebar (Middle Left)
+        self.sidebar = Sidebar(self)
+        main_h.addWidget(self.sidebar)
+
+        # 3. Main Content (Right)
+        content_v = QVBoxLayout()
+        content_v.setContentsMargins(0, 0, 0, 0)
+        content_v.setSpacing(0)
+        main_h.addLayout(content_v, 1)
+
+        #   3a. Top Bar (Search)
+        self.topbar = QWidget()
+        self.topbar.setFixedHeight(64)
+        self.topbar.setStyleSheet("background-color: transparent;")
+        top_h = QHBoxLayout(self.topbar)
+        top_h.setContentsMargins(24, 16, 24, 0)
+        top_h.setSpacing(12)
+
+        search_wrap = QWidget()
+        search_wrap.setStyleSheet("background: transparent;")
+        search_v = QVBoxLayout(search_wrap)
+        search_v.setContentsMargins(0, 0, 0, 0)
+        search_v.setSpacing(0)
+
+        self.search_bar = BooruSearchBar(self)
+        self.search_bar.searchTriggered.connect(lambda: self.trigger_fetch(new=True))
+        search_v.addWidget(self.search_bar)
+        top_h.addWidget(search_wrap, 1)
+
+        content_v.addWidget(self.topbar)
+
+        #   3c. Main Stack (Gallery vs Blacklist vs etc)
+        self.stack = QStackedWidget()
         
-        self.sidebar = Sidebar(self, self)
-        self.sidebar.grid(row=1, column=0, sticky="nsew")
+        # Gallery Page
+        self.gallery_page = QWidget()
+        gallery_layout = QHBoxLayout(self.gallery_page)
+        gallery_layout.setContentsMargins(0, 0, 0, 0)
+        gallery_layout.setSpacing(0)
         
-        self.gallery = Gallery(self, self)
-        self.gallery.grid(row=1, column=1, padx=10, pady=10, sticky="nsew")
+        self.gallery = Gallery(self)
+        gallery_layout.addWidget(self.gallery, 1)
         
-        self.tag_panel = TagPanel(self, self)
-        self.tag_panel.grid(row=1, column=2, sticky="nsew")
+        self.tag_panel = TagPanel(self)
+        gallery_layout.addWidget(self.tag_panel)
+        
+        self.stack.addWidget(self.gallery_page)
+        
+        # Blacklist Page
+        self.blacklist_view = BlacklistView(self)
+        self.stack.addWidget(self.blacklist_view)
+        
+        # Favorites Page
+        self.favorites_view = FavoritesView(self)
+        self.stack.addWidget(self.favorites_view)
+        
+        # Settings Page
+        self.settings_view = SettingsView(self)
+        self.stack.addWidget(self.settings_view)
+        
+        # Cheat Sheet Page
+        self.cheat_sheet_view = CheatSheetView(self)
+        self.stack.addWidget(self.cheat_sheet_view)
+        
+        content_v.addWidget(self.stack, 1)
 
-        self.rebuild_source_list()
+        # 4. Media Overlay (Top level)
+        self.overlay = MediaOverlay(self)
 
-        self.protocol("WM_DELETE_WINDOW", self.on_closing)
-        self.after(100, lambda: self.trigger_fetch(new=True))
+        # 4.3 Full Keyboard Accessibility - Global Hotkeys
+        self._setup_hotkeys()
 
-    def setup_topbar(self):
-        self.topbar = ctk.CTkFrame(self, height=70)
-        self.topbar.grid(row=0, column=0, columnspan=3, sticky="ew")
-        self.search_entry = ctk.CTkEntry(self.topbar, placeholder_text="Enter tags...", height=40)
-        self.search_entry.pack(side="left", fill="x", expand=True, padx=20, pady=15)
-        self.search_entry.bind("<Return>", lambda e: self.trigger_fetch(new=True))
-        ctk.CTkButton(self.topbar, text="SEARCH", width=120, height=40,
-                      command=lambda: self.trigger_fetch(new=True)).pack(side="right", padx=20)
+    def _setup_hotkeys(self):
+        from PyQt6.QtGui import QKeySequence, QShortcut
 
-    def trigger_fetch(self, new=False):
-        tags = self.search_entry.get()
-        self.controller.trigger_fetch(tags, new)
+        QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self.search_bar.entry.setFocus)
+        QShortcut(QKeySequence("Right"), self).activated.connect(lambda: self.change_page(1))
+        QShortcut(QKeySequence("Left"), self).activated.connect(lambda: self.change_page(-1))
+        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._on_bulk_dl)
 
-    def change_page(self, delta):
-        if self._is_loading: return
-        new_p = self.current_page + delta
-        if new_p < 1: new_p = 1
-        self.current_page = new_p
+    # ─────────────────────────────────────────────────────────
+    # Public helpers
+    # ─────────────────────────────────────────────────────────
+    def mousePressEvent(self, event):
+        # Clear focus when clicking empty space
+        focused = self.focusWidget()
+        if isinstance(focused, QLineEdit):
+            focused.clearFocus()
+        super().mousePressEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'overlay') and self.overlay.isVisible():
+            self.overlay.setGeometry(self.stack.rect())
+
+    def trigger_fetch(self, new: bool = False):
+        if self.is_bookmarks_mode:
+            settings.manager.load_bookmarks()
+        tags = self.search_bar.text()
+        # Validate search terms
+        try:
+            tags = validate_search_term(tags)
+        except Exception as e:
+            self._on_status_updated(f"Invalid search terms: {e}", colors.DANGER)
+            return
+        if new:
+            self.current_page = 1
+        self._update_page_label()
+        self.controller.trigger_fetch(
+            tags, self.current_page, self.is_bookmarks_mode, self.bookmark_filter
+        )
+
+    def _load_more(self):
+        """Called by gallery when user scrolls near bottom (infinite scroll)."""
+        if self.controller._is_loading:
+            return
+        tags = self.search_bar.text()
+        # Validate search terms
+        try:
+            tags = validate_search_term(tags)
+        except Exception as e:
+            self._on_status_updated(f"Invalid search terms: {e}", colors.DANGER)
+            return
+        self.current_page += 1
+        self._update_page_label()
+        self.controller.trigger_fetch_append(
+            tags, self.current_page,
+            self.is_bookmarks_mode, self.bookmark_filter
+        )
+
+    def _update_page_label(self):
+        if settings.manager.infinite_scroll:
+            self.sidebar.set_pagination_visible(False)
+        else:
+            self.sidebar.set_pagination_visible(True)
+            self.sidebar.page_lbl.setText(f"Pg {self.current_page}")
+
+    def change_page(self, delta: int):
+        if self.controller._is_loading:
+            return
+        self.current_page = max(1, self.current_page + delta)
         self.trigger_fetch()
 
-    def add_tag(self, tag):
-        cur = self.search_entry.get()
-        self.search_entry.delete(0, 'end')
-        self.search_entry.insert(0, f"{cur} {tag}".strip())
+    def search_for_tag(self, tag: str):
+        cur = self.search_bar.text()
+        self.search_bar.setText(f"{cur} {tag}".strip())
         self.trigger_fetch(new=True)
 
-    def select_booru(self, name):
+    def toggle_bookmarks_mode(self):
+        self.is_bookmarks_mode = not self.is_bookmarks_mode
+        self.bookmark_filter = None # Bookmarks are universal
+        
         if self.is_bookmarks_mode:
-            self.bookmark_filter = name
-            for n, btn in self.booru_buttons.items():
-                btn.configure(fg_color="#1f538d" if n == name else "#333333")
-            self.trigger_fetch(new=True)
-            return
-
-        settings.ACTIVE_BOORU = name
-        for n, btn in self.booru_buttons.items():
-            btn.configure(fg_color="#1f538d" if n == name else "#333333")
+            self.search_bar.input.setPlaceholderText("Filter bookmarks by booru…")
+            self.tag_panel.set_results_count("Bookmarks")
+        else:
+            self.search_bar.input.setPlaceholderText("Search...")
+            self.tag_panel.set_results_count("0 Results")
+            
+        self.server_bar.update_button_styles() # Refresh to show/hide selection
+        self.show_gallery()
         self.trigger_fetch(new=True)
 
-    def rebuild_source_list(self):
-        for w in self.sidebar.src_scroll.winfo_children():
-            w.destroy()
+    def select_booru(self, name: str):
+        # If in bookmarks mode, exit it and go to the selected booru
+        if self.is_bookmarks_mode:
+            self.is_bookmarks_mode = False
+            self.sidebar.update_active_booru()
         
-        self.booru_rows = []
-        self.booru_buttons = {}
+        settings.manager.active_booru = name
+        settings.manager.save()
+        self.server_bar.update_button_styles()
+        self.sidebar.update_active_booru()
+        self.show_gallery()
+        self.trigger_fetch(new=True)
 
-        items = list(boorus.REGISTRY.keys())
-        if settings.USE_ARROWS_FOR_SORTING:
-            items.sort() # Fallback sorting
-        
-        for idx, name in enumerate(items):
-            row = ctk.CTkFrame(self.sidebar.src_scroll, fg_color="transparent")
-            row.pack(fill="x", pady=2)
-            self.booru_rows.append(row)
+    def add_tag(self, tag: str):
+        self.search_bar.add_tag_chip(tag)
+        self.trigger_fetch(new=True)
 
-            if settings.USE_ARROWS_FOR_SORTING:
-                def move_up(curr=idx):
-                    if curr > 0:
-                        items[curr], items[curr-1] = items[curr-1], items[curr]
-                        # Hacky resort
-                        boorus.REGISTRY = {k: boorus.REGISTRY[k] for k in items}
-                        self.rebuild_source_list()
+    def show_gallery(self):
+        self.stack.setCurrentIndex(0)
+        self.topbar.show()
 
-                def move_down(curr=idx):
-                    if curr < len(items) - 1:
-                        items[curr], items[curr+1] = items[curr+1], items[curr]
-                        boorus.REGISTRY = {k: boorus.REGISTRY[k] for k in items}
-                        self.rebuild_source_list()
+    def show_blacklist(self):
+        self.blacklist_view.load_blacklist()
+        self.stack.setCurrentWidget(self.blacklist_view)
+        # Hide search/header as they don't apply to blacklist editing
+        self.topbar.hide()
 
-                up_btn = ctk.CTkButton(row, text="▲", width=24, fg_color="#444", command=move_up)
-                up_btn.pack(side="left", padx=(2, 0))
-                dn_btn = ctk.CTkButton(row, text="▼", width=24, fg_color="#444", command=move_down)
-                dn_btn.pack(side="left", padx=(2, 0))
+    def show_favorites(self):
+        self.favorites_view.load_favorites()
+        self.stack.setCurrentWidget(self.favorites_view)
+        self.topbar.hide()
 
-            btn = ctk.CTkButton(row, text=name.upper(), 
-                                fg_color="#1f538d" if (name == settings.ACTIVE_BOORU and not getattr(self, 'is_bookmarks_mode', False)) else "#333333",
-                                anchor="w", command=lambda n=name: self.select_booru(n))
-            btn.pack(side="left", fill="x", expand=True)
-            self.booru_buttons[name] = btn
+    def show_settings(self):
+        self.settings_view.load_settings()
+        self.stack.setCurrentWidget(self.settings_view)
+        self.topbar.hide()
 
-            if not settings.USE_ARROWS_FOR_SORTING:
-                # Drag & Drop sorting
-                def on_press(e, r=row):
-                    self._drag_start_y = e.y_root
-                    self._drag_row = r
+    def show_cheat_sheet(self):
+        self.stack.setCurrentWidget(self.cheat_sheet_view)
+        self.topbar.hide()
 
-                def on_motion(e, r=row):
-                    if not hasattr(self, '_drag_row') or self._drag_row != r: return
-                    y_offset = e.y_root - self._drag_start_y
-                    if abs(y_offset) > 20:
-                        idx_in_list = self.booru_rows.index(r)
-                        if y_offset < 0 and idx_in_list > 0:
-                            self.booru_rows[idx_in_list], self.booru_rows[idx_in_list-1] = self.booru_rows[idx_in_list-1], self.booru_rows[idx_in_list]
-                            self._repack_rows()
-                            self._drag_start_y = e.y_root
-                        elif y_offset > 0 and idx_in_list < len(self.booru_rows) - 1:
-                            self.booru_rows[idx_in_list], self.booru_rows[idx_in_list+1] = self.booru_rows[idx_in_list+1], self.booru_rows[idx_in_list]
-                            self._repack_rows()
-                            self._drag_start_y = e.y_root
-
-                def on_release(e):
-                    if hasattr(self, '_drag_row'):
-                        del self._drag_row
-                        new_reg = {}
-                        for r in self.booru_rows:
-                            for k, b in self.booru_buttons.items():
-                                if b.winfo_parent() == str(r):
-                                    new_reg[k] = boorus.REGISTRY[k]
-                                    break
-                        boorus.REGISTRY = new_reg
-
-                # Bind to the internal elements of CTkButton to capture mouse events
-                btn._canvas.bind("<Button-1>", on_press)
-                btn._canvas.bind("<B1-Motion>", on_motion)
-                btn._canvas.bind("<ButtonRelease-1>", on_release)
-                if hasattr(btn, '_text_label') and btn._text_label:
-                    btn._text_label.bind("<Button-1>", on_press)
-                    btn._text_label.bind("<B1-Motion>", on_motion)
-                    btn._text_label.bind("<ButtonRelease-1>", on_release)
-
-            from ui.dialogs import APISettingsDialog
-            ctk.CTkButton(row, text="⚙", width=30, fg_color="#555", 
-                          command=lambda n=name: APISettingsDialog.show(self, n)).pack(side="right", padx=(5,0))
-
-    def _repack_rows(self):
-        for r in self.booru_rows:
-            r.pack_forget()
-        for r in self.booru_rows:
-            r.pack(fill="x", pady=2)
-
-    def remove_booru(self, name):
+    def remove_booru(self, name: str):
         import os
         if name in boorus.REGISTRY:
             del boorus.REGISTRY[name]
+        # Remove from BOORU_ORDER as well
+        if name in settings.manager.booru_order:
+            settings.manager.booru_order.remove(name)
+            settings.manager.save()
         booru_file = os.path.join(os.path.dirname(__file__), "boorus", f"{name}.py")
         if os.path.exists(booru_file):
             try:
                 os.remove(booru_file)
             except Exception as e:
-                print(f"Error deleting booru file: {e}")
-        self.rebuild_source_list()
-        
-        if settings.ACTIVE_BOORU == name:
-            if boorus.REGISTRY:
-                settings.ACTIVE_BOORU = list(boorus.REGISTRY.keys())[0]
-            else:
-                settings.ACTIVE_BOORU = "danbooru"
-            self.downloader.init_adapter()
+                print(f"[gui] Error deleting booru file: {e}")
+        self.server_bar.rebuild_list()
+        if settings.manager.active_booru == name:
+            settings.manager.active_booru = (
+                list(boorus.REGISTRY.keys())[0] if boorus.REGISTRY else "danbooru"
+            )
+            settings.manager.save()
+            self.server_bar.update_button_styles()
+            self.sidebar.update_active_booru()
             self.trigger_fetch(new=True)
 
-    def on_closing(self):
+    # ─────────────────────────────────────────────────────────
+    # Slots
+    # ─────────────────────────────────────────────────────────
+    @pyqtSlot(str, str)
+    def _on_status_updated(self, text: str, color: str):
+        self.sidebar.status_lbl.setText(text)
+        self.sidebar.status_lbl.setStyleSheet(
+            f"color: {color}; font-size: 11px; font-weight: bold;"
+        )
+
+    @pyqtSlot()
+    def _on_loading_started(self):
+        self.gallery.clear()
+        self.tag_panel.clear_tags()
+
+    @pyqtSlot()
+    def _on_loading_finished(self):
+        self.gallery.check_infinite_scroll_fill()
+
+    @pyqtSlot(list)
+    def _on_posts_fetched(self, posts):
+        self.tag_panel.set_results_count(f"{len(posts)} Results")
+        if posts:
+            self.gallery.prepare_skeletons(posts)
+
+    # ─────────────────────────────────────────────────────────
+    # Window close
+    # ─────────────────────────────────────────────────────────
+    def closeEvent(self, event):
         import shutil
-        tmp = settings.DOWNLOAD_DIR / "temp_media"
+        tmp = settings.manager.get_download_dir() / "temp_media"
         if tmp.exists():
             try:
                 shutil.rmtree(tmp)
-            except:
+            except Exception:
                 pass
-        self.destroy()
+        event.accept()
+
+    # ─────────────────────────────────────────────────────────
+    # Modals
+    # ─────────────────────────────────────────────────────────
+    def _on_add_booru(self):
+        from ui.modals import AddBooruDialog
+        AddBooruDialog(self).exec()
+
+    def _on_global_settings(self):
+        from ui.modals import GlobalSettingsDialog
+        GlobalSettingsDialog(self).exec()
+
+    def _on_bulk_dl(self):
+        from ui.modals import BulkDownloadDialog
+        current_tags = self.search_bar.text().strip()
+        BulkDownloadDialog(self, current_tags).exec()
+
+    def _apply_dark_title_bar(self):
+        """Applies Windows Immersive Dark Mode to the title bar."""
+        try:
+            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            # Works on Windows 10 build 18985+ and Windows 11
+            hwnd = int(self.winId())
+            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            rendering_policy = ctypes.c_int(1) # 1 = Enable
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, 
+                DWMWA_USE_IMMERSIVE_DARK_MODE, 
+                ctypes.byref(rendering_policy), 
+                ctypes.sizeof(rendering_policy)
+            )
+        except Exception as e:
+            print(f"[gui] Failed to set dark title bar: {e}")

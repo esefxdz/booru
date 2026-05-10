@@ -6,80 +6,148 @@ from collections import OrderedDict
 from pathlib import Path
 from io import BytesIO
 from PIL import Image
-import settings
+from ui import settings_view as settings
 import boorus
 from adapters import get_adapter
 
-_CACHE_MAX = 300  # Max thumbnails in memory before evicting oldest
+import thumb_cache
+
+
+class CloudflareBlockError(Exception):
+    """Raised when a booru is behind an active Cloudflare challenge wall."""
+    pass
+
+class NetworkManager:
+    _semaphores = {}
+    _last_limit = 0
+
+    @classmethod
+    def get_semaphore(cls):
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+
+        if cls._last_limit != settings.manager.concurrent_downloads:
+            cls._semaphores.clear()
+            cls._last_limit = settings.manager.concurrent_downloads
+
+        if loop not in cls._semaphores:
+            cls._semaphores[loop] = asyncio.Semaphore(settings.manager.concurrent_downloads)
+            
+        return cls._semaphores[loop]
+
+    @classmethod
+    async def fetch(cls, session, url, params=None, headers=None):
+        if settings.manager.use_network_semaphore:
+            async with cls.get_semaphore():
+                return await session.get(url, params=params, headers=headers)
+        else:
+            return await session.get(url, params=params, headers=headers)
 
 
 class BooruDownloader:
 
     def __init__(self):
-        self.site_data = boorus.REGISTRY.get(settings.ACTIVE_BOORU, {})
-        self.headers   = settings.DEFAULT_HEADERS.copy()
-        self.thumb_cache: OrderedDict = OrderedDict()
+        self.headers = settings.DEFAULT_HEADERS.copy()
+
+    @property
+    def site_data(self):
+        return boorus.REGISTRY.get(settings.manager.active_booru, {})
 
     def _get_client_args(self):
         """Returns kwargs (headers, cookies) for httpx client based on active bypass data."""
+        from cloudflare_bypasser import store as cf_store
         headers = self.headers.copy()
-        cookies = {}
-        bypass = settings.BYPASS_DATA.get(settings.ACTIVE_BOORU)
-        if bypass:
-            ua = bypass.get("user_agent")
-            if ua:
-                headers["User-Agent"] = ua
-            if bypass.get("cf_clearance"):
-                cookies["cf_clearance"] = bypass["cf_clearance"]
+        booru = settings.manager.active_booru
+        ua = cf_store.get_user_agent(booru)
+        if ua:
+            headers["User-Agent"] = ua
+        cookies = cf_store.get_cookies(booru)
         return {"headers": headers, "cookies": cookies, "timeout": settings.TIMEOUT, "http2": True}
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    async def _fetch(self, url, params=None, timeout=None):
+        """Unified fetcher — exclusively uses curl-cffi stealth sessions.
+        Mixing httpx and curl-cffi on the same IP flags the session in Cloudflare.
+        """
+        from cloudflare_bypasser import get_session
+        session = get_session(settings.manager.active_booru)
+
+        # Standard headers
+        headers = self.headers.copy()
+        
+        # Add modern browser fetch metadata for maximum stealth
+        if params is not None:
+            # API requests
+            headers.update({
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site",
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+        else:
+            # Image/Thumbnail requests (CDNs require Referer to prevent hotlink 403s)
+            adapter = self._adapter()
+            base_url = adapter.build_url(self.site_data).split("/index.php")[0].split("/posts.json")[0]
+            if not base_url.endswith("/"):
+                base_url += "/"
+                
+            headers.update({
+                "Referer": base_url,
+                "Sec-Fetch-Dest": "image",
+                "Sec-Fetch-Mode": "no-cors",
+                "Sec-Fetch-Site": "cross-site",
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+        
+        return await NetworkManager.fetch(session, url, params=params, headers=headers)
 
     def _adapter(self):
         """Return the correct adapter for the currently active site."""
         return get_adapter(self.site_data.get("api_type", "gelbooru"))
 
+    def _get_adapter_for_post(self, post: dict):
+        """Return the adapter specific to the booru this post came from."""
+        booru = post.get("_booru", settings.manager.active_booru)
+        booru_data = boorus.REGISTRY.get(booru, {})
+        api_type = booru_data.get("api_type", "gelbooru")
+        return get_adapter(api_type)
+
+
     def _cache_get(self, key):
-        if key in self.thumb_cache:
-            self.thumb_cache.move_to_end(key)
-            return self.thumb_cache[key]
-        return None
+        return thumb_cache.get(key)
 
     def _cache_set(self, key, value):
-        self.thumb_cache[key] = value
-        self.thumb_cache.move_to_end(key)
-        if len(self.thumb_cache) > _CACHE_MAX:
-            self.thumb_cache.popitem(last=False)
+        thumb_cache.put(key, value)
 
     # ------------------------------------------------------------------
     # Post field accessors (delegates to adapter)
     # ------------------------------------------------------------------
 
-    def get_file_url(self, post: dict) -> str:
-        url = self._adapter().get_file_url(post)
+    def get_preview_url(self, post: dict) -> str:
+        url = self._get_adapter_for_post(post).get_preview_url(post)
         if url and url.startswith("//"):
             url = "https:" + url
         return url or ""
 
     def get_sample_url(self, post: dict) -> str:
-        url = self._adapter().get_sample_url(post)
+        url = self._get_adapter_for_post(post).get_sample_url(post)
         if url and url.startswith("//"):
             url = "https:" + url
         return url or ""
 
-    def get_preview_url(self, post: dict) -> str:
-        url = self._adapter().get_preview_url(post)
+    def get_file_url(self, post: dict) -> str:
+        url = self._get_adapter_for_post(post).get_file_url(post)
         if url and url.startswith("//"):
             url = "https:" + url
         return url or ""
 
     def get_tag_list(self, post: dict) -> list:
-        return self._adapter().get_tags(post)
-
-    def get_categorized_tags(self, post: dict) -> dict:
-        return self._adapter().get_categorized_tags(post)
+        return self._get_adapter_for_post(post).get_tags(post)
 
     # ------------------------------------------------------------------
     # Posts metadata
@@ -88,23 +156,43 @@ class BooruDownloader:
     async def get_image_urls(self, tags, limit, page=0):
         adapter  = self._adapter()
         url      = adapter.build_url(self.site_data)
-        creds    = settings.CREDENTIALS.get(settings.ACTIVE_BOORU, {})
+        creds    = settings.manager.get_credential(settings.manager.active_booru) or {}
 
         search_tags = tags.strip()
-        if settings.BLACKLIST:
-            blacklist = " ".join(f"-{t}" for t in settings.BLACKLIST.split())
+        if settings.manager.blacklist:
+            blacklist = " ".join(f"-{t}" for t in settings.manager.blacklist.split())
             search_tags = f"{search_tags} {blacklist}"
+            
+        if settings.manager.favorites:
+            favorites = " ".join(settings.manager.favorites.split())
+            search_tags = f"{search_tags} {favorites}"
 
         params = adapter.build_params(search_tags, limit, page, creds)
-        client_args = self._get_client_args()
-
         try:
-            async with httpx.AsyncClient(**client_args) as client:
-                r = await client.get(url, params=params)
+            r = await self._fetch(url, params=params)
+            
+            # If 401 Unauthorized, try again without credentials 
+            # (Danbooru often errors if stale credentials are sent alongside a valid session bypass)
+            if r.status_code == 401 and creds:
+                print(f"[downloader] Auth failed (401), retrying without credentials...")
+                params_no_auth = adapter.build_params(search_tags, limit, page, {})
+                r = await self._fetch(url, params=params_no_auth)
+
+            # Detect Cloudflare challenge walls — surface a clear message
+            if hasattr(r, "is_blocked") and r.is_blocked:
+                booru = settings.manager.active_booru
+                raise CloudflareBlockError(
+                    f"'{booru}' is behind Cloudflare protection. "
+                    f"Right-click the booru icon → Cloudflare tab → "
+                    f"solve the CAPTCHA to unlock access."
+                )
+
             if r.status_code != 200:
                 print(f"[downloader] HTTP {r.status_code} from {url}")
                 return []
             return adapter.parse_response(r, self.site_data)
+        except CloudflareBlockError:
+            raise  # let this propagate to the controller
         except Exception as e:
             print(f"[downloader] get_image_urls error: {e}")
             return []
@@ -116,46 +204,49 @@ class BooruDownloader:
     async def fetch_previews(self, posts, callback):
         loop    = asyncio.get_running_loop()
         adapter = self._adapter()
-        client_args = self._get_client_args()
 
-        async with httpx.AsyncClient(**client_args) as client:
-            async def fetch_one(post, index):
-                post_id = post.get("id")
-                cached  = self._cache_get(post_id)
-                if cached is not None:
-                    callback(cached, post, index)
+        async def fetch_one(post, index):
+            post_id = post.get("id")
+            cached  = self._cache_get(post_id)
+            if cached is not None:
+                callback(cached, post, index)
+                return
+
+            url = adapter.get_preview_url(post)
+            if not url:
+                return
+            if url.startswith("//"):
+                url = "https:" + url
+
+            try:
+                r = await self._fetch(url, timeout=10.0)
+                if r.status_code != 200:
+                    print(f"[downloader] Thumbnail fetch failed: HTTP {r.status_code} for {url}")
                     return
+                raw = r.content if hasattr(r, "content") else r.text.encode()
 
-                url = adapter.get_preview_url(post)
-                if not url:
-                    return
-                if url.startswith("//"):
-                    url = "https:" + url
+                def decode():
+                    img = Image.open(BytesIO(raw))
+                    img.thumbnail((settings.manager.thumbnail_size, settings.manager.thumbnail_size), Image.LANCZOS)
+                    if img.mode in ("RGBA", "LA", "P"):
+                        img = img.convert("RGB")
+                    buf = BytesIO()
+                    img.save(buf, format="JPEG", quality=85)
+                    return buf.getvalue()
 
-                try:
-                    r = await client.get(url, timeout=5.0)
-                    if r.status_code != 200:
-                        return
-                    raw = r.content
+                img_bytes = await loop.run_in_executor(None, decode)
+                self._cache_set(post_id, img_bytes)
+                callback(img_bytes, post, index)
+            except Exception as e:
+                print(f"[downloader] fetch_one error for post {post_id}: {e}")
 
-                    def decode():
-                        img = Image.open(BytesIO(raw))
-                        img.thumbnail((settings.THUMBNAIL_SIZE, settings.THUMBNAIL_SIZE), Image.LANCZOS)
-                        return img
-
-                    img = await loop.run_in_executor(None, decode)
-                    self._cache_set(post_id, img)
-                    callback(img, post, index)
-                except Exception as e:
-                    print(f"[downloader] fetch_one error for post {post_id}: {e}")
-
-            await asyncio.gather(*(fetch_one(post, i) for i, post in enumerate(posts)))
+        await asyncio.gather(*(fetch_one(post, i) for i, post in enumerate(posts)))
 
     # ------------------------------------------------------------------
     # Full download
     # ------------------------------------------------------------------
 
-    async def download_task(self, client, post, folder):
+    async def download_task(self, post, folder):
         url = self.get_file_url(post)
         if not url:
             return
@@ -166,10 +257,12 @@ class BooruDownloader:
         client_args = self._get_client_args()
 
         try:
-            async with httpx.AsyncClient(**client_args) as tmp:
-                r = await tmp.get(url, timeout=60)
+            r = await self._fetch(url, timeout=60)
             if r.status_code == 200:
-                path.write_bytes(r.content)
+                raw = r.content if hasattr(r, "content") else r.text.encode()
+                path.write_bytes(raw)
+            else:
+                print(f"[downloader] Download failed: HTTP {r.status_code} for {url}")
         except Exception as e:
             print(f"[downloader] download_task error for post {post.get('id')}: {e}")
 
@@ -177,17 +270,83 @@ class BooruDownloader:
     # Utils
     # ------------------------------------------------------------------
 
-    def get_valid_folder(self, tags):
-        safe = re.sub(r'[<>:"/\\|?*]', "", tags)
-        safe = safe.replace(" ", "_")[:100] or "unsorted"
-        path = settings.DOWNLOAD_DIR / settings.ACTIVE_BOORU / safe
+    def get_download_folder_for_post(self, post: dict) -> Path:
+        """Smart folder naming for single-post downloads: character/artist/5-tags."""
+        from validation import validate_directory_name
+
+        # --- STATIC DOWNLOAD FEATURE (DEFAULT) ---
+        if not settings.manager.use_smart_folders:
+            path = settings.manager.get_download_dir() / "unsorted"
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        # ------------------------------------------
+
+        booru = post.get("_booru", settings.manager.active_booru)
+        tags = self.get_tag_list(post)
+        adapter = self._get_adapter_for_post(post)
+
+        # Get categorized tags
+        cats = adapter.get_categorized_tags(post)
+
+        # 1. Determine folder name based on preference
+        folder_name = None
+        if settings.manager.download_folder_use_artist_folder:
+            if cats.get("artist"):
+                folder_name = cats["artist"][0]
+            elif cats.get("character"):
+                folder_name = cats["character"][0]
+        else:
+            if cats.get("character"):
+                folder_name = cats["character"][0]
+            elif cats.get("artist"):
+                folder_name = cats["artist"][0]
+
+        # 2. Heuristic fallback for Gelbooru/Safebooru (if categories are empty)
+        if not folder_name and tags:
+            # Join tags but cap the length to avoid Windows path limits
+            tag_join = "_".join(tags[:5])
+            if len(tag_join) > 60:
+                tag_join = tag_join[:57] + "..."
+            folder_name = tag_join
+
+        # 3. Sanitize names
+        try:
+            safe_booru = validate_directory_name(booru)
+        except:
+            safe_booru = "unknown_booru"
+
+        try:
+            safe_name = validate_directory_name(folder_name or "unsorted")
+        except:
+            safe_name = "unsorted"
+
+        # 4. Create and return path
+        try:
+            path = settings.manager.get_download_dir() / safe_booru / safe_name
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        except Exception as e:
+            # Ultimate fallback to booru root if subfolder creation fails
+            print(f"[downloader] Folder creation failed for '{safe_name}': {e}")
+            fallback_path = settings.manager.get_download_dir() / safe_booru
+            fallback_path.mkdir(parents=True, exist_ok=True)
+            return fallback_path
+
+    def get_valid_folder(self, tags: str) -> Path:
+        """For bulk downloads: use exact searched tags as folder name."""
+        from validation import validate_directory_name
+
+        try:
+            safe = validate_directory_name(tags.strip()) or "unsorted"
+        except:
+            safe = "unsorted"
+
+        path = settings.manager.get_download_dir() / settings.manager.active_booru / safe
         path.mkdir(parents=True, exist_ok=True)
         return path
 
     def save_credentials(self, name, uid, api_key):
-        settings.CREDENTIALS[name] = {"user_id": uid, "api_key": api_key}
-        settings.set_credential(name, uid, api_key)
-        settings.save()
+        settings.manager.set_credential(name, uid, api_key)
 
     async def close(self):
         pass

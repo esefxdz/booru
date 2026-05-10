@@ -1,85 +1,150 @@
 import asyncio
-import threading
-import settings
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
+from ui import settings_view as settings
 import boorus
 
-class AppController:
-    def __init__(self, main_app, downloader):
-        self.main_app = main_app
+class FetchThread(QThread):
+    finished = pyqtSignal(list, bool) # posts, is_bookmarks_mode
+    error = pyqtSignal(str)
+    preview_ready = pyqtSignal(bytes, dict, int)  # safe JPEG bytes, post, idx
+    
+    def __init__(self, downloader, tags, current_page, is_bookmarks_mode, bookmark_filter):
+        super().__init__()
         self.downloader = downloader
+        self.tags = tags
+        self.current_page = current_page
+        self.is_bookmarks_mode = is_bookmarks_mode
+        self.bookmark_filter = bookmark_filter
 
-    def trigger_fetch(self, tags, is_new=False):
-        if self.main_app._is_loading: return
-        self.main_app._is_loading = True
-
-        if is_new:
-            self.main_app.current_page = 1
-
-        self.main_app.sidebar.page_lbl.configure(text=f"Pg {self.main_app.current_page}")
-        self.main_app.sidebar.status_lbl.configure(text="Loading...", text_color="yellow")
-        for w in self.main_app.gallery.winfo_children(): w.destroy()
-        self.main_app.tag_panel.container.winfo_children() # Just to be safe, could clear tags too
-
-        threading.Thread(target=self.run_async_fetch, args=(tags,), daemon=True).start()
-
-    def run_async_fetch(self, tags):
+    def run(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            if getattr(self.main_app, 'is_bookmarks_mode', False):
-                all_bms = settings.BOOKMARKS
-                if getattr(self.main_app, 'bookmark_filter', None):
-                    all_bms = [p for p in all_bms if p.get("_booru") == self.main_app.bookmark_filter]
+            if self.is_bookmarks_mode:
+                all_bms = settings.manager.bookmarks
+                if self.bookmark_filter:
+                    all_bms = [p for p in all_bms if p.get("_booru") == self.bookmark_filter]
 
-                if tags.strip():
-                    search_tags = tags.split()
+                if self.tags.strip():
+                    search_tags = self.tags.split()
                     all_bms = [p for p in all_bms if all(t in p.get('tags', []) for t in search_tags)]
 
-                start = (self.main_app.current_page - 1) * settings.SEARCH_LIMIT
+                start = (self.current_page - 1) * settings.SEARCH_LIMIT
                 end = start + settings.SEARCH_LIMIT
                 posts = all_bms[start:end]
             else:
-                posts = loop.run_until_complete(self.downloader.get_image_urls(tags, settings.SEARCH_LIMIT, self.main_app.current_page - 1))
-                for p in posts: p["_booru"] = settings.ACTIVE_BOORU
+                posts = loop.run_until_complete(self.downloader.get_image_urls(self.tags, settings.SEARCH_LIMIT, self.current_page - 1))
+                for p in posts: p["_booru"] = settings.manager.active_booru
 
             if posts:
-                loop.run_until_complete(self.downloader.fetch_previews(posts, self.main_app.gallery.queue_display))
-                self.main_app.after(0, lambda: self.main_app.sidebar.status_lbl.configure(text="Ready", text_color="green"))
-            else:
-                self.main_app.after(0, lambda: self.main_app.sidebar.status_lbl.configure(text="No Results", text_color="orange"))
+                def on_preview(pil_img, post, idx):
+                    self.preview_ready.emit(pil_img, post, idx)
+                loop.run_until_complete(self.downloader.fetch_previews(posts, on_preview))
+
+            self.finished.emit(posts, self.is_bookmarks_mode)
         except Exception as e:
-            print(f"Fetch Error: {e}")
-            self.main_app.after(0, lambda: self.main_app.sidebar.status_lbl.configure(text="Error!", text_color="red"))
+            # Surface Cloudflare blocks as a clear, actionable message
+            from downloader import CloudflareBlockError
+            if isinstance(e, CloudflareBlockError):
+                self.error.emit(str(e))
+            else:
+                self.error.emit(str(e))
         finally:
-            self.main_app._is_loading = False
             loop.close()
 
-    def bulk_download(self, tags, limit):
-        threading.Thread(target=self._bulk_proc, args=(tags, limit), daemon=True).start()
-
-    def _bulk_proc(self, tags, limit):
+class BulkThread(QThread):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(int)
+    error = pyqtSignal(str)
+    
+    def __init__(self, downloader, tags, limit):
+        super().__init__()
+        self.downloader = downloader
+        self.tags = tags
+        self.limit = limit
+        
+    def run(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            self.main_app.after(0, lambda: self.main_app.sidebar.status_lbl.configure(text="Fetching metadata...", text_color="yellow"))
-            posts = loop.run_until_complete(self.downloader.get_image_urls(tags, limit, 0))
+            self.progress.emit("Fetching metadata...")
+            posts = loop.run_until_complete(self.downloader.get_image_urls(self.tags, self.limit, 0))
             if not posts:
-                self.main_app.after(0, lambda: self.main_app.sidebar.status_lbl.configure(text="No posts found.", text_color="orange"))
+                self.finished.emit(0)
                 return
             
-            folder = self.downloader.get_valid_folder(tags)
-            self.main_app.after(0, lambda: self.main_app.sidebar.status_lbl.configure(text=f"Downloading {len(posts)} items...", text_color="yellow"))
+            self.progress.emit(f"Downloading {len(posts)} items...")
             
             async def dls():
-                tasks = []
-                for p in posts:
-                    tasks.append(self.downloader.download_task(None, p, folder))
+                folder = self.downloader.get_valid_folder(self.tags)
+                tasks = [self.downloader.download_task(p, folder) for p in posts]
                 await asyncio.gather(*tasks)
 
             loop.run_until_complete(dls())
-            self.main_app.after(0, lambda: self.main_app.sidebar.status_lbl.configure(text=f"Bulk downloaded {len(posts)} items!", text_color="green"))
+            self.finished.emit(len(posts))
         except Exception as e:
-            print(f"[bulk] error: {e}")
-            self.main_app.after(0, lambda: self.main_app.sidebar.status_lbl.configure(text="Bulk Error!", text_color="red"))
+            self.error.emit(str(e))
         finally:
             loop.close()
+
+
+class AppController(QObject):
+    status_updated = pyqtSignal(str, str)
+    posts_fetched = pyqtSignal(list)
+    loading_started = pyqtSignal()         # clears gallery
+    loading_started_append = pyqtSignal()  # does NOT clear gallery
+    loading_finished = pyqtSignal()
+    preview_ready = pyqtSignal(bytes, dict, int)
+
+    def __init__(self, downloader):
+        super().__init__()
+        self.downloader = downloader
+        self._is_loading = False
+
+    def trigger_fetch(self, tags, current_page, is_bookmarks_mode, bookmark_filter):
+        if self._is_loading: return
+        self._is_loading = True
+        self.loading_started.emit()
+        self.status_updated.emit("Loading...", "yellow")
+        self.thread = FetchThread(self.downloader, tags, current_page, is_bookmarks_mode, bookmark_filter)
+        self.thread.finished.connect(self._on_fetch_finished)
+        self.thread.error.connect(self._on_fetch_error)
+        self.thread.preview_ready.connect(self.preview_ready.emit)
+        self.thread.start()
+
+    def trigger_fetch_append(self, tags, current_page, is_bookmarks_mode, bookmark_filter):
+        """Like trigger_fetch but doesn't clear the gallery (infinite scroll)."""
+        if self._is_loading: return
+        self._is_loading = True
+        self.loading_started_append.emit()
+        self.status_updated.emit("Loading more…", "yellow")
+        self.thread = FetchThread(self.downloader, tags, current_page, is_bookmarks_mode, bookmark_filter)
+        self.thread.finished.connect(self._on_fetch_finished)
+        self.thread.error.connect(self._on_fetch_error)
+        self.thread.preview_ready.connect(self.preview_ready.emit)
+        self.thread.start()
+
+    @pyqtSlot(list, bool)
+    def _on_fetch_finished(self, posts, is_bookmarks_mode):
+        self._is_loading = False
+        self.loading_finished.emit()
+        if posts:
+            self.status_updated.emit("Ready", "green")
+            self.posts_fetched.emit(posts)
+        else:
+            self.status_updated.emit("No Results", "orange")
+            self.posts_fetched.emit([])
+
+    @pyqtSlot(str)
+    def _on_fetch_error(self, error_msg):
+        self._is_loading = False
+        self.loading_finished.emit()
+        self.status_updated.emit("Error!", "red")
+        print(f"Fetch Error: {error_msg}")
+
+    def bulk_download(self, tags, limit):
+        self.bulk_thread = BulkThread(self.downloader, tags, limit)
+        self.bulk_thread.progress.connect(lambda msg: self.status_updated.emit(msg, "yellow"))
+        self.bulk_thread.finished.connect(lambda count: self.status_updated.emit(f"Bulk downloaded {count} items!" if count > 0 else "No posts found.", "green" if count > 0 else "orange"))
+        self.bulk_thread.error.connect(lambda err: self.status_updated.emit("Bulk Error!", "red"))
+        self.bulk_thread.start()

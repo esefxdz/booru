@@ -9,6 +9,9 @@ class Shimmie2Adapter(BaseAdapter):
     api_type = "shimmie2"
     label = "Shimmie2 (older booru engine)"
 
+    def get_pagination_params(self, page_index: int, limit: int) -> dict:
+        return {"page": page_index}  # Shimmie2 is 0-indexed
+
     def build_url(self, site_data: dict) -> str:
         return f"{site_data['url']}/api/json/index"
 
@@ -16,8 +19,8 @@ class Shimmie2Adapter(BaseAdapter):
         params = {
             "search": tags if tags else "*",
             "limit": limit,
-            "page": page,
         }
+        params.update(self.get_pagination_params(page, limit))
         return params
 
     def parse_response(self, r, site_data: dict) -> list:
@@ -55,3 +58,30 @@ class Shimmie2Adapter(BaseAdapter):
         elif isinstance(tags, list):
             return tags
         return []
+
+    # ##################################################################
+    # Used by the downloader to determine the smart folder name (artist/character/etc)
+    def get_categorized_tags(self, post: dict) -> dict:
+        return {
+            "artist": [],
+            "character": [],
+            "copyright": [],
+            "meta": [],
+            "general": self.get_tags(post),
+        }
+    # ##################################################################
+
+    def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
+        base = site_data.get("url", "")
+        return [f"{base}/api/internal/autocomplete?s={prefix}"]
+
+    def parse_tag_autocomplete(self, data) -> list[dict]:
+        if not isinstance(data, list):
+            return []
+        res = []
+        for t in data:
+            if isinstance(t, str):
+                res.append({"name": t, "type": "general", "count": 0})
+            elif isinstance(t, dict) and "name" in t:
+                res.append({"name": t["name"], "type": "general", "count": t.get("count", 0)})
+        return res

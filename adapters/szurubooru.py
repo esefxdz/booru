@@ -7,6 +7,7 @@ from .base import BaseAdapter
 class SzurubooruAdapter(BaseAdapter):
     api_type = "szurubooru"
     label = "Szurubooru"
+    pagination_style = "offset"
 
     def build_url(self, site_data: dict) -> str:
         return f"{site_data['url']}/api/posts"
@@ -15,8 +16,8 @@ class SzurubooruAdapter(BaseAdapter):
         params = {
             "query": tags if tags else "*",
             "limit": limit,
-            "offset": page * limit,
         }
+        params.update(self.get_pagination_params(page, limit))
         return params
 
     def parse_response(self, r, site_data: dict) -> list:
@@ -56,3 +57,45 @@ class SzurubooruAdapter(BaseAdapter):
                     result.append(tag)
             return result
         return []
+
+    # ##################################################################
+    # Used by the downloader to determine the smart folder name (artist/character/etc)
+    def get_categorized_tags(self, post: dict) -> dict:
+        tags = post.get("tags", [])
+        res = {"artist": [], "character": [], "copyright": [], "meta": [], "general": []}
+        if not isinstance(tags, list):
+            return res
+            
+        for t in tags:
+            if not isinstance(t, dict): continue
+            names = t.get("names", [])
+            if not names: continue
+            name = names[0]
+            cat = t.get("category", "general")
+            
+            if cat in res:
+                res[cat].append(name)
+            else:
+                res["general"].append(name)
+        return res
+    # ##################################################################
+
+    def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
+        base = site_data.get("url", "")
+        return [f"{base}/api/tags?query={prefix}*"]
+
+    def parse_tag_autocomplete(self, data) -> list[dict]:
+        if not isinstance(data, dict):
+            return []
+        results = data.get("results", [])
+        res = []
+        for t in results:
+            if not isinstance(t, dict): continue
+            names = t.get("names", [])
+            if not names: continue
+            res.append({
+                "name": names[0],
+                "type": t.get("category", "general"),
+                "count": t.get("usages", 0)
+            })
+        return res

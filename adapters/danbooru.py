@@ -13,7 +13,8 @@ class DanbooruAdapter(BaseAdapter):
         return f"{site_data['url']}/posts.json"
 
     def build_params(self, tags: str, limit: int, page: int, creds: dict) -> dict:
-        params = {"tags": tags, "limit": limit, "page": page + 1}
+        params = {"tags": tags, "limit": limit}
+        params.update(self.get_pagination_params(page, limit))
         if creds.get("api_key") and creds.get("user_id"):
             params["login"] = creds["user_id"]
             params["api_key"] = creds["api_key"]
@@ -42,12 +43,49 @@ class DanbooruAdapter(BaseAdapter):
                 return val.replace(",", " ").split()
         return []
 
+    # ##################################################################
+    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         def split(field):
             return post.get(field, "").replace(",", " ").split()
         return {
             "artist": split("tag_string_artist"),
-            "copyright": split("tag_string_copyright") + split("tag_string_character"),
+            "character": split("tag_string_character"),
+            "copyright": split("tag_string_copyright"),
             "meta": split("tag_string_meta"),
             "general": split("tag_string_general"),
         }
+    # ##################################################################
+
+    def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
+        base = site_data.get("url", "")
+        return [
+            f"{base}/autocomplete.json?search[query]={prefix}&search[type]=tag_query&limit=15",
+            f"{base}/tags.json?search[name_matches]={prefix}*&limit=15"
+        ]
+
+    def parse_tag_autocomplete(self, data) -> list[dict]:
+        TYPE_MAP = {0: "general", 1: "artist", 3: "copyright", 4: "character", 5: "meta"}
+        if not isinstance(data, list):
+            return []
+            
+        res = []
+        for t in data:
+            if "type" in t and "value" in t:
+                # Format 1: autocomplete.json -> {"type":"tag-word","value":"1girl","category":0,"post_count":7830183}
+                cat = t.get("category", 0)
+                if "tag" in t and isinstance(t["tag"], dict):
+                    cat = t["tag"].get("category", cat)
+                res.append({
+                    "name": t["value"],
+                    "type": TYPE_MAP.get(cat, "general"),
+                    "count": t.get("post_count", 0)
+                })
+            elif "name" in t:
+                # Format 2: tags.json fallback
+                res.append({
+                    "name": t["name"],
+                    "type": TYPE_MAP.get(t.get("category", 0), "general"),
+                    "count": t.get("post_count", 0)
+                })
+        return res

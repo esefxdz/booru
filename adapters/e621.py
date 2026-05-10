@@ -13,7 +13,8 @@ class E621Adapter(BaseAdapter):
         return f"{site_data['url']}/posts.json"
 
     def build_params(self, tags: str, limit: int, page: int, creds: dict) -> dict:
-        params = {"tags": tags, "limit": limit, "page": page + 1}
+        params = {"tags": tags, "limit": limit}
+        params.update(self.get_pagination_params(page, limit))
         if creds.get("api_key") and creds.get("user_id"):
             params["login"] = creds["user_id"]
             params["api_key"] = creds["api_key"]
@@ -51,13 +52,30 @@ class E621Adapter(BaseAdapter):
             return result
         return []
 
+    # ##################################################################
+    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         tag_obj = post.get("tags", {})
         if not isinstance(tag_obj, dict):
             return {"artist": [], "copyright": [], "meta": [], "general": []}
         return {
             "artist": tag_obj.get("artist", []),
-            "copyright": tag_obj.get("copyright", []) + tag_obj.get("character", []),
+            "copyright": tag_obj.get("copyright", []),
+            "character": tag_obj.get("character", []),
             "meta": tag_obj.get("meta", []),
             "general": tag_obj.get("general", []) + tag_obj.get("species", []),
         }
+    # ##################################################################
+
+    def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
+        base = site_data.get("url", "")
+        return [f"{base}/tags.json?search[name_matches]={prefix}*&limit=20&search[order]=count"]
+
+    def parse_tag_autocomplete(self, data) -> list[dict]:
+        TYPE_MAP = {0: "general", 1: "artist", 3: "copyright", 4: "character", 5: "general", 7: "meta"}
+        if not isinstance(data, list):
+            return []
+        return [
+            {"name": t.get("name", ""), "type": TYPE_MAP.get(t.get("category", 0), "general"), "count": t.get("post_count", 0)}
+            for t in data if t.get("name")
+        ]
