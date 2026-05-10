@@ -2,15 +2,16 @@ import os
 import json
 import asyncio
 import httpx
+import threading
 from pathlib import Path
-import settings
+from ui import settings_view as settings
 
 # Danbooru categories: 0=general, 1=artist, 3=copyright, 4=character, 5=meta
 CAT_MAP = {
     0: "general",
     1: "artist",
     3: "copyright",
-    4: "copyright",
+    4: "character",
     5: "meta"
 }
 
@@ -19,7 +20,7 @@ class TagCategorizer:
         self.cache_file = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "tag_cache.json"
         self.cache = {}
         self._load_cache()
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
         
     def _load_cache(self):
         if self.cache_file.exists():
@@ -42,13 +43,13 @@ class TagCategorizer:
         t = tag.lower()
         if t.endswith("_(artist)"): return "artist"
         if t.endswith("_(copyright)"): return "copyright"
-        if t.endswith("_(character)"): return "copyright"
+        if t.endswith("_(character)"): return "character"
         if t in ["highres", "absurdres", "translated", "commentary_request", "commission"]: return "meta"
         return None
 
     async def categorize_tags(self, tags: list) -> dict:
         """Returns a dict of categorized tags: {'artist': [...], 'copyright': [...], ...}"""
-        result = {"artist": [], "copyright": [], "meta": [], "general": []}
+        result = {"artist": [], "character": [], "copyright": [], "meta": [], "general": []}
         unknown_tags = []
 
         # 1. Check local cache and heuristics
@@ -65,19 +66,22 @@ class TagCategorizer:
 
         # 2. Fetch unknown tags from Danbooru (in chunks of 100 to avoid long URLs)
         if unknown_tags:
-            async with self._lock:
-                # Double-check cache in case another task fetched it while waiting
+            # We don't use an async lock here because it causes issues across different event loops
+            # in multiple threads. We just fetch and then update the cache.
+            # Redundant fetches for the same tags in near-simultaneous calls are acceptable.
+            tags_to_fetch = []
+            with self._lock:
                 tags_to_fetch = [t for t in unknown_tags if t not in self.cache]
-                
-                if tags_to_fetch:
-                    await self._fetch_from_danbooru(tags_to_fetch)
-                
-                # Re-evaluate previously unknown tags
+            
+            if tags_to_fetch:
+                await self._fetch_from_danbooru(tags_to_fetch)
+            
+            with self._lock:
+                # Re-evaluate previously unknown tags using now-populated cache
                 for tag in unknown_tags:
-                    cat = self.cache.get(tag, "general") # Default to general if API doesn't know it
-                    self.cache[tag] = cat # Save the default so we don't query it again
+                    cat = self.cache.get(tag, "general") 
+                    self.cache[tag] = cat 
                     result[cat].append(tag)
-                    
                 self._save_cache()
 
         return result
@@ -93,11 +97,12 @@ class TagCategorizer:
                     r = await client.get(url, headers={"User-Agent": "BooruBrowser/1.0"})
                     if r.status_code == 200:
                         data = r.json()
-                        for item in data:
-                            name = item.get("name")
-                            cat_id = item.get("category", 0)
-                            cat_name = CAT_MAP.get(cat_id, "general")
-                            self.cache[name] = cat_name
+                        with self._lock:
+                            for item in data:
+                                name = item.get("name")
+                                cat_id = item.get("category", 0)
+                                cat_name = CAT_MAP.get(cat_id, "general")
+                                self.cache[name] = cat_name
                 except Exception as e:
                     print(f"[tag_categorizer] Danbooru API error: {e}")
 

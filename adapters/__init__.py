@@ -13,6 +13,7 @@ Supported booru types:
   - HTML Scraper: fallback for unknown sites
 """
 
+from .base import BaseAdapter, NormalizedPost
 from .gelbooru import GelbooruAdapter
 from .danbooru import DanbooruAdapter
 from .moebooru import MoebooruAdapter
@@ -59,6 +60,8 @@ def adapter_choices() -> list:
 
 
 __all__ = [
+    "BaseAdapter",
+    "NormalizedPost",
     "GelbooruAdapter",
     "DanbooruAdapter",
     "MoebooruAdapter",
@@ -72,3 +75,4 @@ __all__ = [
     "get_adapter",
     "adapter_choices",
 ]
+

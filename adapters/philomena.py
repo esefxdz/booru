@@ -16,8 +16,8 @@ class PhilomenaAdapter(BaseAdapter):
         params = {
             "q": tags if tags else "*",
             "per_page": limit,
-            "page": page + 1,
         }
+        params.update(self.get_pagination_params(page, limit))
         if creds.get("api_key"):
             params["key"] = creds["api_key"]
         return params
@@ -61,3 +61,41 @@ class PhilomenaAdapter(BaseAdapter):
                     result.append(tag)
             return result
         return []
+
+    # ##################################################################
+    # Used by the downloader to determine the smart folder name (artist/character/etc)
+    def get_categorized_tags(self, post: dict) -> dict:
+        tags = self.get_tags(post)
+        cats = {"artist": [], "character": [], "copyright": [], "meta": [], "general": []}
+        for t in tags:
+            if t.startswith("artist:"):
+                cats["artist"].append(t.replace("artist:", "").strip())
+            elif t.startswith("character:"):
+                cats["character"].append(t.replace("character:", "").strip())
+            else:
+                cats["general"].append(t)
+        return cats
+    # ##################################################################
+
+
+    def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
+        base = site_data.get("url", "")
+        return [f"{base}/api/v1/json/search/tags?q={prefix}*"]
+
+    def parse_tag_autocomplete(self, data) -> list[dict]:
+        if isinstance(data, dict):
+            tags = data.get("tags", [])
+        else:
+            tags = data if isinstance(data, list) else []
+            
+        res = []
+        for t in tags:
+            if not isinstance(t, dict): continue
+            category = t.get("category", "general")
+            # Convert philomena specific categories if needed, but they use text like "character"
+            res.append({
+                "name": t.get("name", ""),
+                "type": category,
+                "count": t.get("images", 0)
+            })
+        return res
