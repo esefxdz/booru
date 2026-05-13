@@ -11,6 +11,7 @@ from displayers.actions import ActionButtons
 from displayers.comments import CommentsSection
 from displayers.post_displayer_tags import ClickableTagsDropdown
 from ui import colors
+from PyQt6.QtCore import Qt
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -51,11 +52,20 @@ class OverlaySidebar(QWidget):
         self.actions = ActionButtons(self)
         self.content_layout.addWidget(self.actions)
         
-        self.comments = CommentsSection(self)
-        self.content_layout.addWidget(self.comments, 1) # Comments take up remaining space
+        # Splitter for scalable sections
+        from PyQt6.QtWidgets import QSplitter
+        
+        self.splitter = QSplitter(Qt.Orientation.Vertical)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.setStyleSheet(f"QSplitter::handle {{ background-color: transparent; height: 12px; }}")
         
         self.tags = ClickableTagsDropdown(self)
-        self.content_layout.addWidget(self.tags)
+        self.splitter.addWidget(self.tags)
+        
+        self.comments = CommentsSection(self)
+        self.splitter.addWidget(self.comments)
+        
+        self.content_layout.addWidget(self.splitter, 1) # Splitter takes up remaining space
         
         self.scroll.setWidget(self.content_widget)
         self._main_layout.addWidget(self.scroll)

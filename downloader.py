@@ -271,7 +271,15 @@ class BooruDownloader:
     # ------------------------------------------------------------------
 
     def get_download_folder_for_post(self, post: dict) -> Path:
-        """Smart folder naming for single-post downloads: character/artist/5-tags."""
+        """Smart folder naming for single-post downloads: character/artist/5-tags.
+
+        Uses a two-pass strategy:
+          1. Ask the adapter for pre-categorized tags (works for Danbooru, e621)
+          2. If artist/character are empty, fall back to TagCategorizer which
+             queries Danbooru's tag DB + heuristics + local cache — this
+             covers Gelbooru, Moebooru, Shimmie2, and every other booru
+             whose API doesn't expose tag categories.
+        """
         from validation import validate_directory_name
 
         # --- STATIC DOWNLOAD FEATURE (DEFAULT) ---
@@ -285,25 +293,18 @@ class BooruDownloader:
         tags = self.get_tag_list(post)
         adapter = self._get_adapter_for_post(post)
 
-        # Get categorized tags
-        cats = adapter.get_categorized_tags(post)
+        try:
+            cats = self._categorize_post_tags(adapter, post, tags)
+        except Exception as e:
+            print(f"[downloader] Tag categorization failed: {e}")
+            cats = {"artist": [], "character": [], "copyright": [], "meta": [], "general": tags}
 
         # 1. Determine folder name based on preference
-        folder_name = None
-        if settings.manager.download_folder_use_artist_folder:
-            if cats.get("artist"):
-                folder_name = cats["artist"][0]
-            elif cats.get("character"):
-                folder_name = cats["character"][0]
-        else:
-            if cats.get("character"):
-                folder_name = cats["character"][0]
-            elif cats.get("artist"):
-                folder_name = cats["artist"][0]
+        folder_name = self._pick_folder_name(cats)
 
-        # 2. Heuristic fallback for Gelbooru/Safebooru (if categories are empty)
+        # 2. Heuristic fallback (if categories are still empty)
         if not folder_name and tags:
-            # Join tags but cap the length to avoid Windows path limits
+            # Use first 5 tags, capped at 60 chars to stay within Windows path limits
             tag_join = "_".join(tags[:5])
             if len(tag_join) > 60:
                 tag_join = tag_join[:57] + "..."
@@ -312,12 +313,12 @@ class BooruDownloader:
         # 3. Sanitize names
         try:
             safe_booru = validate_directory_name(booru)
-        except:
+        except Exception:
             safe_booru = "unknown_booru"
 
         try:
             safe_name = validate_directory_name(folder_name or "unsorted")
-        except:
+        except Exception:
             safe_name = "unsorted"
 
         # 4. Create and return path
@@ -331,6 +332,76 @@ class BooruDownloader:
             fallback_path = settings.manager.get_download_dir() / safe_booru
             fallback_path.mkdir(parents=True, exist_ok=True)
             return fallback_path
+
+    def _categorize_post_tags(self, adapter, post: dict, tags: list) -> dict:
+        """Get categorized tags — adapter first, then TagCategorizer fallback.
+
+        The adapter path works instantly for Danbooru and e621 (their APIs
+        return pre-sorted ``tag_string_artist`` / ``tags.artist`` fields).
+
+        For every other booru the adapter returns empty artist/character
+        lists, so we fall back to the TagCategorizer which queries
+        Danbooru's tag database, applies heuristics (``_artist`` /
+        ``_character`` suffixes), and caches results locally.
+        """
+        cats = adapter.get_categorized_tags(post)
+
+        # If the adapter already gave us artist or character data, trust it
+        if cats.get("artist") or cats.get("character"):
+            return cats
+
+        # Fallback: use TagCategorizer (Danbooru API + heuristic + cache)
+        if not tags:
+            return cats
+
+        try:
+            from tag_categorizer import categorizer
+            import asyncio
+
+            # TagCategorizer.categorize_tags is async — run it safely
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                # We're inside an event loop already (Qt thread) — run
+                # the categorizer in a thread pool to avoid blocking
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        asyncio.run,
+                        categorizer.categorize_tags(tags),
+                    )
+                    cats = future.result(timeout=10)
+            else:
+                cats = asyncio.run(categorizer.categorize_tags(tags))
+
+        except Exception as e:
+            print(f"[downloader] TagCategorizer fallback failed: {e}")
+            # Return the adapter's original (all-general) result
+        return cats
+
+    def _pick_folder_name(self, cats: dict) -> str | None:
+        """Pick the best folder name from categorized tags."""
+        if settings.manager.download_folder_use_artist_folder:
+            # Prefer artist, then character
+            if cats.get("artist"):
+                return cats["artist"][0]
+            if cats.get("character"):
+                return cats["character"][0]
+        else:
+            # Prefer character, then artist
+            if cats.get("character"):
+                return cats["character"][0]
+            if cats.get("artist"):
+                return cats["artist"][0]
+
+        # Try copyright as a last resort before the tag-join fallback
+        if cats.get("copyright"):
+            return cats["copyright"][0]
+
+        return None
 
     def get_valid_folder(self, tags: str) -> Path:
         """For bulk downloads: use exact searched tags as folder name."""

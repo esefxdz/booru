@@ -45,6 +45,15 @@ class MediaOverlay(QWidget):
         self.sidebar = OverlaySidebar(self)
         self._main_layout.addWidget(self.sidebar)
 
+        # ── Close Button ──
+        from PyQt6.QtWidgets import QPushButton
+        self.close_btn = QPushButton("✕", self)
+        self.close_btn.setFixedSize(36, 36)
+        self.close_btn.setStyleSheet(f"background-color: {colors.BUTTON_BG}; color: {colors.TEXT_PRIMARY}; border-radius: 18px; font-weight: bold; font-size: 16px;")
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.clicked.connect(self.close_overlay)
+        self.close_btn.move(20, 20)
+
         self._setup_shortcuts()
         
     def _setup_shortcuts(self):
