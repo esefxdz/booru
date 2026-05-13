@@ -100,13 +100,27 @@ class AboutSection(QWidget):
     def _clear_cache(self):
         try:
             import thumb_cache
+
+            # Grab stats before clearing so we can show how much was freed
+            pre = thumb_cache.stats()
             thumb_cache.clear()
-            self.cache_status.setText("✔ Cache cleared successfully")
+
+            freed_mb = (pre["l1_bytes"] + pre["l2_bytes"]) / (1024 * 1024)
+            self.cache_status.setText(
+                f"Cache cleared  ({pre['l1_entries'] + pre['l2_entries']} entries, "
+                f"{freed_mb:.1f} MB freed)"
+            )
+            self.cache_status.setStyleSheet(
+                f"color: {colors.SUCCESS}; font-weight: bold; font-size: 12px;"
+            )
             self.cache_status.show()
-            QTimer.singleShot(3000, self.cache_status.hide)
+            QTimer.singleShot(5000, self.cache_status.hide)
+
         except Exception as e:
-            self.cache_status.setText(f"✕ Error: {e}")
-            self.cache_status.setStyleSheet(f"color: {colors.DANGER}; font-weight: bold; font-size: 12px;")
+            self.cache_status.setText(f"Error: {e}")
+            self.cache_status.setStyleSheet(
+                f"color: {colors.DANGER}; font-weight: bold; font-size: 12px;"
+            )
             self.cache_status.show()
 
     def apply(self):

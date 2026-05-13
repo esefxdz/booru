@@ -172,7 +172,14 @@ def main():
 
     window = BooruGui()
     window.show()
-    sys.exit(app.exec())
+
+    exit_code = app.exec()
+
+    # ── Clean shutdown: close the SQLite cache connection ──────────
+    import thumb_cache
+    thumb_cache.shutdown()
+
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@ class SettingsManager:
         self.use_legacy_viewer: bool = False
         self.video_engine: str = "qt"
         self.use_http2: bool = False
+        self.cf_bypass_method: str = "auto"
         self.proxy_url: str = ""
         self.custom_download_path: str = ""
         self.concurrent_downloads: int = 50

@@ -6,6 +6,67 @@ from ui import settings_view as settings
 from collections import OrderedDict
 from ui import colors
 
+
+# ── QPixmap LRU (byte-bounded) ─────────────────────────────────
+#
+#   Holds decoded QPixmap objects ready for immediate display.
+#   Unlike the old 500-entry cap, this tracks actual pixel memory
+#   (width * height * 4 bytes/pixel) and evicts LRU entries when
+#   the total exceeds _PX_CACHE_MAX_BYTES (48 MB default).
+#
+#   This is separate from thumb_cache (which stores raw JPEG bytes
+#   in memory + SQLite).  The flow is:
+#     thumb_cache.get(key) → raw JPEG bytes
+#     _PixmapLRU.get(key)  → decoded QPixmap (display-ready)
+# ────────────────────────────────────────────────────────────────
+_PX_CACHE_MAX_BYTES = 48 * 1024 * 1024  # 48 MB
+
+
+class _PixmapLRU:
+    """Byte-bounded LRU cache for decoded QPixmap thumbnails."""
+
+    __slots__ = ("_data", "_sizes", "_total", "_max")
+
+    def __init__(self, max_bytes: int = _PX_CACHE_MAX_BYTES):
+        self._data: OrderedDict[str, QPixmap] = OrderedDict()
+        self._sizes: dict[str, int] = {}   # key → estimated byte size
+        self._total: int = 0
+        self._max: int = max_bytes
+
+    @staticmethod
+    def _estimate(pm: QPixmap) -> int:
+        """Estimate the memory footprint of a QPixmap (ARGB32 = 4 bpp)."""
+        return max(pm.width() * pm.height() * 4, 1)
+
+    def get(self, key) -> QPixmap | None:
+        key = str(key)
+        if key in self._data:
+            self._data.move_to_end(key)
+            return self._data[key]
+        return None
+
+    def put(self, key, pixmap: QPixmap) -> None:
+        key = str(key)
+        size = self._estimate(pixmap)
+
+        # Update existing
+        if key in self._data:
+            self._total -= self._sizes[key]
+            self._data.move_to_end(key)
+        self._data[key] = pixmap
+        self._sizes[key] = size
+        self._total += size
+
+        # Evict LRU until under budget
+        while self._total > self._max and self._data:
+            oldest_key, _ = self._data.popitem(last=False)
+            self._total -= self._sizes.pop(oldest_key, 0)
+
+    def clear(self) -> None:
+        self._data.clear()
+        self._sizes.clear()
+        self._total = 0
+
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                         CLASS: Gallery                              ║
 # ╚══════════════════════════════════════════════════════════════════════╝
@@ -21,9 +82,9 @@ class Gallery(QWidget):
         self._spacing = 16
         self._scroll_guard = False
         
-        # Tiered Cache (L1 Memory): Fixed number of decoded QPixmap objects
-        self._l1_cache = OrderedDict()
-        
+        # QPixmap LRU — byte-bounded decoded pixmap cache
+        self._px_cache = _PixmapLRU(_PX_CACHE_MAX_BYTES)
+
         # Viewport Virtualization: Recycles image containers
         self._widget_pool = []
         
@@ -247,21 +308,21 @@ class Gallery(QWidget):
         self.open_preview(post)
 
     def _get_l1_pixmap(self, post_id, safe_bytes):
-        if post_id in self._l1_cache:
-            self._l1_cache.move_to_end(post_id)
-            return self._l1_cache[post_id]
-            
+        # Try the decoded pixmap cache first (instant, no decode cost)
+        cached = self._px_cache.get(post_id)
+        if cached is not None:
+            return cached
+
+        # Decode JPEG bytes → QPixmap, scale down, round corners
         pixmap = QPixmap()
         pixmap.loadFromData(safe_bytes)
         max_w = max(400, settings.manager.thumbnail_size * 2)
         if pixmap.width() > max_w:
             pixmap = pixmap.scaledToWidth(max_w, Qt.TransformationMode.SmoothTransformation)
         rounded = self._round_pixmap(pixmap)
-        
-        self._l1_cache[post_id] = rounded
-        if len(self._l1_cache) > 500:
-            self._l1_cache.popitem(last=False)
-            
+
+        # Store in the byte-bounded LRU
+        self._px_cache.put(post_id, rounded)
         return rounded
 
     def _round_pixmap(self, pixmap, radius=12):
@@ -303,15 +364,14 @@ class Gallery(QWidget):
         
         pixmap = QPixmap()
         pixmap.loadFromData(safe_bytes)
-        
+
         max_w = max(400, settings.manager.thumbnail_size * 2)
         if pixmap.width() > max_w:
             pixmap = pixmap.scaledToWidth(max_w, Qt.TransformationMode.SmoothTransformation)
         rounded_pixmap = self._round_pixmap(pixmap)
-        
-        self._l1_cache[post_id] = rounded_pixmap
-        if len(self._l1_cache) > 500:
-            self._l1_cache.popitem(last=False)
+
+        # Store in the byte-bounded QPixmap LRU
+        self._px_cache.put(post_id, rounded_pixmap)
 
         # Find the skeleton and fill it
         found = False
@@ -371,6 +431,10 @@ class Gallery(QWidget):
     def clear(self):
         self._items.clear()
         self.container.setMinimumHeight(0)
+
+        # Release all decoded QPixmaps immediately (no lingering memory)
+        self._px_cache.clear()
+
         for pw in self._widget_pool:
             if pw['in_use']:
                 pw['in_use'] = False
