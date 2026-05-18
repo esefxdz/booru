@@ -7,6 +7,7 @@ class FetchThread(QThread):
     finished = pyqtSignal(list, bool) # posts, is_bookmarks_mode
     error = pyqtSignal(str)
     preview_ready = pyqtSignal(bytes, dict, int)  # safe JPEG bytes, post, idx
+    posts_ready = pyqtSignal(list, bool)  # emitted after metadata, before thumbnails
     
     def __init__(self, downloader, tags, current_page, is_bookmarks_mode, bookmark_filter):
         super().__init__()
@@ -36,6 +37,10 @@ class FetchThread(QThread):
                 posts = loop.run_until_complete(self.downloader.get_image_urls(self.tags, settings.SEARCH_LIMIT, self.current_page - 1))
                 for p in posts: p["_booru"] = settings.manager.active_booru
 
+            # Phase 1: Emit metadata immediately so the UI shows skeletons
+            self.posts_ready.emit(posts, self.is_bookmarks_mode)
+
+            # Phase 2: Fetch thumbnails in the background (non-blocking)
             if posts:
                 def on_preview(pil_img, post, idx):
                     self.preview_ready.emit(pil_img, post, idx)
@@ -43,7 +48,6 @@ class FetchThread(QThread):
 
             self.finished.emit(posts, self.is_bookmarks_mode)
         except Exception as e:
-            # Surface Cloudflare blocks as a clear, actionable message
             from downloader import CloudflareBlockError
             if isinstance(e, CloudflareBlockError):
                 self.error.emit(str(e))
@@ -100,6 +104,29 @@ class AppController(QObject):
         super().__init__()
         self.downloader = downloader
         self._is_loading = False
+        self._fetch_gen = 0  # generation counter to discard stale previews
+
+    def _wire_thread(self, thread):
+        """Connect a FetchThread's signals, guarded by a generation counter.
+
+        If the user starts a new search while thumbnails are still loading,
+        the old thread keeps running harmlessly but its preview_ready signals
+        are silently discarded because the generation has advanced.
+        """
+        self._fetch_gen += 1
+        gen = self._fetch_gen
+
+        thread.posts_ready.connect(lambda posts, bm: self._on_posts_ready(posts, bm, gen))
+        thread.finished.connect(lambda posts, bm: self._on_fetch_finished(posts, bm, gen))
+        thread.error.connect(self._on_fetch_error)
+        thread.preview_ready.connect(
+            lambda b, p, i: self._on_preview(b, p, i, gen)
+        )
+
+    def _on_preview(self, safe_bytes, post, idx, gen):
+        """Forward preview only if this generation is still current."""
+        if gen == self._fetch_gen:
+            self.preview_ready.emit(safe_bytes, post, idx)
 
     def trigger_fetch(self, tags, current_page, is_bookmarks_mode, bookmark_filter):
         if self._is_loading: return
@@ -107,9 +134,7 @@ class AppController(QObject):
         self.loading_started.emit()
         self.status_updated.emit("Loading...", "yellow")
         self.thread = FetchThread(self.downloader, tags, current_page, is_bookmarks_mode, bookmark_filter)
-        self.thread.finished.connect(self._on_fetch_finished)
-        self.thread.error.connect(self._on_fetch_error)
-        self.thread.preview_ready.connect(self.preview_ready.emit)
+        self._wire_thread(self.thread)
         self.thread.start()
 
     def trigger_fetch_append(self, tags, current_page, is_bookmarks_mode, bookmark_filter):
@@ -117,15 +142,16 @@ class AppController(QObject):
         if self._is_loading: return
         self._is_loading = True
         self.loading_started_append.emit()
-        self.status_updated.emit("Loading more…", "yellow")
+        self.status_updated.emit("Loading more\u2026", "yellow")
         self.thread = FetchThread(self.downloader, tags, current_page, is_bookmarks_mode, bookmark_filter)
-        self.thread.finished.connect(self._on_fetch_finished)
-        self.thread.error.connect(self._on_fetch_error)
-        self.thread.preview_ready.connect(self.preview_ready.emit)
+        self._wire_thread(self.thread)
         self.thread.start()
 
     @pyqtSlot(list, bool)
-    def _on_fetch_finished(self, posts, is_bookmarks_mode):
+    def _on_posts_ready(self, posts, is_bookmarks_mode, gen):
+        """Metadata arrived — show skeletons immediately and unlock the UI."""
+        if gen != self._fetch_gen:
+            return  # stale generation, discard
         self._is_loading = False
         self.loading_finished.emit()
         if posts:
@@ -134,6 +160,11 @@ class AppController(QObject):
         else:
             self.status_updated.emit("No Results", "orange")
             self.posts_fetched.emit([])
+
+    @pyqtSlot(list, bool)
+    def _on_fetch_finished(self, posts, is_bookmarks_mode, gen):
+        """All thumbnails done. Nothing to do — UI was already unblocked by posts_ready."""
+        pass
 
     @pyqtSlot(str)
     def _on_fetch_error(self, error_msg):

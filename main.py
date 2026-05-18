@@ -159,7 +159,31 @@ QToolTip {{
 """
 
 
+def _setup_logging():
+    """Wire up rotating file logs so crashes are diagnosable in packaged builds."""
+    import logging
+    from logging.handlers import RotatingFileHandler
+    from pathlib import Path
+
+    log_dir = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    handler = RotatingFileHandler(
+        log_dir / "app.log",
+        maxBytes=5 * 1024 * 1024,   # 5 MB per file
+        backupCount=3,               # keep last 3 rotated files
+        encoding="utf-8",
+    )
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[handler, logging.StreamHandler()],  # file + console (when available)
+    )
+
+
 def main():
+    _setup_logging()
+
     settings.manager.load()
     settings.manager.load_bookmarks()
 

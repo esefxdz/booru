@@ -133,22 +133,13 @@ class ActionButtons(QWidget):
         def work():
             try:
                 dl_dir = parent_gui.downloader.get_download_folder_for_post(self.post)
-                file_url = parent_gui.downloader.get_file_url(self.post)
-                ext = os.path.splitext(file_url.split("?")[0])[1] or ".jpg"
-                path = dl_dir / f"{self.post_id}{ext}"
-                
-                from displayers.media_viewer import _resolve_url, _fetch_bytes
-                import boorus
-                
-                post_booru = self.post.get("_booru", settings.manager.active_booru)
-                site_data = boorus.REGISTRY.get(post_booru, {})
-                resolved_url = _resolve_url(file_url, site_data)
-                
-                data = _fetch_bytes(resolved_url)
-                path.write_bytes(data)
+                import asyncio
+                asyncio.run(parent_gui.downloader.download_task(self.post, dl_dir))
+                from PyQt6.QtCore import QTimer
                 QTimer.singleShot(0, lambda: self.dl_btn.setText("Done"))
             except Exception as e:
                 print(f"[actions] Download error: {e}")
+                from PyQt6.QtCore import QTimer
                 QTimer.singleShot(0, lambda: self.dl_btn.setText("Failed"))
                 
         threading.Thread(target=work, daemon=True).start()

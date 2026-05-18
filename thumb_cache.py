@@ -368,7 +368,8 @@ class _L2:
 #   functions, with a single lock protecting both tiers.
 # ─────────────────────────────────────────────────────────────────
 
-_lock = threading.Lock()
+_l1_lock = threading.Lock()   # Fast: only guards the in-memory OrderedDict
+_l2_lock = threading.Lock()   # Slow: guards SQLite disk I/O
 _l1: _L1 | None = None
 _l2: _L2 | None = None
 
@@ -398,21 +399,25 @@ def _init() -> tuple[_L1, _L2]:
 def get(key) -> bytes | None:
     key = str(key)
 
-    with _lock:
-        l1, l2 = _init()
-
-        # ── L1 hit ────────────────────────────────────────────
+    # ── L1 hit (instant, never blocked by disk) ─────────────
+    with _l1_lock:
+        l1, _ = _init()
         data = l1.get(key)
         if data is not None:
             return data
 
-        # ── L2 hit → promote to L1 ───────────────────────────
+    # ── L2 hit → promote to L1 (separate lock) ───────────
+    with _l2_lock:
+        _, l2 = _init()
         data = l2.get(key)
-        if data is not None:
-            l1.put(key, data)   # warm up the memory tier
-            return data
 
-    # ── total miss ────────────────────────────────────────────
+    if data is not None:
+        with _l1_lock:
+            l1, _ = _init()
+            l1.put(key, data)   # warm up the memory tier
+        return data
+
+    # ── total miss ────────────────────────────────────
     return None
 
 
@@ -424,10 +429,12 @@ def get(key) -> bytes | None:
 def put(key, data: bytes) -> None:
     key = str(key)
 
-    with _lock:
-        l1, l2 = _init()
-
+    with _l1_lock:
+        l1, _ = _init()
         l1.put(key, data)   # fast memory store
+
+    with _l2_lock:
+        _, l2 = _init()
         l2.put(key, data)   # durable disk store
 
 
@@ -437,9 +444,11 @@ def put(key, data: bytes) -> None:
 # │  reclaim disk space immediately.                                │
 # └──────────────────────────────────────────────────────────────────┘
 def clear() -> None:
-    with _lock:
-        l1, l2 = _init()
+    with _l1_lock:
+        l1, _ = _init()
         l1.clear()
+    with _l2_lock:
+        _, l2 = _init()
         l2.clear()
 
 
@@ -449,15 +458,19 @@ def clear() -> None:
 # │  how much memory/disk the cache is consuming.                   │
 # └──────────────────────────────────────────────────────────────────┘
 def stats() -> dict:
-    with _lock:
-        l1, l2 = _init()
+    with _l1_lock:
+        l1, _ = _init()
+        l1_entries = l1.entry_count
+        l1_bytes = l1.byte_count
+    with _l2_lock:
+        _, l2 = _init()
         l2_stats = l2.stats()
-        return {
-            "l1_entries": l1.entry_count,
-            "l1_bytes":   l1.byte_count,
-            "l2_entries": l2_stats["entries"],
-            "l2_bytes":   l2_stats["bytes"],
-        }
+    return {
+        "l1_entries": l1_entries,
+        "l1_bytes":   l1_bytes,
+        "l2_entries": l2_stats["entries"],
+        "l2_bytes":   l2_stats["bytes"],
+    }
 
 
 # ┌──────────────────────────────────────────────────────────────────┐
@@ -466,8 +479,9 @@ def stats() -> dict:
 # └──────────────────────────────────────────────────────────────────┘
 def shutdown() -> None:
     global _l1, _l2
-    with _lock:
+    with _l1_lock:
+        _l1 = None
+    with _l2_lock:
         if _l2:
             _l2.close()
-        _l1 = None
         _l2 = None

@@ -1,26 +1,39 @@
+###########################################################################################
+#displayers/legacy_window.py — Legacy standalone media viewer (subprocess mode).
+#
+#Used only when `use_legacy_viewer` is enabled in Global Settings.
+#Spawns a separate PyQt6 window as a subprocess, keeping it fully decoupled
+#from the main app process.
+#
+#Entry point (called by UniversalViewer):
+#    python -m displayers.legacy_window <url> <post_json>
+############################################################################################
+
 import sys
 import os
 import json
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QSettings, QSize
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QSettings
 from PyQt6.QtGui import QPixmap, QMovie
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QLabel, QSlider, QStyle, QStyleOptionSlider)
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout,
+    QHBoxLayout, QPushButton, QLabel, QSlider, QStyleOptionSlider,
+)
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 import httpx
 
-import settings
+
+# ══════════════════════════════════════════════════════════════════════
+#  MODULE HELPERS  (standalone — no dependency on the rest of the app)
+# ══════════════════════════════════════════════════════════════════════
 
 _IMAGE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
 }
-
-# Max dimension for optimized display
-_DISPLAY_MAX = 800
 
 
 def _resolve_url(url):
@@ -37,23 +50,40 @@ def _fetch_bytes(url):
         raise RuntimeError(f"HTTP {res.status_code} from {url}")
     return res.content
 
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  CLASS: ClickableVideoWidget                                         ║
+# ╚══════════════════════════════════════════════════════════════════════╝
 class ClickableVideoWidget(QVideoWidget):
     clicked = pyqtSignal()
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
 
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  CLASS: ClickableSlider                                              ║
+# ╚══════════════════════════════════════════════════════════════════════╝
 class ClickableSlider(QSlider):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             opt = QStyleOptionSlider()
             self.initStyleOption(opt)
-            val = self.style().sliderValueFromPosition(self.minimum(), self.maximum(), event.pos().x(), self.width(), opt.upsideDown)
+            val = self.style().sliderValueFromPosition(
+                self.minimum(), self.maximum(),
+                event.pos().x(), self.width(), opt.upsideDown
+            )
             self.setValue(val)
             self.sliderMoved.emit(val)
         super().mousePressEvent(event)
 
+
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  CLASS: DisplayerWindow                                              ║
+# ║  Legacy standalone window launched as a subprocess.                 ║
+# ╚══════════════════════════════════════════════════════════════════════╝
 class DisplayerWindow(QMainWindow):
     image_ready = pyqtSignal(bytes)
     gif_ready = pyqtSignal(str)
@@ -92,19 +122,16 @@ class DisplayerWindow(QMainWindow):
         top_layout.addWidget(title)
         top_layout.addStretch()
 
-        # View Original button
         self.orig_btn = QPushButton("View Original")
         self.orig_btn.setStyleSheet(self._btn_css())
         self.orig_btn.clicked.connect(self._load_original)
         top_layout.addWidget(self.orig_btn)
 
-        # Download button
         self.dl_btn = QPushButton("Download")
         self.dl_btn.setStyleSheet(self._btn_css())
         self.dl_btn.clicked.connect(self._download)
         top_layout.addWidget(self.dl_btn)
 
-        # Bookmark button
         self._is_bookmarked = self._check_bookmarked()
         self.bm_btn = QPushButton("Bookmarked" if self._is_bookmarked else "Bookmark")
         self.bm_btn.setStyleSheet(self._btn_css(gold=self._is_bookmarked))
@@ -119,16 +146,13 @@ class DisplayerWindow(QMainWindow):
         self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.addWidget(self.content, stretch=1)
 
-        # Signal connections
         self.image_ready.connect(self._show_image)
         self.gif_ready.connect(self._show_gif)
 
-        # Display label (shared by image and gif)
         self.lbl = QLabel("Loading...")
         self.lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.content_layout.addWidget(self.lbl)
 
-        # Determine media type and load
         ext = self.file_url.rsplit("?", 1)[0].lower()
         if any(ext.endswith(v) for v in (".mp4", ".webm")):
             self._media_type = "video"
@@ -152,7 +176,7 @@ class DisplayerWindow(QMainWindow):
         QPushButton:hover {{ background-color: #444; }}
         """
 
-    # ----- Bookmarks (reads/writes JSON directly since we're a subprocess) -----
+    # ----- Bookmarks -----
 
     def _bm_path(self):
         return Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "bookmarks.json"
@@ -199,7 +223,7 @@ class DisplayerWindow(QMainWindow):
                 path.write_bytes(data)
                 self.dl_btn.setText("Downloaded")
             except Exception as e:
-                print(f"[displayer] Download error: {e}")
+                print(f"[legacy_window] Download error: {e}")
                 self.dl_btn.setText("Failed")
         threading.Thread(target=work, daemon=True).start()
 
@@ -211,7 +235,6 @@ class DisplayerWindow(QMainWindow):
         self._viewing_original = True
         self.orig_btn.setText("Loading...")
         self.orig_btn.setEnabled(False)
-
         if self._media_type == "image":
             self._load_image(optimized=False)
         elif self._media_type == "gif":
@@ -235,25 +258,22 @@ class DisplayerWindow(QMainWindow):
                 data = _fetch_bytes(url)
                 self.image_ready.emit(data)
             except Exception as e:
-                print(f"[displayer] Image load error: {e}")
+                print(f"[legacy_window] Image load error: {e}")
         threading.Thread(target=work, daemon=True).start()
 
     def _show_image(self, data):
         pix = QPixmap()
         if not pix.loadFromData(data):
-            print("[displayer] Failed to decode image bytes")
+            print("[legacy_window] Failed to decode image bytes")
             self.lbl.setText("Failed to load image")
             return
-
         self._pixmap = pix
         self._fit_pixmap()
         self.lbl.setText("")
-
         if self._viewing_original:
             self.orig_btn.setText("Original")
 
     def _fit_pixmap(self):
-        """Scale stored pixmap to fit content area."""
         if not hasattr(self, "_pixmap"):
             return
         target = self.content.size()
@@ -266,8 +286,6 @@ class DisplayerWindow(QMainWindow):
     # ----- GIF Loading -----
 
     def _load_gif(self, optimized):
-        # For GIFs, sample_url is often a static image preview. Always use file_url.
-        # Optimization = scale the QMovie to fit the window.
         url = _resolve_url(self.file_url)
         self._gif_optimized = optimized
         def work():
@@ -279,26 +297,20 @@ class DisplayerWindow(QMainWindow):
                 path.write_bytes(data)
                 self.gif_ready.emit(str(path))
             except Exception as e:
-                print(f"[displayer] GIF load error: {e}")
+                print(f"[legacy_window] GIF load error: {e}")
         threading.Thread(target=work, daemon=True).start()
 
     def _show_gif(self, path):
         self.movie = QMovie(path)
-
         if self._gif_optimized:
-            # Scale GIF to fit window
             target = self.content.size()
             orig = self.movie.currentPixmap().size()
             if orig.width() > 0 and orig.height() > 0:
-                scaled = orig.scaled(
-                    target, Qt.AspectRatioMode.KeepAspectRatio
-                )
+                scaled = orig.scaled(target, Qt.AspectRatioMode.KeepAspectRatio)
                 self.movie.setScaledSize(scaled)
-
         self.lbl.setMovie(self.movie)
         self.movie.start()
         self.lbl.setText("")
-
         if self._viewing_original:
             self.orig_btn.setText("Original")
 
@@ -317,45 +329,30 @@ class DisplayerWindow(QMainWindow):
         self.player.setVideoOutput(self.video_widget)
         self.player.setSource(QUrl(self.file_url))
 
-        # Controls Layout
         controls_layout = QVBoxLayout()
         controls_layout.setSpacing(2)
-        
-        # Seek bar (YouTube style)
+
         self.seek_slider = ClickableSlider(Qt.Orientation.Horizontal)
         self.seek_slider.setRange(0, 0)
         self.seek_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.seek_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                height: 4px;
-                background: #444;
-                border-radius: 2px;
-            }
-            QSlider::sub-page:horizontal {
-                background: #ff0000;
-                border-radius: 2px;
-            }
+            QSlider::groove:horizontal { height: 4px; background: #444; border-radius: 2px; }
+            QSlider::sub-page:horizontal { background: #ff0000; border-radius: 2px; }
             QSlider::handle:horizontal {
-                background: #ff0000;
-                width: 12px;
-                height: 12px;
-                margin: -4px 0;
-                border-radius: 6px;
+                background: #ff0000; width: 12px; height: 12px;
+                margin: -4px 0; border-radius: 6px;
             }
         """)
         self.seek_slider.sliderMoved.connect(self._set_position)
         controls_layout.addWidget(self.seek_slider)
 
-        # Time and Volume Layout
         bottom_bar = QHBoxLayout()
         bottom_bar.setContentsMargins(5, 5, 5, 0)
-        
-        # Unified time label
+
         self.time_lbl = QLabel("0:00 / 0:00")
-        self.time_lbl.setStyleSheet("color: #ccc; font-family: Roboto, Arial, sans-serif; font-size: 13px; font-weight: 500;")
+        self.time_lbl.setStyleSheet("color: #ccc; font-size: 13px; font-weight: 500;")
         bottom_bar.addWidget(self.time_lbl)
-        
-        # Volume slider
+
         vol_lbl = QLabel("  🔊")
         vol_lbl.setStyleSheet("color: white; font-size: 14px;")
         self.vol_slider = QSlider(Qt.Orientation.Horizontal)
@@ -379,18 +376,15 @@ class DisplayerWindow(QMainWindow):
         bottom_bar.addWidget(vol_lbl)
         bottom_bar.addWidget(self.vol_slider)
         bottom_bar.addStretch()
-        
+
         controls_layout.addLayout(bottom_bar)
         self.content_layout.addLayout(controls_layout)
 
-        # Connections for video player
         self.player.positionChanged.connect(self._position_changed)
         self.player.durationChanged.connect(self._duration_changed)
         self.player.mediaStatusChanged.connect(self._loop_video)
-        
-        self.player.play()
 
-        # Hide "View Original" for video
+        self.player.play()
         self.orig_btn.hide()
 
     def _toggle_play(self):
@@ -429,7 +423,7 @@ class DisplayerWindow(QMainWindow):
             self.player.setPosition(0)
             self.player.play()
 
-    # ----- Resize -----
+    # ----- Resize / Close -----
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -442,21 +436,26 @@ class DisplayerWindow(QMainWindow):
         super().closeEvent(event)
 
 
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║  CLASS: UniversalViewer                                              ║
+# ║  Thin launcher used by gui.py when legacy mode is enabled.          ║
+# ╚══════════════════════════════════════════════════════════════════════╝
 class UniversalViewer:
-    """Spawns the PyQt6 displayer as a separate subprocess."""
+    """Spawns the legacy PyQt6 displayer as a separate subprocess."""
     def __init__(self, parent_gui, post):
         import subprocess
         file_url = parent_gui.downloader.get_file_url(post)
-        cmd = ["python", "displayer.py", file_url, json.dumps(post)]
+        cmd = ["python", "-m", "displayers.legacy_window", file_url, json.dumps(post)]
         subprocess.Popen(cmd)
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  MODULE ENTRYPOINT  (python -m displayers.legacy_window <url> <json>)
+# ══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python displayer.py <url> <post_json>")
+        print("Usage: python -m displayers.legacy_window <url> <post_json>")
         sys.exit(1)
-
-    settings.load()
 
     app = QApplication(sys.argv)
     file_url = sys.argv[1]

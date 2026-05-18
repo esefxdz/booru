@@ -61,6 +61,10 @@ class BooruGui(QMainWindow):
         self.controller.posts_fetched.connect(self._on_posts_fetched)
         self.gallery.load_more_requested.connect(self._load_more)
 
+        self.downloader.download_started.connect(self.sidebar.download_window.add_download)
+        self.downloader.download_progress.connect(self.sidebar.download_window.update_download)
+        self.downloader.download_finished.connect(self.sidebar.download_window.remove_download)
+
         self.server_bar.rebuild_list()
         self.trigger_fetch(new=True)
 
@@ -68,8 +72,7 @@ class BooruGui(QMainWindow):
         self.tag_panel.update_tags(post)
         if settings.manager.use_legacy_viewer:
             try:
-                # pyrefly: ignore [missing-import]
-                from displayer import UniversalViewer
+                from displayers.legacy_window import UniversalViewer
                 UniversalViewer(self, post)
             except ImportError:
                 print("Legacy viewer not found, using overlay.")

@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import httpx
 import os
 import re
@@ -11,6 +12,12 @@ import boorus
 from adapters import get_adapter
 
 import thumb_cache
+
+# Bounded executor for CPU-bound PIL image decoding.
+# Caps at 4 threads to prevent CPU spikes when fetching 50+ thumbnails.
+_DECODE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="thumb_decode"
+)
 
 
 class CloudflareBlockError(Exception):
@@ -47,9 +54,15 @@ class NetworkManager:
             return await session.get(url, params=params, headers=headers)
 
 
-class BooruDownloader:
+from PyQt6.QtCore import QObject, pyqtSignal
+
+class BooruDownloader(QObject):
+    download_started = pyqtSignal(str, str) # task_id, filename
+    download_progress = pyqtSignal(str, int, int) # task_id, current, total
+    download_finished = pyqtSignal(str) # task_id
 
     def __init__(self):
+        super().__init__()
         self.headers = settings.DEFAULT_HEADERS.copy()
 
     @property
@@ -181,6 +194,9 @@ class BooruDownloader:
             # Detect Cloudflare challenge walls — surface a clear message
             if hasattr(r, "is_blocked") and r.is_blocked:
                 booru = settings.manager.active_booru
+                # Auto-invalidate expired bypass so stale cookies aren't resent
+                from cloudflare_bypasser import invalidate_session
+                invalidate_session(booru)
                 raise CloudflareBlockError(
                     f"'{booru}' is behind Cloudflare protection. "
                     f"Right-click the booru icon → Cloudflare tab → "
@@ -234,7 +250,7 @@ class BooruDownloader:
                     img.save(buf, format="JPEG", quality=85)
                     return buf.getvalue()
 
-                img_bytes = await loop.run_in_executor(None, decode)
+                img_bytes = await loop.run_in_executor(_DECODE_EXECUTOR, decode)
                 self._cache_set(post_id, img_bytes)
                 callback(img_bytes, post, index)
             except Exception as e:
@@ -252,19 +268,32 @@ class BooruDownloader:
             return
 
         ext  = os.path.splitext(url.split("?")[0])[1] or ".jpg"
-        name = f"{post.get('id', 'image')}{ext}"
+        post_id = str(post.get('id', 'unknown'))
+        name = f"{post_id}{ext}"
         path = folder / name
         client_args = self._get_client_args()
 
         try:
-            r = await self._fetch(url, timeout=60)
-            if r.status_code == 200:
-                raw = r.content if hasattr(r, "content") else r.text.encode()
-                path.write_bytes(raw)
-            else:
-                print(f"[downloader] Download failed: HTTP {r.status_code} for {url}")
+            self.download_started.emit(post_id, name)
+            import httpx
+            # Use httpx directly to stream the file using bypass cookies/headers
+            async with httpx.AsyncClient(**client_args) as client:
+                async with client.stream("GET", url) as response:
+                    if response.status_code == 200:
+                        total_size = int(response.headers.get("Content-Length", 0))
+                        current_size = 0
+                        with open(path, "wb") as f:
+                            async for chunk in response.aiter_bytes():
+                                f.write(chunk)
+                                current_size += len(chunk)
+                                self.download_progress.emit(post_id, current_size, total_size)
+                    else:
+                        print(f"[downloader] Download failed: HTTP {response.status_code} for {url}")
+            
+            self.download_finished.emit(post_id)
         except Exception as e:
-            print(f"[downloader] download_task error for post {post.get('id')}: {e}")
+            print(f"[downloader] download_task error for post {post_id}: {e}")
+            self.download_finished.emit(post_id)
 
     # ------------------------------------------------------------------
     # Utils

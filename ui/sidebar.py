@@ -104,6 +104,12 @@ class Sidebar(QWidget):
         btn_next.clicked.connect(lambda: self.main_app.change_page(1))
         nav.addWidget(btn_next)
         layout.addWidget(self.nav_widget)
+
+        from ui.download_window import DownloadWindow
+        self.download_window = DownloadWindow(self)
+        layout.addWidget(self.download_window)
+        self.download_window.hide()
+
         self.update_active_booru()
 
     def _add_item(self, text, icon_name, is_active=False):
