@@ -177,8 +177,9 @@ class APISettingsDialog(QDialog):
         cf_layout.setSpacing(8)
 
         cf_info = QLabel(
-            "If this site is behind Cloudflare, use the in-app browser below.\n"
-            "Complete the CAPTCHA and the bypass cookie will be captured automatically."
+            "If this site is behind Cloudflare protection, use the bypass tool.\n"
+            "You'll have 3 options: solve in the built-in browser, paste a cookie\n"
+            "manually, or auto-import from Chrome/Firefox/Edge."
         )
         cf_info.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 11px;")
         cf_info.setWordWrap(True)
@@ -186,8 +187,10 @@ class APISettingsDialog(QDialog):
 
         bypass = settings.manager.bypass_data.get(name, {})
         if bypass.get("cf_clearance") or bypass.get("cookies"):
-            # A valid bypass is already stored — offer to clear it
-            cf_active = QLabel("✓ Cloudflare bypass is active")
+            # A valid bypass is already stored — show details
+            cookies = bypass.get("cookies", {})
+            cookie_names = list(cookies.keys()) if cookies else ["cf_clearance"]
+            cf_active = QLabel(f"✓ Cloudflare bypass is active  ({', '.join(cookie_names)})")
             cf_active.setStyleSheet(f"color: {colors.SUCCESS};")
             cf_layout.addWidget(cf_active)
 
@@ -197,11 +200,11 @@ class APISettingsDialog(QDialog):
             cf_clear_btn.clicked.connect(self._clear_cf)
             cf_layout.addWidget(cf_clear_btn)
         else:
-            cf_inactive = QLabel("✗ No bypass active")
+            cf_inactive = QLabel("✗ No bypass active — requests may be blocked")
             cf_inactive.setStyleSheet(f"color: {colors.WARNING};")
             cf_layout.addWidget(cf_inactive)
 
-        cf_btn = QPushButton("🛡  Open Cloudflare Bypass Browser")
+        cf_btn = QPushButton("🛡  Open Cloudflare Bypass Tool")
         cf_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cf_btn.setStyleSheet(f"background:{colors.DANGER}; color:{colors.TEXT_PRIMARY}; font-weight:bold; padding:8px; border-radius:4px;")
         cf_btn.clicked.connect(self._run_cf_bypass)

@@ -5,6 +5,7 @@ from PyQt6.QtGui import QPixmap, QIcon, QPainter, QPainterPath
 from ui import settings_view as settings
 from collections import OrderedDict
 from ui import colors
+import bisect
 
 
 # ── QPixmap LRU (byte-bounded) ─────────────────────────────────
@@ -73,6 +74,12 @@ class _PixmapLRU:
 class Gallery(QWidget):
     load_more_requested = pyqtSignal()
 
+    # ── Virtualization tunables ────────────────────────────────
+    # Items within BUFFER_ZONE of the viewport keep their bytes.
+    # Items beyond EVICT_ZONE get their safe_bytes freed.
+    _BUFFER_ZONE_PAGES = 2   # ±2 viewport heights: render zone
+    _EVICT_ZONE_PAGES  = 4   # ±4 viewport heights: eviction threshold
+
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
@@ -85,30 +92,22 @@ class Gallery(QWidget):
         # QPixmap LRU — byte-bounded decoded pixmap cache
         self._px_cache = _PixmapLRU(_PX_CACHE_MAX_BYTES)
 
-        # Viewport Virtualization: Recycles image containers
-        self._widget_pool = []
+        # Y-sorted index for O(log n) viewport intersection.
+        # Each entry is (y_top, item_index) sorted by y_top.
+        self._y_index: list[tuple[int, int]] = []
         
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.timeout.connect(self._do_refresh)
+
+        # Eviction timer — runs periodically after scroll stops to
+        # free safe_bytes from items that have scrolled far off-screen.
+        self._evict_timer = QTimer(self)
+        self._evict_timer.setSingleShot(True)
+        self._evict_timer.setInterval(300)  # 300ms after last scroll
+        self._evict_timer.timeout.connect(self._evict_offscreen_bytes)
         
         self.setup_ui()
-        
-        # Initialize pool
-        for _ in range(150):
-            btn = QPushButton(self.container)
-            btn.setFlat(True)
-            btn.setStyleSheet("border: none; background: transparent; padding: 0;")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            
-            star = QPushButton(btn)
-            star.setText("★")
-            star.setCursor(Qt.CursorShape.PointingHandCursor)
-            star.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-            
-            self._widget_pool.append({'btn': btn, 'star': star, 'in_use': False, 'post_id': None})
-            btn.hide()
-            
         QTimer.singleShot(100, self.refresh_layout)
 
     def setup_ui(self):
@@ -131,6 +130,9 @@ class Gallery(QWidget):
 
     def _on_scroll(self, value: int):
         self._update_viewport()
+
+        # Schedule eviction check after scrolling settles
+        self._evict_timer.start()
         
         if not settings.manager.infinite_scroll or self._scroll_guard:
             return
@@ -177,6 +179,7 @@ class Gallery(QWidget):
         if self._col_width < 50: self._col_width = 50
 
         self._recalculate_layout()
+        self._rebuild_y_index()
         self._update_viewport()
 
     def _recalculate_layout(self):
@@ -219,88 +222,164 @@ class Gallery(QWidget):
         max_h = max(col_heights) if col_heights else 0
         self.container.setMinimumHeight(max_h)
 
+    # ══════════════════════════════════════════════════════════════
+    #  Y-INDEX — O(log n) viewport intersection via binary search
+    # ══════════════════════════════════════════════════════════════
+
+    def _rebuild_y_index(self):
+        """Rebuild the sorted Y-index from current item rects.
+
+        Each entry is (y_top, item_index). Sorted by y_top so we
+        can bisect to quickly find items that overlap the viewport.
+        """
+        self._y_index = sorted(
+            (item['rect'].y(), idx)
+            for idx, item in enumerate(self._items)
+            if not item['rect'].isNull()
+        )
+
+    def _find_visible_indices(self, y_start: int, y_end: int) -> list[int]:
+        """Return indices of items whose rects overlap [y_start, y_end].
+
+        Uses binary search on _y_index for O(log n + k) where k is
+        the number of visible items — much faster than scanning all
+        items when the gallery has thousands of entries.
+        """
+        if not self._y_index:
+            return []
+
+        # We need items whose rect.bottom() >= y_start AND rect.y() <= y_end.
+        # _y_index is sorted by y_top. An item at y_top is visible if
+        # y_top + height >= y_start, i.e. y_top >= y_start - max_possible_height.
+        # To be safe, we use a generous lower bound.
+        max_item_height = self._col_width * 3  # masonry items rarely exceed 3:1
+        search_start = y_start - max_item_height
+
+        lo = bisect.bisect_left(self._y_index, (search_start,))
+        
+        result = []
+        for i in range(lo, len(self._y_index)):
+            y_top, idx = self._y_index[i]
+            if y_top > y_end:
+                break  # everything past here is below the viewport
+            item = self._items[idx]
+            rect = item['rect']
+            if rect.y() + rect.height() >= y_start:
+                result.append(idx)
+        return result
+
+    # ══════════════════════════════════════════════════════════════
+    #  VIRTUALIZATION — evict bytes from far-off-screen items
+    # ══════════════════════════════════════════════════════════════
+
+    def _evict_offscreen_bytes(self):
+        """Free safe_bytes from items that have scrolled far off-screen.
+
+        Items beyond EVICT_ZONE viewports from the current scroll
+        position get their raw JPEG bytes nulled out. They revert to
+        skeleton state and will be reloaded from thumb_cache if the
+        user scrolls back to them.
+
+        This is the core fix for Tech Debt #1: without this, scrolling
+        through 50 pages keeps 2500 items × ~50KB = 125 MB of raw
+        JPEG bytes in Python memory forever.
+        """
+        vp_y = self.scroll.verticalScrollBar().value()
+        vp_h = self.scroll.viewport().height()
+        if vp_h <= 0:
+            return
+
+        evict_margin = vp_h * self._EVICT_ZONE_PAGES
+        evict_top = vp_y - evict_margin
+        evict_bottom = vp_y + vp_h + evict_margin
+
+        evicted = 0
+        for item in self._items:
+            if item.get('safe_bytes') is None:
+                continue  # already a skeleton
+            rect = item['rect']
+            if rect.isNull():
+                continue
+            # If this item is entirely outside the eviction zone, free it
+            if rect.y() + rect.height() < evict_top or rect.y() > evict_bottom:
+                item['safe_bytes'] = None
+                item['animated'] = False  # re-animate when it comes back
+                evicted += 1
+
+        if evicted > 0:
+            # Also trim the QPixmap LRU — the evicted items' decoded
+            # pixmaps will be naturally pushed out as new ones enter.
+            pass  # LRU handles its own eviction
+
+    def _reload_from_cache(self, post_id):
+        """Try to reload thumbnail bytes from thumb_cache for a previously evicted item.
+
+        Returns the JPEG bytes if found, or None if the thumbnail isn't cached
+        (should be rare — thumb_cache L2 persists to disk).
+        """
+        import thumb_cache
+        return thumb_cache.get(post_id)
+
     def _update_viewport(self):
         vp_y = self.scroll.verticalScrollBar().value()
         vp_h = self.scroll.viewport().height()
-        # Render a bit outside the viewport to prevent flickering when scrolling fast
-        visible_rect = QRect(0, vp_y - vp_h, self.scroll.viewport().width(), vp_h * 3)
+        buffer_margin = vp_h * self._BUFFER_ZONE_PAGES
+        vis_top = vp_y - buffer_margin
+        vis_bottom = vp_y + vp_h + buffer_margin
 
-        visible_items = [item for item in self._items if item['rect'].intersects(visible_rect)]
-        visible_post_ids = {item['post'].get('id') for item in visible_items}
+        # Use Y-index for fast lookup if available, fallback to linear scan
+        if self._y_index:
+            visible_indices = set(self._find_visible_indices(vis_top, vis_bottom))
+        else:
+            visible_indices = {
+                i for i, item in enumerate(self._items)
+                if not item['rect'].isNull() and item['rect'].intersects(
+                    QRect(0, int(vis_top), self.scroll.viewport().width(), int(vis_bottom - vis_top))
+                )
+            }
 
-        # Release pool widgets that are no longer visible
-        for pw in self._widget_pool:
-            if pw['in_use'] and pw['post_id'] not in visible_post_ids:
-                pw['in_use'] = False
-                pw['btn'].hide()
-                pw['post_id'] = None
-                try: pw['btn'].clicked.disconnect() 
-                except: pass
-                try: pw['star'].clicked.disconnect()
-                except: pass
+        for idx, item in enumerate(self._items):
+            btn = item.get('btn')
+            star = item.get('star')
+            rect = item['rect']
+            if btn is None or rect.isNull():
+                continue
 
-        # Assign pool widgets to newly visible items
-        for item in visible_items:
-            post_id = item['post'].get('id')
-            pw = next((w for w in self._widget_pool if w['in_use'] and w['post_id'] == post_id), None)
-            
-            if not pw:
-                pw = next((w for w in self._widget_pool if not w['in_use']), None)
-                if not pw:
-                    continue # Pool exhausted (highly unlikely with 150 widgets)
-                
-                pw['in_use'] = True
-                pw['post_id'] = post_id
-                
-                post = item['post']
-                rect = item['rect']
-                
-                if item.get('safe_bytes'):
-                    pixmap = self._get_l1_pixmap(post_id, item['safe_bytes'])
-                    pw['btn'].setIcon(QIcon(pixmap))
-                    pw['btn'].setStyleSheet("border: none; background: transparent; padding: 0;")
-                else:
-                    pw['btn'].setIcon(QIcon())
-                    pw['btn'].setStyleSheet(f"border: none; background-color: {colors.BUTTON_BG}; border-radius: 12px; padding: 0;")
-                
-                pw['btn'].setIconSize(rect.size())
-                pw['btn'].setGeometry(rect)
-                
+            if idx in visible_indices:
+                # Position the permanent widget
+                btn.setGeometry(rect)
+                btn.setIconSize(rect.size())
                 star_sz = max(24, rect.width() // 8)
-                pw['star'].setFixedSize(star_sz, star_sz)
-                pw['star'].move(rect.width() - star_sz - 8, 8)
-                is_bm = settings.manager.is_post_bookmarked(post_id)
-                self._style_star(pw['star'], is_bm, 16)
-                
-                pw['btn'].clicked.connect(lambda checked, p=post, b=pw['btn']: self._on_btn_clicked(p, b))
-                pw['star'].clicked.connect(lambda checked, p=post, s=pw['star']: self._toggle_bookmark_direct(p, s))
-                
-                if item.get('safe_bytes') and not item.get('animated'):
-                    import ui.animations as anims
-                    anims.animate_fade_in(pw['btn'], duration=500)
-                    item['animated'] = True
-                    
-                pw['btn'].show()
-            else:
-                rect = item['rect']
-                pw['btn'].setGeometry(rect)
-                pw['btn'].setIconSize(rect.size())
-                
+                star.setFixedSize(star_sz, star_sz)
+                star.move(rect.width() - star_sz - 8, 8)
+                self._style_star(star, settings.manager.is_post_bookmarked(item['post'].get('id')), 16)
+
+                # If evicted, try to reload from cache
+                if item.get('safe_bytes') is None:
+                    reloaded = self._reload_from_cache(item['post'].get('id'))
+                    if reloaded is not None:
+                        item['safe_bytes'] = reloaded
+
+                # Resource virtualization: set or clear the pixmap
                 if item.get('safe_bytes'):
-                    pixmap = self._get_l1_pixmap(post_id, item['safe_bytes'])
-                    pw['btn'].setIcon(QIcon(pixmap))
-                    pw['btn'].setStyleSheet("border: none; background: transparent; padding: 0;")
+                    pixmap = self._get_l1_pixmap(item['post'].get('id'), item['safe_bytes'])
+                    btn.setIcon(QIcon(pixmap))
+                    btn.setStyleSheet("border: none; background: transparent; padding: 0;")
                     if not item.get('animated'):
                         import ui.animations as anims
-                        anims.animate_fade_in(pw['btn'], duration=500)
+                        anims.animate_fade_in(btn, duration=500)
                         item['animated'] = True
                 else:
-                    pw['btn'].setIcon(QIcon())
-                    pw['btn'].setStyleSheet(f"border: none; background-color: {colors.BUTTON_BG}; border-radius: 12px; padding: 0;")
-                    
-                star_sz = max(24, rect.width() // 8)
-                pw['star'].setFixedSize(star_sz, star_sz)
-                pw['star'].move(rect.width() - star_sz - 8, 8)
+                    btn.setIcon(QIcon())
+                    btn.setStyleSheet(
+                        f"border: none; background-color: {colors.BUTTON_BG}; "
+                        f"border-radius: 12px; padding: 0;"
+                    )
+                btn.show()
+            else:
+                # Resource virtualization: clear pixmap to free VRAM, keep widget alive
+                btn.setIcon(QIcon())
+                btn.hide()
 
     def _on_btn_clicked(self, post, btn):
         import ui.animations as anims
@@ -339,67 +418,82 @@ class Gallery(QWidget):
         return target
 
     def prepare_skeletons(self, posts):
-        """Prepare skeletal boxes for posts while images are downloading."""
+        """Create permanent widgets for posts while images are downloading.
+
+        Each post gets its own QPushButton + star button, created once and
+        never recycled.  Signals are connected here and never disconnected.
+        This is Resource Virtualization — the widgets are permanent, only
+        the QPixmap content is virtualized on scroll.
+        """
         for post in posts:
-            # Skip if we already have this post
-            if any(item['post'].get('id') == post.get('id') for item in self._items):
+            post_id = post.get('id')
+            if any(item['post'].get('id') == post_id for item in self._items):
                 continue
-                
+
             w = post.get('image_width', 0)
             h = post.get('image_height', 0)
             aspect = (h / w) if w else 1.0
-            
+
+            # Create permanent button — never recycled
+            btn = QPushButton(self.container)
+            btn.setFlat(True)
+            btn.setStyleSheet(
+                f"border: none; background-color: {colors.BUTTON_BG}; "
+                f"border-radius: 12px; padding: 0;"
+            )
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.hide()
+
+            star = QPushButton(btn)
+            star.setText("★")
+            star.setCursor(Qt.CursorShape.PointingHandCursor)
+            star.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+
+            # Signals connected ONCE — never disconnected or recycled
+            btn.clicked.connect(lambda checked, p=post, b=btn: self._on_btn_clicked(p, b))
+            star.clicked.connect(lambda checked, p=post, s=star: self._toggle_bookmark_direct(p, s))
+
             self._items.append({
                 'post': post,
                 'aspect': aspect,
-                'safe_bytes': None, # None means it's a skeleton
+                'safe_bytes': None,
                 'rect': QRect(),
-                'animated': False
+                'animated': False,
+                'btn': btn,
+                'star': star,
             })
         self._do_refresh()
 
     @pyqtSlot(bytes, dict, int)
     def add_item(self, safe_bytes: bytes, post: dict, idx: int):
         post_id = post.get("id")
-        
-        pixmap = QPixmap()
-        pixmap.loadFromData(safe_bytes)
 
-        max_w = max(400, settings.manager.thumbnail_size * 2)
-        if pixmap.width() > max_w:
-            pixmap = pixmap.scaledToWidth(max_w, Qt.TransformationMode.SmoothTransformation)
-        rounded_pixmap = self._round_pixmap(pixmap)
+        # Pre-decode and cache the pixmap
+        self._px_cache.put(post_id, self._decode_and_round(safe_bytes))
 
-        # Store in the byte-bounded QPixmap LRU
-        self._px_cache.put(post_id, rounded_pixmap)
-
-        # Find the skeleton and fill it
-        found = False
+        # Find the skeleton and fill it with image data
         for item in self._items:
             if item['post'].get('id') == post_id:
                 item['safe_bytes'] = safe_bytes
-                found = True
+                self._update_viewport()
+                return
+
+        # Fallback: skeleton wasn't prepared — create the widget now
+        self.prepare_skeletons([post])
+        for item in self._items:
+            if item['post'].get('id') == post_id:
+                item['safe_bytes'] = safe_bytes
                 break
-                
-        if not found:
-            # Fallback if skeleton wasn't prepared
-            orig_w = pixmap.width()
-            orig_h = pixmap.height()
-            aspect = orig_h / orig_w if orig_w > 0 else 1.0
-            self._items.append({
-                'post': post,
-                'aspect': aspect,
-                'safe_bytes': safe_bytes,
-                'rect': QRect(),
-                'animated': False
-            })
-            if len(self._items) % 5 == 0:
-                self._do_refresh()
-            else:
-                self.refresh_layout()
-        else:
-            # Since the skeleton is filled, we just need to update the viewport so it redraws
-            self._update_viewport()
+        self._update_viewport()
+
+    def _decode_and_round(self, safe_bytes: bytes) -> QPixmap:
+        """Decode JPEG bytes → scaled, rounded QPixmap for display."""
+        pixmap = QPixmap()
+        pixmap.loadFromData(safe_bytes)
+        max_w = max(400, settings.manager.thumbnail_size * 2)
+        if pixmap.width() > max_w:
+            pixmap = pixmap.scaledToWidth(max_w, Qt.TransformationMode.SmoothTransformation)
+        return self._round_pixmap(pixmap)
 
     def _style_star(self, star_btn, is_bookmarked, font_sz):
         color = colors.FAVORITE if is_bookmarked else colors.TEXT_PRIMARY
@@ -429,21 +523,18 @@ class Gallery(QWidget):
             self._style_star(star_btn, True, 16)
 
     def clear(self):
+        # Destroy all permanent widgets
+        for item in self._items:
+            btn = item.get('btn')
+            if btn:
+                btn.hide()
+                btn.deleteLater()
         self._items.clear()
+        self._y_index.clear()
         self.container.setMinimumHeight(0)
 
         # Release all decoded QPixmaps immediately (no lingering memory)
         self._px_cache.clear()
-
-        for pw in self._widget_pool:
-            if pw['in_use']:
-                pw['in_use'] = False
-                pw['btn'].hide()
-                pw['post_id'] = None
-                try: pw['btn'].clicked.disconnect() 
-                except: pass
-                try: pw['star'].clicked.disconnect()
-                except: pass
 
     def open_preview(self, post):
         self.main_app.open_preview(post)
