@@ -19,29 +19,32 @@ def validate_search_term(term: str, max_length: int = 500) -> str:
     """
     Validate search terms for booru queries.
 
+    Booru search syntax is rich: operators like ``score:>=50``, ``id:>1500000``,
+    ``order:score``, ``filetype:png/webp``, and negation tags (``-tag``) are all
+    legitimate.  A regex that strips ``<``, ``>``, ``/``, or ``[`` will silently
+    corrupt these queries and return wrong results with no error message.
+
+    This function only enforces a length cap and normalises whitespace.
+    The Booru API itself will reject genuinely malformed syntax.
+
     Args:
         term: Search term string
         max_length: Maximum allowed length
 
     Returns:
-        Validated and sanitized search term
+        Validated and whitespace-normalised search term
 
     Raises:
-        ValidationError: If term is invalid
+        ValidationError: If term is not a string or exceeds max_length
     """
     if not isinstance(term, str):
         raise ValidationError("Search term must be a string")
 
-    term = term.strip()
+    # Normalise whitespace
+    term = " ".join(term.split())
 
     if len(term) > max_length:
         raise ValidationError(f"Search term too long (max {max_length} characters)")
-
-    # Allow alphanumeric, spaces, hyphens, underscores, and common booru operators
-    # This is more permissive than the review suggested since booru search syntax is complex
-    if not re.match(r'^[a-zA-Z0-9_\-\s\+\(\)\*\~\!\:\'\"]+$', term):
-        # Instead of rejecting, sanitize by removing dangerous characters
-        term = re.sub(r'[^\w\s\-\+\(\)\*\~\!\:\'\"]', '', term)
 
     return term
 

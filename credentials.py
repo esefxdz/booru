@@ -214,24 +214,3 @@ def list_boorus_with_credentials() -> list[str]:
 def migrate_from_settings(settings_credentials: Dict[str, Any]) -> None:
     """Migrate credentials from settings.json."""
     _credential_manager.migrate_from_settings(settings_credentials)
-
-# --- Convenience functions ---
-def set_credential(booru: str, user_id: str, api_key: str) -> None:
-    """Store API credentials."""
-    _credential_manager.set_credential(booru, user_id, api_key)
-
-def get_credential(booru: str) -> Optional[Dict[str, str]]:
-    """Retrieve API credentials."""
-    return _credential_manager.get_credential(booru)
-
-def delete_credential(booru: str) -> bool:
-    """Delete stored credentials for a booru site."""
-    return _credential_manager.delete_credential(booru)
-
-def list_boorus_with_credentials() -> list[str]:
-    """Get list of booru sites that have stored credentials."""
-    return _credential_manager.list_boorus_with_credentials()
-
-def migrate_from_settings(settings_credentials: Dict[str, Any]) -> None:
-    """Migrate credentials from settings.json to separate file."""
-    _credential_manager.migrate_from_settings(settings_credentials)

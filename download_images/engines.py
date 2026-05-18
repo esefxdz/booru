@@ -10,6 +10,15 @@ Engines are ordered from most reliable to most advanced:
   3. httpx        — Modern async-capable client.  HTTP/2 support.
   4. curl_cffi    — TLS fingerprint impersonation.  Bypasses CF CDNs.
   5. powershell   — Invoke-WebRequest.  No Python deps needed.
+
+SSL policy
+----------
+Each engine tries with SSL verification enabled first.  If the connection
+fails with an SSL error (common on CDNs with non-standard cert chains or
+on corporate machines doing TLS inspection), it retries with
+``verify=False`` and logs a WARNING so the user and developer can see it.
+A silent unconditional ``verify=False`` would allow undetected MITM attacks
+on hostile networks (hotel Wi-Fi, etc.).
 """
 
 from __future__ import annotations
@@ -49,37 +58,47 @@ DEFAULT_ENGINE = "urllib"
 
 def _download_urllib(url: str, dest: Path, headers: dict,
                      on_progress: Callable | None = None) -> bool:
-    """Download using Python's built-in urllib."""
+    """Download using Python's built-in urllib.
+
+    Tries with SSL verification enabled first; falls back to
+    ``CERT_NONE`` only on SSL failure, logging a warning.
+    """
     req = urllib.request.Request(url, headers=headers)
 
-    # Permissive SSL context — many CDNs use certs that the bundled
-    # certifi store doesn't trust in PyInstaller builds.
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    def _attempt(verify: bool) -> bool:
+        ctx = ssl.create_default_context()
+        if not verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+        try:
+            resp = urllib.request.urlopen(req, timeout=60, context=ctx)
+        except urllib.error.HTTPError as e:
+            log.warning("urllib: HTTP %s for %s", e.code, url)
+            return False
+
+        if resp.status != 200:
+            log.warning("urllib: HTTP %s for %s", resp.status, url)
+            return False
+
+        total = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+        with open(dest, "wb") as f:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if on_progress and total:
+                    on_progress(downloaded, total)
+        return True
 
     try:
-        resp = urllib.request.urlopen(req, timeout=60, context=ctx)
-    except urllib.error.HTTPError as e:
-        log.warning("urllib: HTTP %s for %s", e.code, url)
-        return False
-
-    if resp.status != 200:
-        log.warning("urllib: HTTP %s for %s", resp.status, url)
-        return False
-
-    total = int(resp.headers.get("Content-Length", 0))
-    downloaded = 0
-    with open(dest, "wb") as f:
-        while True:
-            chunk = resp.read(65536)
-            if not chunk:
-                break
-            f.write(chunk)
-            downloaded += len(chunk)
-            if on_progress and total:
-                on_progress(downloaded, total)
-    return True
+        return _attempt(verify=True)
+    except ssl.SSLError:
+        log.warning("urllib: SSL verification failed for %s — retrying without verification", url)
+        return _attempt(verify=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -91,17 +110,24 @@ def _download_requests(url: str, dest: Path, headers: dict,
     """Download using the ``requests`` library."""
     import requests as _req
 
-    with _req.get(url, headers=headers, stream=True, timeout=60, verify=False) as r:
-        r.raise_for_status()
-        total = int(r.headers.get("Content-Length", 0))
-        downloaded = 0
-        with open(dest, "wb") as f:
-            for chunk in r.iter_content(chunk_size=65536):
-                f.write(chunk)
-                downloaded += len(chunk)
-                if on_progress and total:
-                    on_progress(downloaded, total)
-    return True
+    def _attempt(verify: bool) -> bool:
+        with _req.get(url, headers=headers, stream=True, timeout=60, verify=verify) as r:
+            r.raise_for_status()
+            total = int(r.headers.get("Content-Length", 0))
+            downloaded = 0
+            with open(dest, "wb") as f:
+                for chunk in r.iter_content(chunk_size=65536):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if on_progress and total:
+                        on_progress(downloaded, total)
+        return True
+
+    try:
+        return _attempt(verify=True)
+    except _req.exceptions.SSLError:
+        log.warning("requests: SSL verification failed for %s — retrying without verification", url)
+        return _attempt(verify=False)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -113,20 +139,29 @@ def _download_httpx(url: str, dest: Path, headers: dict,
     """Download using ``httpx`` with streaming."""
     import httpx
 
-    with httpx.Client(verify=False, timeout=60, follow_redirects=True) as client:
-        with client.stream("GET", url, headers=headers) as r:
-            if r.status_code != 200:
-                log.warning("httpx: HTTP %s for %s", r.status_code, url)
-                return False
-            total = int(r.headers.get("Content-Length", 0))
-            downloaded = 0
-            with open(dest, "wb") as f:
-                for chunk in r.iter_bytes(65536):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if on_progress and total:
-                        on_progress(downloaded, total)
-    return True
+    def _attempt(verify: bool) -> bool:
+        with httpx.Client(verify=verify, timeout=60, follow_redirects=True) as client:
+            with client.stream("GET", url, headers=headers) as r:
+                if r.status_code != 200:
+                    log.warning("httpx: HTTP %s for %s", r.status_code, url)
+                    return False
+                total = int(r.headers.get("Content-Length", 0))
+                downloaded = 0
+                with open(dest, "wb") as f:
+                    for chunk in r.iter_bytes(65536):
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if on_progress and total:
+                            on_progress(downloaded, total)
+        return True
+
+    try:
+        return _attempt(verify=True)
+    except httpx.ConnectError as e:
+        if "SSL" in str(e) or "certificate" in str(e).lower():
+            log.warning("httpx: SSL verification failed for %s — retrying without verification", url)
+            return _attempt(verify=False)
+        raise
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -138,18 +173,27 @@ def _download_curl_cffi(url: str, dest: Path, headers: dict,
     """Download using ``curl_cffi`` with Chrome TLS impersonation."""
     from curl_cffi import requests as cffi_req
 
-    r = cffi_req.get(url, headers=headers, impersonate="chrome136",
-                     timeout=60, verify=False, allow_redirects=True)
-    if r.status_code != 200:
-        log.warning("curl_cffi: HTTP %s for %s", r.status_code, url)
-        return False
+    def _attempt(verify: bool) -> bool:
+        r = cffi_req.get(url, headers=headers, impersonate="chrome136",
+                         timeout=60, verify=verify, allow_redirects=True)
+        if r.status_code != 200:
+            log.warning("curl_cffi: HTTP %s for %s", r.status_code, url)
+            return False
 
-    content = r.content
-    with open(dest, "wb") as f:
-        f.write(content)
-    if on_progress:
-        on_progress(len(content), len(content))
-    return True
+        content = r.content
+        with open(dest, "wb") as f:
+            f.write(content)
+        if on_progress:
+            on_progress(len(content), len(content))
+        return True
+
+    try:
+        return _attempt(verify=True)
+    except Exception as e:
+        if "ssl" in str(e).lower() or "certificate" in str(e).lower():
+            log.warning("curl_cffi: SSL verification failed for %s — retrying without verification", url)
+            return _attempt(verify=False)
+        raise
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -171,8 +215,17 @@ def _download_powershell(url: str, dest: Path, headers: dict,
         capture_output=True, text=True, timeout=120,
     )
     if result.returncode != 0:
-        log.warning("powershell: %s", result.stderr.strip())
-        return False
+        # If SSL is the cause, retry with SkipCertificateCheck
+        if "ssl" in result.stderr.lower() or "certificate" in result.stderr.lower():
+            log.warning("powershell: SSL error for %s — retrying with -SkipCertificateCheck", url)
+            ps_cmd_nossl = ps_cmd + " -SkipCertificateCheck"
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd_nossl],
+                capture_output=True, text=True, timeout=120,
+            )
+        if result.returncode != 0:
+            log.warning("powershell: %s", result.stderr.strip())
+            return False
     if on_progress and dest.exists():
         sz = dest.stat().st_size
         on_progress(sz, sz)

@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from ui import settings_view as settings
 import boorus
@@ -8,7 +9,7 @@ class FetchThread(QThread):
     error = pyqtSignal(str)
     preview_ready = pyqtSignal(bytes, dict, int)  # safe JPEG bytes, post, idx
     posts_ready = pyqtSignal(list, bool)  # emitted after metadata, before thumbnails
-    
+
     def __init__(self, downloader, tags, current_page, is_bookmarks_mode, bookmark_filter):
         super().__init__()
         self.downloader = downloader
@@ -16,6 +17,9 @@ class FetchThread(QThread):
         self.current_page = current_page
         self.is_bookmarks_mode = is_bookmarks_mode
         self.bookmark_filter = bookmark_filter
+        # Per-thread cancellation flag. AppController sets this before replacing
+        # the thread so in-flight thumbnail downloads stop cleanly.
+        self.cancel_event = threading.Event()
 
     def run(self):
         loop = asyncio.new_event_loop()
@@ -40,11 +44,14 @@ class FetchThread(QThread):
             # Phase 1: Emit metadata immediately so the UI shows skeletons
             self.posts_ready.emit(posts, self.is_bookmarks_mode)
 
-            # Phase 2: Fetch thumbnails in the background (non-blocking)
-            if posts:
+            # Phase 2: Fetch thumbnails — skip entirely if already cancelled
+            if posts and not self.cancel_event.is_set():
                 def on_preview(pil_img, post, idx):
-                    self.preview_ready.emit(pil_img, post, idx)
-                loop.run_until_complete(self.downloader.fetch_previews(posts, on_preview))
+                    if not self.cancel_event.is_set():
+                        self.preview_ready.emit(pil_img, post, idx)
+                loop.run_until_complete(
+                    self.downloader.fetch_previews(posts, on_preview, self.cancel_event)
+                )
 
             self.finished.emit(posts, self.is_bookmarks_mode)
         except Exception as e:
@@ -60,13 +67,13 @@ class BulkThread(QThread):
     progress = pyqtSignal(str)
     finished = pyqtSignal(int)
     error = pyqtSignal(str)
-    
+
     def __init__(self, downloader, tags, limit):
         super().__init__()
         self.downloader = downloader
         self.tags = tags
         self.limit = limit
-        
+
     def run(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -76,12 +83,12 @@ class BulkThread(QThread):
             if not posts:
                 self.finished.emit(0)
                 return
-            
+
             self.progress.emit(f"Downloading {len(posts)} items...")
-            
+
             from download_images import download_post, get_bulk_folder
             folder = get_bulk_folder(self.tags)
-            
+
             success = 0
             for i, post in enumerate(posts):
                 self.progress.emit(f"Downloading {i+1}/{len(posts)}...")
@@ -107,7 +114,21 @@ class AppController(QObject):
         super().__init__()
         self.downloader = downloader
         self._is_loading = False
-        self._fetch_gen = 0  # generation counter to discard stale previews
+        self._fetch_gen = 0
+        self._thread_lock = threading.Lock()  # guards _is_loading check-and-set
+        self.thread: FetchThread | None = None
+
+    def _cancel_active_thread(self):
+        """Signal the current FetchThread to stop and wait up to 2 s for it.
+
+        Must be called while holding ``_thread_lock`` or from the Qt main
+        thread before a new thread is started.  The 2-second timeout prevents
+        the UI from hanging if a CDN request is slow to cancel.
+        """
+        if self.thread is not None and self.thread.isRunning():
+            self.thread.cancel_event.set()
+            self.thread.quit()
+            self.thread.wait(2000)  # ms
 
     def _wire_thread(self, thread):
         """Connect a FetchThread's signals, guarded by a generation counter.
@@ -132,8 +153,9 @@ class AppController(QObject):
             self.preview_ready.emit(safe_bytes, post, idx)
 
     def trigger_fetch(self, tags, current_page, is_bookmarks_mode, bookmark_filter):
-        if self._is_loading: return
-        self._is_loading = True
+        with self._thread_lock:
+            self._cancel_active_thread()
+            self._is_loading = True
         self.loading_started.emit()
         self.status_updated.emit("Loading...", "yellow")
         self.thread = FetchThread(self.downloader, tags, current_page, is_bookmarks_mode, bookmark_filter)
@@ -142,8 +164,10 @@ class AppController(QObject):
 
     def trigger_fetch_append(self, tags, current_page, is_bookmarks_mode, bookmark_filter):
         """Like trigger_fetch but doesn't clear the gallery (infinite scroll)."""
-        if self._is_loading: return
-        self._is_loading = True
+        with self._thread_lock:
+            if self._is_loading:
+                return
+            self._is_loading = True
         self.loading_started_append.emit()
         self.status_updated.emit("Loading more\u2026", "yellow")
         self.thread = FetchThread(self.downloader, tags, current_page, is_bookmarks_mode, bookmark_filter)
@@ -155,7 +179,8 @@ class AppController(QObject):
         """Metadata arrived — show skeletons immediately and unlock the UI."""
         if gen != self._fetch_gen:
             return  # stale generation, discard
-        self._is_loading = False
+        with self._thread_lock:
+            self._is_loading = False
         self.loading_finished.emit()
         if posts:
             self.status_updated.emit("Ready", "green")
@@ -171,10 +196,12 @@ class AppController(QObject):
 
     @pyqtSlot(str)
     def _on_fetch_error(self, error_msg):
-        self._is_loading = False
+        with self._thread_lock:
+            self._is_loading = False
         self.loading_finished.emit()
         self.status_updated.emit("Error!", "red")
-        print(f"Fetch Error: {error_msg}")
+        import logging
+        logging.getLogger(__name__).error("Fetch error: %s", error_msg)
 
     def bulk_download(self, tags, limit):
         self.bulk_thread = BulkThread(self.downloader, tags, limit)
