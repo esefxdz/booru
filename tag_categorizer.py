@@ -88,23 +88,33 @@ class TagCategorizer:
 
     async def _fetch_from_danbooru(self, tags: list):
         chunk_size = 50
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            for i in range(0, len(tags), chunk_size):
-                chunk = tags[i:i + chunk_size]
-                names = ",".join(chunk)
-                url = f"https://danbooru.donmai.us/tags.json?search[name_comma]={names}"
-                try:
-                    r = await client.get(url, headers={"User-Agent": "BooruBrowser/1.0"})
-                    if r.status_code == 200:
-                        data = r.json()
-                        with self._lock:
-                            for item in data:
-                                name = item.get("name")
-                                cat_id = item.get("category", 0)
-                                cat_name = CAT_MAP.get(cat_id, "general")
-                                self.cache[name] = cat_name
-                except Exception as e:
-                    print(f"[tag_categorizer] Danbooru API error: {e}")
+        try:
+            from cloudflare_bypasser import get_session
+            session = get_session("danbooru")
+        except Exception:
+            # Fallback to raw httpx if bypass system isn't available
+            session = None
+
+        for i in range(0, len(tags), chunk_size):
+            chunk = tags[i:i + chunk_size]
+            names = ",".join(chunk)
+            url = f"https://danbooru.donmai.us/tags.json?search[name_comma]={names}"
+            try:
+                if session:
+                    r = await session.get(url, headers={"User-Agent": "BooruBrowser/1.0"})
+                else:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        r = await client.get(url, headers={"User-Agent": "BooruBrowser/1.0"})
+                if r.status_code == 200:
+                    data = r.json() if callable(getattr(r, 'json', None)) else []
+                    with self._lock:
+                        for item in data:
+                            name = item.get("name")
+                            cat_id = item.get("category", 0)
+                            cat_name = CAT_MAP.get(cat_id, "general")
+                            self.cache[name] = cat_name
+            except Exception as e:
+                print(f"[tag_categorizer] Danbooru API error: {e}")
 
 # Global instance
 categorizer = TagCategorizer()

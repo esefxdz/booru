@@ -6,6 +6,7 @@ import ui.animations as anims
 
 
 from ui import colors
+#this is for favorite tags and blacklist tags
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                       CLASS: BooruTextBar                           ║
