@@ -11,7 +11,7 @@ from PyQt6.QtGui import QFont, QColor, QIcon
 
 from ui import settings_view as settings
 import boorus
-from downloader import BooruDownloader
+from download_images import BooruDownloader
 from controller import AppController
 from displayers.overlay import MediaOverlay
 from ui.sidebar import Sidebar

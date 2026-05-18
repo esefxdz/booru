@@ -58,6 +58,7 @@ class SettingsManager:
         self.use_network_semaphore: bool = True
         self.download_folder_use_artist_folder: bool = False
         self.use_smart_folders: bool = False
+        self.download_engine: str = "urllib"
         self.bypass_data: dict = {}
         self.session_keys: dict = {}
         self.auth_tokens: dict  = {}

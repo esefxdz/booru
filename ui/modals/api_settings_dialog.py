@@ -446,15 +446,14 @@ class APISettingsDialog(QDialog):
     # └──────────────────────────────────────────────────────────────────┘
     def _run_cf_bypass(self):
         from ui.browser_dialog import CloudflareBrowserDialog
-        from cloudflare_bypasser import store as cf_store
         url = boorus.REGISTRY[self.name]["url"]
         dlg = CloudflareBrowserDialog(url, self.name, self)
-
-        def on_captured(cookies: dict):
-            # Persist cookies + the exact UA that solved the challenge
-            cf_store.save_bypass(self.name, cookies, dlg.get_user_agent())
-
-        dlg.cookies_captured.connect(on_captured)
+        # _finalize() inside CloudflareBrowserDialog already calls
+        # store.save_bypass() with the correct UA from the isolated profile.
+        # We only need to trigger a re-fetch on success.
+        dlg.cookies_captured.connect(
+            lambda _: self.parent_gui.trigger_fetch(new=True)
+        )
         dlg.exec()
 
     # ┌──────────────────────────────────────────────────────────────────┐

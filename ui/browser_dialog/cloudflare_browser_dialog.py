@@ -314,7 +314,8 @@ class CloudflareBrowserDialog(InAppBrowser):
         from cloudflare_bypasser import store
         store.save_bypass(self.booru_name, cookies, ua)
         self._set_status("✅ Manual cookies applied — closing…", colors.SUCCESS)
-        QTimer.singleShot(500, lambda: self._finalize(cookies))
+        # Pass the typed UA so _finalize does not overwrite with the profile UA
+        QTimer.singleShot(500, lambda u=ua: self._finalize(cookies, ua=u))
 
     # ═══════════════════════════════════════════════════════════════════
     #  Engine 3 — Auto-Import from System Browsers
@@ -357,12 +358,14 @@ class CloudflareBrowserDialog(InAppBrowser):
     #  Finalize — save and close
     # ═══════════════════════════════════════════════════════════════════
 
-    def _finalize(self, cookies):
-        # Capture the UA from the per-booru profile (matches what CF fingerprinted)
-        ua = self._cf_profile.httpUserAgent()
-
-        from cloudflare_bypasser import store
-        store.save_bypass(self.booru_name, cookies, ua)
+    def _finalize(self, cookies, ua=None):
+        # ua=None means in-browser capture: profile UA is what CF fingerprinted.
+        # When ua is provided, the calling engine already saved with the correct UA.
+        if ua is None:
+            ua = self._cf_profile.httpUserAgent()
+            from cloudflare_bypasser import store
+            store.save_bypass(self.booru_name, cookies, ua)
+        # else: already saved correctly -- do not overwrite
         self.cookies_captured.emit(cookies)
         self.accept()
 

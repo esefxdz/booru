@@ -127,22 +127,59 @@ class ActionButtons(QWidget):
     # └──────────────────────────────────────────────────────────────────┘
     def _download(self):
         if not self.post: return
-        self.dl_btn.setText("...")
+        self.dl_btn.setText("⏳ ...")
         parent_gui = self.sidebar.overlay.parent_gui
+        post = self.post  # capture reference — self.post may change
         
         def work():
             try:
-                dl_dir = parent_gui.downloader.get_download_folder_for_post(self.post)
-                import asyncio
-                asyncio.run(parent_gui.downloader.download_task(self.post, dl_dir))
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self.dl_btn.setText("Done"))
+                from download_images import download_post, get_download_folder
+                dl_dir = get_download_folder(post, parent_gui.downloader)
+                ok = download_post(post, dl_dir, parent_gui.downloader)
+                if ok:
+                    QTimer.singleShot(0, lambda: self._set_dl_status("Done", colors.SUCCESS))
+                else:
+                    QTimer.singleShot(0, lambda: self._set_dl_status("Failed", colors.DANGER))
             except Exception as e:
                 print(f"[actions] Download error: {e}")
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self.dl_btn.setText("Failed"))
+                QTimer.singleShot(0, lambda: self._set_dl_status("Failed", colors.DANGER))
                 
         threading.Thread(target=work, daemon=True).start()
+
+    def _set_dl_status(self, text, color=None):
+        """Thread-safe helper to update download button text."""
+        self.dl_btn.setText(text)
+        if color:
+            self.dl_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {colors.BUTTON_BG};
+                    color: {color};
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px;
+                    font-size: 12px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{ background-color: {colors.BUTTON_HOVER}; }}
+            """)
+        # Reset after 3 seconds
+        QTimer.singleShot(3000, lambda: self._reset_dl_btn())
+
+    def _reset_dl_btn(self):
+        """Restore the download button to its default state."""
+        self.dl_btn.setText("Download")
+        self.dl_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {colors.BUTTON_BG};
+                color: {colors.TEXT_PRIMARY};
+                border: none;
+                border-radius: 4px;
+                padding: 6px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: {colors.BUTTON_HOVER}; }}
+        """)
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _share  — copies URL to clipboard and resets button text.     │

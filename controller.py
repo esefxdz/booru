@@ -48,7 +48,7 @@ class FetchThread(QThread):
 
             self.finished.emit(posts, self.is_bookmarks_mode)
         except Exception as e:
-            from downloader import CloudflareBlockError
+            from download_images import CloudflareBlockError
             if isinstance(e, CloudflareBlockError):
                 self.error.emit(str(e))
             else:
@@ -79,13 +79,16 @@ class BulkThread(QThread):
             
             self.progress.emit(f"Downloading {len(posts)} items...")
             
-            async def dls():
-                folder = self.downloader.get_valid_folder(self.tags)
-                tasks = [self.downloader.download_task(p, folder) for p in posts]
-                await asyncio.gather(*tasks)
+            from download_images import download_post, get_bulk_folder
+            folder = get_bulk_folder(self.tags)
+            
+            success = 0
+            for i, post in enumerate(posts):
+                self.progress.emit(f"Downloading {i+1}/{len(posts)}...")
+                if download_post(post, folder, self.downloader):
+                    success += 1
 
-            loop.run_until_complete(dls())
-            self.finished.emit(len(posts))
+            self.finished.emit(success)
         except Exception as e:
             self.error.emit(str(e))
         finally:
