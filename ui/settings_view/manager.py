@@ -122,7 +122,14 @@ class SettingsManager:
     def save(self):
         """Persist current settings to disk."""
         self.validate()
-        data = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+        # These keys contain live session cookies, CF bypass tokens, and auth
+        # headers.  They must never be written to the plaintext settings.json
+        # file — store them via CredentialManager / keyring instead.
+        _SENSITIVE_KEYS = {"bypass_data", "session_keys", "auth_tokens", "bookmarks"}
+        data = {
+            k: v for k, v in self.__dict__.items()
+            if not k.startswith("_") and k not in _SENSITIVE_KEYS
+        }
         return self._raw_save(data)
 
     def _raw_save(self, data):

@@ -148,10 +148,10 @@ class BooruDownloader(QObject):
     #  Thumbnail fetching (delegates to thumbnails.py)
     # ──────────────────────────────────────────────────────────────
 
-    async def fetch_previews(self, posts, callback):
+    async def fetch_previews(self, posts, callback, cancel_event=None):
         """Fetch and decode thumbnails for a list of posts."""
         from download_images.thumbnails import fetch_previews
-        await fetch_previews(posts, self._adapter(), self._fetch, callback)
+        await fetch_previews(posts, self._adapter(), self._fetch, callback, cancel_event)
 
     # ──────────────────────────────────────────────────────────────
     #  Credentials
