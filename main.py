@@ -187,7 +187,6 @@ def main():
     _setup_logging()
 
     settings.manager.load()
-    settings.manager.ensure_booru_order()
     settings.manager.load_bookmarks()
 
     # Share contexts to prevent "virtualization" errors on some systems

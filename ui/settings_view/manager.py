@@ -107,19 +107,6 @@ class SettingsManager:
 
         self.validate()
 
-    def ensure_booru_order(self):
-        """Append any registered boorus not yet in the saved order.
-
-        ``booru_order`` drives the server bar; without this a profile with no
-        saved order (fresh install) renders an empty bar. Existing entries keep
-        their position so user reordering is preserved, and newly-added
-        built-in boorus surface automatically.
-        """
-        import boorus
-        for name in boorus.REGISTRY:
-            if name not in self.booru_order:
-                self.booru_order.append(name)
-
     def validate(self):
         """Enforce sane bounds on numeric settings."""
         if self.thumbnail_size < 100:
