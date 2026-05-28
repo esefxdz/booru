@@ -21,7 +21,8 @@ import boorus
 from adapters import get_adapter
 
 from download_images.network import NetworkManager
-
+from download_images.thumbnails import fetch_previews
+from download_images.api_client import search_posts
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  BooruDownloader — thin composition layer                           ║
@@ -34,12 +35,13 @@ from download_images.network import NetworkManager
 # ║    - Delegating thumbnails to thumbnails.fetch_previews             ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
+
 class BooruDownloader(QObject):
 
     # ── Signals for the DownloadWindow progress UI ────────────────
-    download_started  = pyqtSignal(str, str)       # task_id, filename
+    download_started = pyqtSignal(str, str)  # task_id, filename
     download_progress = pyqtSignal(str, int, int)  # task_id, current, total
-    download_finished = pyqtSignal(str)            # task_id
+    download_finished = pyqtSignal(str)  # task_id
 
     def __init__(self):
         super().__init__()
@@ -75,18 +77,21 @@ class BooruDownloader(QObject):
         Full image downloads use download_images.engines instead.
         """
         from cloudflare_bypasser import get_session
+
         session = get_session(booru or settings.manager.active_booru)
 
         headers = self.headers.copy()
 
         if params is not None:
             # API requests — JSON endpoint
-            headers.update({
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-site",
-                "Accept-Language": "en-US,en;q=0.9",
-            })
+            headers.update(
+                {
+                    "Sec-Fetch-Dest": "empty",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Site": "same-site",
+                    "Accept-Language": "en-US,en;q=0.9",
+                }
+            )
         else:
             # Image requests — CDN needs Referer for hotlink protection
             adapter = self._adapter()
@@ -94,13 +99,15 @@ class BooruDownloader(QObject):
             base_url = base_url.split("/index.php")[0].split("/posts.json")[0]
             if not base_url.endswith("/"):
                 base_url += "/"
-            headers.update({
-                "Referer": base_url,
-                "Sec-Fetch-Dest": "image",
-                "Sec-Fetch-Mode": "no-cors",
-                "Sec-Fetch-Site": "cross-site",
-                "Accept-Language": "en-US,en;q=0.9",
-            })
+            headers.update(
+                {
+                    "Referer": base_url,
+                    "Sec-Fetch-Dest": "image",
+                    "Sec-Fetch-Mode": "no-cors",
+                    "Sec-Fetch-Site": "cross-site",
+                    "Accept-Language": "en-US,en;q=0.9",
+                }
+            )
 
         return await NetworkManager.fetch(session, url, params=params, headers=headers)
 
@@ -139,7 +146,7 @@ class BooruDownloader(QObject):
 
     async def get_image_urls(self, tags, limit, page=0):
         """Search the active booru and return a list of post dicts."""
-        from download_images.api_client import search_posts
+
         return await search_posts(
             self._adapter(), self.site_data, self._fetch, tags, limit, page
         )
@@ -150,8 +157,9 @@ class BooruDownloader(QObject):
 
     async def fetch_previews(self, posts, callback, cancel_event=None):
         """Fetch and decode thumbnails for a list of posts."""
-        from download_images.thumbnails import fetch_previews
-        await fetch_previews(posts, self._adapter(), self._fetch, callback, cancel_event)
+        await fetch_previews(
+            posts, self._adapter(), self._fetch, callback, cancel_event
+        )
 
     # ──────────────────────────────────────────────────────────────
     #  Credentials
