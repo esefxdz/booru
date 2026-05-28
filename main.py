@@ -10,8 +10,10 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt
 
 # 4.1 High-DPI & Scaling Support
-if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, 'PassThrough'):
-    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
 
 # WebEngine MUST be imported before QApplication is created.
 from PyQt6.QtWebEngineWidgets import QWebEngineView as _WEV  # noqa: F401
@@ -170,8 +172,8 @@ def _setup_logging():
 
     handler = RotatingFileHandler(
         log_dir / "app.log",
-        maxBytes=5 * 1024 * 1024,   # 5 MB per file
-        backupCount=3,               # keep last 3 rotated files
+        maxBytes=5 * 1024 * 1024,  # 5 MB per file
+        backupCount=3,  # keep last 3 rotated files
         encoding="utf-8",
     )
     logging.basicConfig(
@@ -185,6 +187,7 @@ def main():
     _setup_logging()
 
     settings.manager.load()
+    settings.manager.ensure_booru_order()
     settings.manager.load_bookmarks()
 
     # Share contexts to prevent "virtualization" errors on some systems
@@ -201,6 +204,7 @@ def main():
 
     # ── Clean shutdown: close the SQLite cache connection ──────────
     import thumb_cache
+
     thumb_cache.shutdown()
 
     sys.exit(exit_code)
@@ -209,4 +213,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-#
