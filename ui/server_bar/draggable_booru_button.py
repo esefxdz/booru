@@ -147,9 +147,10 @@ class DraggableBooruButton(QPushButton):
         target_booru = self.booru_name
         
         if source_booru != target_booru:
-            if source_booru in settings.manager.booru_order and target_booru in settings.manager.booru_order:
-                # Make a clean copy of the list to mutate safely
-                order = settings.manager.booru_order[:]
+            # Start from the full effective order so reordering works even when
+            # booru_order hasn't been populated yet (it's an ordering overlay).
+            order = self.server_bar.effective_order()
+            if source_booru in order and target_booru in order:
                 order.remove(source_booru)
                 # Insert the dragged booru immediately before the drop target
                 target_index = order.index(target_booru)
