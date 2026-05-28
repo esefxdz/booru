@@ -68,10 +68,12 @@ class ServerBar(QWidget):
         self.layout.addWidget(sep)
 
         # ── BOORU SITE BUTTONS ─────────────────────────────────────────
-        # Show every registered booru; booru_order is only an ordering overlay
-        for name in self.effective_order():
-            btn = DraggableBooruButton(name, boorus.REGISTRY[name], self)
-            self.layout.addWidget(btn)
+        # Render the user's curated list. boorus.REGISTRY is just the catalog
+        # of supported sites; only boorus the user has added (booru_order) show.
+        for name in settings.manager.booru_order:
+            if name in boorus.REGISTRY:
+                btn = DraggableBooruButton(name, boorus.REGISTRY[name], self)
+                self.layout.addWidget(btn)
 
         # ── ADD BOORU BUTTON (Pinned to bottom) ───────────────────────
         self.add_btn = QPushButton()
@@ -95,18 +97,6 @@ class ServerBar(QWidget):
         self.add_btn.clicked.connect(lambda: AddBooruDialog.show_dialog(self.main_gui))
         self.layout.addStretch()
         self.layout.addWidget(self.add_btn)
-
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  effective_order  — full display order for the server bar.       │
-    # │  All registered boorus appear; booru_order positions the ones    │
-    # │  the user has explicitly reordered, with the rest following in   │
-    # │  registry order. This is the single source of truth for both    │
-    # │  rendering and drag-reordering.                                  │
-    # └──────────────────────────────────────────────────────────────────┘
-    def effective_order(self):
-        order = [n for n in settings.manager.booru_order if n in boorus.REGISTRY]
-        order += [n for n in boorus.REGISTRY if n not in order]
-        return order
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  update_button_styles  — compatibility alias for BooruGui        │
