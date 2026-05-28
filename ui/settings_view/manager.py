@@ -46,7 +46,7 @@ class SettingsManager:
         self.active_booru: str = "safebooru"
         self.blacklist: str = ""
         self.favorites: str = ""
-        self.booru_order: list = []
+        self.booru_order: list = ["safebooru"]  # fresh-profile default; load() overrides
         self.thumbnail_size: int = 250
         self.thumbnail_res: int = 720
         self.masonry_mode: bool = False

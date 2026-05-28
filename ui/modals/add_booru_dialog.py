@@ -288,6 +288,11 @@ class AddBooruDialog(QDialog):
                 "post_key": None,
                 "api_type": api_type,
             }
+            # Add to the user's curated list so it shows on the server bar
+            # (which renders booru_order) and persists across restarts.
+            if name not in settings.manager.booru_order:
+                settings.manager.booru_order.append(name)
+                settings.manager.save()
             self.parent_gui.server_bar.rebuild_list()
             self.accept()
         except Exception as e:
