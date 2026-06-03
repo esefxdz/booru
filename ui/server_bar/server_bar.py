@@ -68,7 +68,8 @@ class ServerBar(QWidget):
         self.layout.addWidget(sep)
 
         # ── BOORU SITE BUTTONS ─────────────────────────────────────────
-        # Respect the user-defined order stored in BOORU_ORDER
+        # Render the user's curated list. boorus.REGISTRY is just the catalog
+        # of supported sites; only boorus the user has added (booru_order) show.
         for name in settings.manager.booru_order:
             if name in boorus.REGISTRY:
                 btn = DraggableBooruButton(name, boorus.REGISTRY[name], self)

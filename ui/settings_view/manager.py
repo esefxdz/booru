@@ -23,7 +23,12 @@ DEFAULT_HEADERS = {
 }
 
 # --- INTERNAL STATE ---
-_SETTINGS_DIR  = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser"
+# Config location: %APPDATA% on Windows, XDG_CONFIG_HOME (or ~/.config) elsewhere.
+_SETTINGS_DIR  = Path(
+    os.environ.get("APPDATA")
+    or os.environ.get("XDG_CONFIG_HOME")
+    or (Path.home() / ".config")
+) / "BooruBrowser"
 _SETTINGS_FILE = _SETTINGS_DIR / "settings.json"
 
 
@@ -41,7 +46,11 @@ class SettingsManager:
         self.active_booru: str = "safebooru"
         self.blacklist: str = ""
         self.favorites: str = ""
+<<<<<<< HEAD
         self.booru_order: list = ["safebooru"]
+=======
+        self.booru_order: list = ["safebooru"]  # fresh-profile default; load() overrides
+>>>>>>> 864933b7c6fe05a3d8457bef800640e243f15ee7
         self.thumbnail_size: int = 250
         self.thumbnail_res: int = 720
         self.masonry_mode: bool = False
