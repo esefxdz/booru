@@ -62,10 +62,8 @@ from ui import settings_view as settings
 import boorus
 from gui import BooruGui
 
-<<<<<<< HEAD
 import ui.colors as colors
 from pathlib import Path
-=======
 from ui import colors
 
 # ── Discord-style dark theme ──────────────────────────────────────────────
@@ -226,7 +224,6 @@ def _setup_logging():
         handlers=[handler, logging.StreamHandler()],  # file + console (when available)
     )
 
->>>>>>> 864933b7c6fe05a3d8457bef800640e243f15ee7
 
 def main():
 
