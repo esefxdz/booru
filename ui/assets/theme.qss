@@ -1,0 +1,132 @@
+/* ── Base ─────────────────────────────────────────── */
+* {
+    font-family: 'Segoe UI', 'Whitney', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 14px;
+    outline: none;
+}
+QMainWindow, QDialog {
+    background-color: {MAIN_BG};
+    color: {TEXT_SECONDARY};
+}
+QWidget {
+    color: {TEXT_SECONDARY};
+}
+QScrollArea, QFrame {
+    background-color: transparent;
+}
+
+/* ── Buttons ───────────────────────────────────────── */
+QPushButton {
+    background-color: {BUTTON_BG};
+    color: {TEXT_SECONDARY};
+    border: 1px solid {BUTTON_HOVER};
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-weight: 600;
+}
+QPushButton:hover {
+    background-color: {BUTTON_HOVER};
+    border: 1px solid {ACCENT};
+}
+QPushButton:pressed {
+    background-color: {BUTTON_PRESSED};
+}
+
+/* ── Input ─────────────────────────────────────────── */
+QLineEdit {
+    background-color: {INPUT_BG};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BUTTON_BG};
+    border-radius: 4px;
+    padding: 6px 10px;
+    selection-background-color: {ACCENT};
+}
+QLineEdit:focus {
+    border: 1px solid {ACCENT};
+    background-color: {MAIN_BG};
+}
+
+/* ── Dialogs ───────────────────────────────────────── */
+QDialog {
+    background-color: {MODAL_BG};
+}
+QLabel {
+    color: {TEXT_SECONDARY};
+    background: transparent;
+}
+
+/* ── Combo / Drop-down ─────────────────────────────── */
+QComboBox {
+    background-color: {INPUT_BG};
+    color: {TEXT_SECONDARY};
+    border: 1px solid {BUTTON_BG};
+    border-radius: 4px;
+    padding: 5px 10px;
+}
+QComboBox QAbstractItemView {
+    background-color: {INPUT_BG};
+    color: {TEXT_SECONDARY};
+    selection-background-color: {ACCENT};
+    border: 1px solid {BUTTON_BG};
+}
+
+/* ── Scroll bars (global) ─────────────────────────── */
+QScrollBar:vertical {
+    background: {MAIN_BG};
+    width: 8px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: {BUTTON_BG};
+    border-radius: 4px;
+    min-height: 40px;
+}
+QScrollBar::handle:vertical:hover {
+    background: {ACCENT};
+}
+QScrollBar::handle:vertical:pressed {
+    background: {ACCENT_HOVER};
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: none;
+    height: 0;
+}
+
+QScrollBar:horizontal {
+    background: {MAIN_BG};
+    height: 8px;
+    margin: 0;
+}
+QScrollBar::handle:horizontal {
+    background: {BUTTON_BG};
+    border-radius: 4px;
+    min-width: 40px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: {ACCENT};
+}
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: none;
+    width: 0;
+}
+
+/* ── Splitter ──────────────────────────────────────── */
+QSplitter::handle {
+    background-color: {INPUT_BG};
+    width: 2px;
+}
+
+/* ── Tool tips ─────────────────────────────────────── */
+QToolTip {
+    background-color: {MAIN_BG};
+    color: {TEXT_SECONDARY};
+    border: 1px solid {ACCENT};
+    border-radius: 4px;
+    padding: 4px 8px;
+}
