@@ -141,6 +141,11 @@ class SettingsManager:
 
     def save(self):
         """Persist current settings to disk."""
+        # Guard: never save the fresh-init defaults before load() has run.
+        # This prevents a crash/early-save from wiping the user's real settings.
+        if not self._initialized:
+            logging.debug("[settings] save() called before initialize() — skipped.")
+            return False
         self.validate()
         # These keys contain live session cookies, CF bypass tokens, and auth
         # headers.  They must never be written to the plaintext settings.json
