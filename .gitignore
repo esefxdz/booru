@@ -1,0 +1,45 @@
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python Caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+*.spec
+
+# Application Data & Media
+files/
+temp_media/
+ui/files/
+.cache/
+.icons/
+
+# Debug and Logs
+error.txt
+extract.txt
+gallery_extract.txt
+cookies_debug.txt
+*.log
+
+# Misc
+.DS_Store
+technical debt*.md
+technical_debt*.md
+test_*.py
+generate_*.py
+replace_*.py
