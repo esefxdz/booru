@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # IDE and Editor
 .vscode/
 .idea/
@@ -43,3 +44,7 @@ technical_debt*.md
 test_*.py
 generate_*.py
 replace_*.py
+=======
+/.vscode
+__pycache__
+>>>>>>> 864933b7c6fe05a3d8457bef800640e243f15ee7
