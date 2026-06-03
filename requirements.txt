@@ -1,4 +1,0 @@
-httpx[http2]
-PyQt6
-PyQt6-WebEngine
-Pillow
