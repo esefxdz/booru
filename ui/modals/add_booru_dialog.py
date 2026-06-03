@@ -297,14 +297,9 @@ class AddBooruDialog(QDialog):
                 "post_key": None,
                 "api_type": api_type,
             }
-<<<<<<< HEAD
             # Add to the persistent sidebar order and save immediately.
             # Without this, the booru appears this session but vanishes on
             # next launch because booru_order in settings.json was never updated.
-=======
-            # Add to the user's curated list so it shows on the server bar
-            # (which renders booru_order) and persists across restarts.
->>>>>>> 864933b7c6fe05a3d8457bef800640e243f15ee7
             if name not in settings.manager.booru_order:
                 settings.manager.booru_order.append(name)
                 settings.manager.save()
