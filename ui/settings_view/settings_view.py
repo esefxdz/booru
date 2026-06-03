@@ -166,7 +166,7 @@ class SettingsView(QWidget):
                         border: none;
                     }}
                 """)
-                btn.setIcon(Icons.get(btn.text().strip().split()[0].lower() if False else self._icon_for(i), colors.TEXT_PRIMARY))
+                btn.setIcon(Icons.get(self._icon_for(i), colors.TEXT_PRIMARY))
             else:
                 btn.setStyleSheet(f"""
                     QPushButton {{
