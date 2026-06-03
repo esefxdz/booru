@@ -210,5 +210,5 @@ class AppController(QObject):
         self.bulk_thread = BulkThread(self.downloader, tags, limit)
         self.bulk_thread.progress.connect(lambda msg: self.status_updated.emit(msg, "yellow"))
         self.bulk_thread.finished.connect(lambda count: self.status_updated.emit(f"Bulk downloaded {count} items!" if count > 0 else "No posts found.", "green" if count > 0 else "orange"))
-        self.bulk_thread.error.connect(lambda err: self.status_updated.emit("Bulk Error!", "red"))
+        self.bulk_thread.error.connect(lambda _: self.status_updated.emit("Bulk Error!", "red"))
         self.bulk_thread.start()
