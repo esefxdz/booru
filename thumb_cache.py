@@ -180,6 +180,7 @@ class _L2:
         self._db_path = db_path
         self._max_bytes = max_bytes
         self._conn: sqlite3.Connection | None = None
+        self._pending_touches: set[str] = set()
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _ensure_conn  — opens (or reuses) a long-lived SQLite         │
@@ -252,12 +253,11 @@ class _L2:
             if row is None:
                 return None
 
-            # Touch the access timestamp so this entry survives eviction
-            conn.execute(
-                "UPDATE thumbs SET last_access = ? WHERE key = ?",
-                (int(time.time()), key),
-            )
-            conn.commit()
+            # Queue the access timestamp update instead of blocking the read
+            self._pending_touches.add(key)
+            if len(self._pending_touches) >= 50:
+                self._flush_touches(conn)
+
             return row[0]
 
         except Exception as e:
@@ -280,6 +280,8 @@ class _L2:
                    VALUES (?, ?, ?, ?, ?)""",
                 (key, data, len(data), now, now),
             )
+            
+            self._flush_touches(conn) # Flush pending touches alongside writes
             conn.commit()
 
             # Periodic eviction check (amortised: only runs ~every 100 writes)
@@ -345,10 +347,29 @@ class _L2:
         except Exception:
             return {"entries": 0, "bytes": 0}
 
+    def _flush_touches(self, conn: sqlite3.Connection | None = None) -> None:
+        if not self._pending_touches:
+            return
+        c = conn or self._ensure_conn()
+        now = int(time.time())
+        keys = list(self._pending_touches)
+        self._pending_touches.clear()
+        
+        try:
+            # Batch update in chunks of 900 (SQLite limit is 999 vars)
+            for i in range(0, len(keys), 900):
+                chunk = keys[i:i+900]
+                placeholders = ",".join("?" * len(chunk))
+                c.execute(f"UPDATE thumbs SET last_access = ? WHERE key IN ({placeholders})", [now] + chunk)
+            c.commit()
+        except Exception as e:
+            logging.error(f"[thumb_cache] L2 touch flush error: {e}")
+
     def close(self) -> None:
         """Close the SQLite connection (call on app shutdown)."""
         if self._conn:
             try:
+                self._flush_touches(self._conn)
                 self._conn.close()
             except Exception:
                 pass
@@ -483,6 +504,6 @@ def shutdown() -> None:
     with _l1_lock:
         _l1 = None
     with _l2_lock:
-        if _l2:
+        if _l2 is not None:
             _l2.close()
         _l2 = None

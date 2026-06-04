@@ -16,6 +16,7 @@ class TagPanel(QWidget):
     """Right panel: static tag display area."""
 
     WIDTH = 240
+    _POOL_MAX = 300   # Maximum pooled buttons before we start destroying extras
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  __init__                                                        │
@@ -25,6 +26,8 @@ class TagPanel(QWidget):
         self.main_app = main_app
         self.setFixedWidth(self.WIDTH)
         self.setStyleSheet(f"background-color: {colors.PANEL_BG};")
+        # Pool of reusable QPushButton tag widgets
+        self._btn_pool: list[QPushButton] = []
         self._build()
 
     # ┌──────────────────────────────────────────────────────────────────┐
@@ -96,13 +99,25 @@ class TagPanel(QWidget):
         self.results_count_lbl.setText(text)
 
     # ┌──────────────────────────────────────────────────────────────────┐
-    # │  clear_tags                                                      │
+    # │  clear_tags  — returns widgets to pool instead of destroying them │
     # └──────────────────────────────────────────────────────────────────┘
     def clear_tags(self):
         while self.container_layout.count():
             child = self.container_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            w = child.widget()
+            if w is None:
+                continue
+            if isinstance(w, QPushButton):
+                # Return to pool if not already full
+                w.hide()
+                w.setParent(None)
+                if len(self._btn_pool) < self._POOL_MAX:
+                    self._btn_pool.append(w)
+                else:
+                    w.deleteLater()
+            else:
+                # QLabels (section headers / score) are cheap — just destroy
+                w.deleteLater()
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  update_tags                                                     │
@@ -149,6 +164,22 @@ class TagPanel(QWidget):
         self._render_tags(cats)
 
     # ┌──────────────────────────────────────────────────────────────────┐
+    # │  _acquire_btn  — grab a recycled or fresh tag button             │
+    # └──────────────────────────────────────────────────────────────────┘
+    def _acquire_btn(self) -> QPushButton:
+        if self._btn_pool:
+            btn = self._btn_pool.pop()
+            # Disconnect all previous signals to avoid stale click handlers
+            try:
+                btn.clicked.disconnect()
+            except Exception:
+                pass
+            return btn
+        btn = QPushButton()
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        return btn
+
+    # ┌──────────────────────────────────────────────────────────────────┐
     # │  _render_tags                                                    │
     # └──────────────────────────────────────────────────────────────────┘
     def _render_tags(self, cats):
@@ -186,24 +217,28 @@ class TagPanel(QWidget):
             )
             self.container_layout.addWidget(lbl)
 
+            tag_color = cat_colors[cat]
+            style = f"""
+                QPushButton {{
+                    color: {tag_color};
+                    text-align: left;
+                    background: transparent;
+                    border: none;
+                    padding: 4px;
+                    border-radius: 4px;
+                    font-size: 13px;
+                }}
+                QPushButton:hover {{
+                    background: {colors.DIVIDER};
+                }}
+            """
             for t in tags:
                 if not t:
                     continue
-                btn = QPushButton(f"  {t}")
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        color: {cat_colors[cat]};
-                        text-align: left;
-                        background: transparent;
-                        border: none;
-                        padding: 4px;
-                        border-radius: 4px;
-                        font-size: 13px;
-                    }}
-                    QPushButton:hover {{
-                        background: {colors.DIVIDER};
-                    }}
-                """)
-                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn = self._acquire_btn()
+                btn.setText(f"  {t}")
+                btn.setStyleSheet(style)
+                btn.setParent(self.container)
                 btn.clicked.connect(lambda checked, x=t: self.main_app.add_tag(x))
+                btn.show()
                 self.container_layout.addWidget(btn)

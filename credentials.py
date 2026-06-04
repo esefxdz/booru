@@ -164,9 +164,26 @@ class CredentialManager:
         """
         try:
             credentials = self._load_credentials()
-            return list(credentials.keys())
+            return [k for k in credentials.keys() if not k.startswith("_")]
         except Exception:
             return []
+
+    def get_sensitive(self, key: str) -> dict:
+        try:
+            return self._load_credentials().get(key, {})
+        except Exception:
+            return {}
+
+    def set_sensitive(self, key: str, data: dict) -> bool:
+        try:
+            self._ensure_file_exists()
+            credentials = self._load_credentials()
+            credentials[key] = data
+            self._save_credentials(credentials)
+            return True
+        except Exception as e:
+            logging.error(f"[credentials] Failed to save sensitive data {key}: {e}")
+            return False
 
     def migrate_from_settings(self, settings_credentials: Dict[str, Any]) -> None:
         """
@@ -215,3 +232,11 @@ def list_boorus_with_credentials() -> list[str]:
 def migrate_from_settings(settings_credentials: Dict[str, Any]) -> None:
     """Migrate credentials from settings.json."""
     _credential_manager.migrate_from_settings(settings_credentials)
+
+def get_sensitive(key: str) -> dict:
+    """Retrieve sensitive data dict (e.g. bypass_data)."""
+    return _credential_manager.get_sensitive(key)
+
+def set_sensitive(key: str, data: dict) -> bool:
+    """Store sensitive data dict securely."""
+    return _credential_manager.set_sensitive(key, data)

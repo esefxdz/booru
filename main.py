@@ -35,7 +35,24 @@ def _setup_logging():
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
+        
         logging.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
+        
+        # Show a critical error dialog so the user knows what crashed
+        import traceback
+        try:
+            from PyQt6.QtWidgets import QApplication, QMessageBox
+            if QApplication.instance():
+                tb = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+                msg = QMessageBox()
+                msg.setIcon(QMessageBox.Icon.Critical)
+                msg.setWindowTitle("Fatal Error")
+                msg.setText("The application encountered an unrecoverable error and must close.\n\n"
+                            f"Check the log at: {log_file}")
+                msg.setDetailedText(tb)
+                msg.exec()
+        except Exception as gui_exc:
+            logging.critical("Could not show error dialog", exc_info=True)
 
     sys.excepthook = handle_exception
 
@@ -69,26 +86,7 @@ from ui import colors
 # ── Main Entry ──────────────────────────────────────────────
 
 
-def _setup_logging():
-    """Wire up rotating file logs so crashes are diagnosable in packaged builds."""
-    import logging
-    from logging.handlers import RotatingFileHandler
-    from pathlib import Path
 
-    log_dir = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-
-    handler = RotatingFileHandler(
-        log_dir / "app.log",
-        maxBytes=5 * 1024 * 1024,  # 5 MB per file
-        backupCount=3,  # keep last 3 rotated files
-        encoding="utf-8",
-    )
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[handler, logging.StreamHandler()],  # file + console (when available)
-    )
 
 
 def main():

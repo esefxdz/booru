@@ -20,6 +20,9 @@ from ui import settings_view as settings
 class CloudflareBlockError(Exception):
     pass
 
+class BooruAPIError(Exception):
+    pass
+
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  NetworkManager — per-loop async semaphore                          ║
