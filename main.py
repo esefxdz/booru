@@ -117,8 +117,10 @@ def main():
 
     # ── Clean shutdown: close the SQLite cache connection ──────────
     import thumb_cache
+    import download_images.engines as engines
 
     thumb_cache.shutdown()
+    engines.shutdown()
 
     sys.exit(exit_code)
 

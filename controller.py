@@ -24,6 +24,14 @@ class FetchThread(QThread):
     def run(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        
+        sessions = {}
+        def get_cached_session(booru_name):
+            if booru_name not in sessions:
+                from cloudflare_bypasser import get_session
+                sessions[booru_name] = get_session(booru_name)
+            return sessions[booru_name]
+
         try:
             if self.is_bookmarks_mode:
                 from ui.bookmarks_main.bookmarks_db import db
@@ -39,7 +47,7 @@ class FetchThread(QThread):
                 end = start + settings.SEARCH_LIMIT
                 posts = all_bms[start:end]
             else:
-                posts = loop.run_until_complete(self.downloader.get_image_urls(self.tags, settings.SEARCH_LIMIT, self.current_page - 1))
+                posts = loop.run_until_complete(self.downloader.get_image_urls(self.tags, settings.SEARCH_LIMIT, self.current_page - 1, session_manager=get_cached_session))
                 for p in posts: p["_booru"] = settings.manager.active_booru
 
             # Phase 1: Emit metadata immediately so the UI shows skeletons
@@ -51,7 +59,7 @@ class FetchThread(QThread):
                     if not self.cancel_event.is_set():
                         self.preview_ready.emit(pil_img, post, idx)
                 loop.run_until_complete(
-                    self.downloader.fetch_previews(posts, on_preview, self.cancel_event)
+                    self.downloader.fetch_previews(posts, on_preview, self.cancel_event, session_manager=get_cached_session)
                 )
 
             self.finished.emit(posts, self.is_bookmarks_mode)
@@ -64,6 +72,11 @@ class FetchThread(QThread):
                 logging.exception("FetchThread crashed")
                 self.error.emit(str(e))
         finally:
+            for s in sessions.values():
+                try:
+                    loop.run_until_complete(s.close())
+                except Exception:
+                    pass
             loop.close()
 
 class BulkThread(QThread):
