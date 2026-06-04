@@ -91,6 +91,7 @@ class BooruDownloader(QObject):
                 "Sec-Fetch-Site": "same-site",
                 "Accept-Language": "en-US,en;q=0.9",
             })
+            bypass_rate_limit = False
         else:
             # Image requests — CDN needs Referer for hotlink protection
             adapter = self._adapter()
@@ -105,8 +106,9 @@ class BooruDownloader(QObject):
                 "Sec-Fetch-Site": "cross-site",
                 "Accept-Language": "en-US,en;q=0.9",
             })
+            bypass_rate_limit = True
 
-        return await NetworkManager.fetch(session, url, params=params, headers=headers)
+        return await NetworkManager.fetch(session, url, params=params, headers=headers, bypass_rate_limit=bypass_rate_limit)
 
     # ──────────────────────────────────────────────────────────────
     #  Post field accessors (delegate to adapter)
