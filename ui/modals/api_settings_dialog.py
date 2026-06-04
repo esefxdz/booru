@@ -45,6 +45,7 @@ class APISettingsDialog(QDialog):
         super().__init__(parent_gui)
         self.parent_gui = parent_gui
         self.name = name
+        self._closed = False
         self.api_type = boorus.REGISTRY.get(name, {}).get("api_type", "gelbooru")
 
         from adapters.session_login import supports_session_login, get_session_cookie_names
@@ -287,6 +288,10 @@ class APISettingsDialog(QDialog):
         import ui.animations as anims
         anims.animate_slide_up_fade(self, duration=300, offset=15)
 
+    def closeEvent(self, event):
+        self._closed = True
+        super().closeEvent(event)
+
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _save_api  — reads credential fields (which differ per engine) │
     # │  sanitises them via the validation module, and stores them      │
@@ -338,12 +343,17 @@ class APISettingsDialog(QDialog):
             try:
                 with open(booru_file, "r", encoding="utf-8") as f:
                     lines = f.readlines()
-                with open(booru_file, "w", encoding="utf-8") as f:
+                
+                tmp_file = booru_file.with_suffix(".py.tmp")
+                with open(tmp_file, "w", encoding="utf-8") as f:
                     for line in lines:
                         if line.startswith("API_TYPE"):
                             f.write(f'API_TYPE = "{new_engine}"\n')
                         else:
                             f.write(line)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_file, booru_file)
             except Exception as e:
                 logging.error(f"Error updating booru file engine: {e}")
 
@@ -399,6 +409,11 @@ class APISettingsDialog(QDialog):
             if cookies:
                 settings.manager.session_keys[self.name] = cookies
                 settings.manager.save()
+            
+            if self._closed:
+                return
+                
+            if cookies:
                 self._sess_status.setText(f"✓ Logged in! Session: {list(cookies.keys())}")
                 self._sess_status.setStyleSheet(f"color: {colors.SUCCESS}; font-weight: bold;")
             else:

@@ -91,5 +91,11 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
     except CloudflareBlockError:
         raise
     except Exception as e:
+        import json
+        if isinstance(e, json.JSONDecodeError):
+            logging.error(f"[api_client] JSON decode error from {url}: {e}")
+            from download_images.network import BooruAPIError
+            raise BooruAPIError(f"The booru returned invalid data instead of JSON. The site might be down, or the API URL is wrong.")
+        
         logging.error(f"[api_client] search_posts error: {e}")
         return []

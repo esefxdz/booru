@@ -65,7 +65,8 @@ class FetchThread(QThread):
             self.finished.emit(posts, self.is_bookmarks_mode)
         except Exception as e:
             from download_images import CloudflareBlockError
-            if isinstance(e, CloudflareBlockError):
+            from download_images.network import BooruAPIError
+            if isinstance(e, (CloudflareBlockError, BooruAPIError)):
                 self.error.emit(str(e))
             else:
                 import logging
@@ -113,6 +114,8 @@ class BulkThread(QThread):
 
             self.finished.emit(success)
         except Exception as e:
+            import logging
+            logging.exception("BulkThread crashed")
             self.error.emit(str(e))
         finally:
             loop.close()

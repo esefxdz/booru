@@ -116,6 +116,15 @@ class SettingsManager:
             if hasattr(self, k):
                 setattr(self, k, v)
 
+        # Load sensitive fields from secure storage
+        try:
+            from credentials import get_sensitive
+            self.bypass_data = get_sensitive("_bypass_data") or {}
+            self.session_keys = get_sensitive("_session_keys") or {}
+            self.auth_tokens = get_sensitive("_auth_tokens") or {}
+        except Exception as e:
+            logging.error(f"[settings] Failed to load sensitive data: {e}")
+
         self.validate()
 
     def validate(self):
@@ -151,6 +160,15 @@ class SettingsManager:
         # headers.  They must never be written to the plaintext settings.json
         # file — store them via CredentialManager / keyring instead.
         _SENSITIVE_KEYS = {"bypass_data", "session_keys", "auth_tokens"}
+        
+        try:
+            from credentials import set_sensitive
+            set_sensitive("_bypass_data", self.bypass_data)
+            set_sensitive("_session_keys", self.session_keys)
+            set_sensitive("_auth_tokens", self.auth_tokens)
+        except Exception as e:
+            logging.error(f"[settings] Failed to save sensitive data: {e}")
+            
         data = {
             k: v for k, v in self.__dict__.items()
             if not k.startswith("_") and k not in _SENSITIVE_KEYS

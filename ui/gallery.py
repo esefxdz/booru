@@ -96,6 +96,9 @@ class Gallery(QWidget):
         # Each entry is (y_top, item_index) sorted by y_top.
         self._y_index: list[tuple[int, int]] = []
         
+        # O(1) deduplication: set of post IDs already in the gallery
+        self._post_id_set: set = set()
+        
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.timeout.connect(self._do_refresh)
@@ -352,8 +355,8 @@ class Gallery(QWidget):
                 star_sz = max(24, rect.width() // 8)
                 star.setFixedSize(star_sz, star_sz)
                 star.move(rect.width() - star_sz - 8, 8)
-                from ui.bookmarks_main.bookmarks_db import db
-                self._style_star(star, db.is_post_bookmarked(item['post'].get('id')), 16)
+                # Use cached bookmark state to avoid DB round-trip on every scroll
+                self._style_star(star, item.get('bookmarked', False), 16)
 
                 # If evicted, try to reload from cache
                 if item.get('safe_bytes') is None:
@@ -426,10 +429,13 @@ class Gallery(QWidget):
         This is Resource Virtualization — the widgets are permanent, only
         the QPixmap content is virtualized on scroll.
         """
+        from ui.bookmarks_main.bookmarks_db import db
         for post in posts:
             post_id = post.get('id')
-            if any(item['post'].get('id') == post_id for item in self._items):
+            # O(1) deduplication — replaces old O(n) linear scan
+            if post_id in self._post_id_set:
                 continue
+            self._post_id_set.add(post_id)
 
             w = post.get('image_width', 0)
             h = post.get('image_height', 0)
@@ -462,6 +468,7 @@ class Gallery(QWidget):
                 'animated': False,
                 'btn': btn,
                 'star': star,
+                'bookmarked': db.is_post_bookmarked(post_id),  # cached once
             })
         self._do_refresh()
 
@@ -517,12 +524,17 @@ class Gallery(QWidget):
     def _toggle_bookmark_direct(self, post, star_btn):
         pid = post.get("id")
         from ui.bookmarks_main.bookmarks_db import db
-        if db.is_post_bookmarked(pid):
-            db.remove_bookmark(pid)
-            self._style_star(star_btn, False, 16)
-        else:
+        is_now_bookmarked = not db.is_post_bookmarked(pid)
+        if is_now_bookmarked:
             db.add_bookmark(post)
-            self._style_star(star_btn, True, 16)
+        else:
+            db.remove_bookmark(pid)
+        # Update cached state so scroll doesn't read stale value
+        for item in self._items:
+            if item['post'].get('id') == pid:
+                item['bookmarked'] = is_now_bookmarked
+                break
+        self._style_star(star_btn, is_now_bookmarked, 16)
 
     def clear(self):
         # Destroy all permanent widgets
@@ -532,6 +544,7 @@ class Gallery(QWidget):
                 btn.hide()
                 btn.deleteLater()
         self._items.clear()
+        self._post_id_set.clear()
         self._y_index.clear()
         self.container.setMinimumHeight(0)
 

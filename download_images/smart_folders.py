@@ -16,9 +16,43 @@ Two strategies:
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from pathlib import Path
 
 log = logging.getLogger("image_downloader")
+
+# Windows MAX_PATH is 260 characters. We reserve 60 chars for the filename
+# itself, leaving 200 chars for the full directory path.
+_MAX_DIR_PATH = 200 if sys.platform == "win32" else 4096
+
+
+def _enforce_max_path(path: Path) -> Path:
+    """Truncate the final path segment if the total path length would exceed
+    the Windows MAX_PATH limit. Returns the (possibly shortened) path."""
+    path_str = str(path)
+    if len(path_str) <= _MAX_DIR_PATH:
+        return path
+
+    # Truncate the last segment to make the path fit
+    overflow = len(path_str) - _MAX_DIR_PATH
+    parent = path.parent
+    name = path.name
+    if len(name) > overflow + 4:  # keep at least 4 chars of the name
+        truncated = name[: len(name) - overflow - 1]  # -1 for safety margin
+        result = parent / truncated
+        log.warning(
+            "[smart_folders] Path too long (%d chars), truncated '%s' → '%s'",
+            len(path_str), path, result,
+        )
+        return result
+
+    # Name too short to truncate meaningfully — fall back to parent
+    log.warning(
+        "[smart_folders] Path too long (%d chars), using parent dir instead.",
+        len(path_str),
+    )
+    return parent
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -77,6 +111,7 @@ def get_download_folder(post: dict, downloader) -> Path:
 
     try:
         path = settings.manager.get_download_dir() / safe_booru / safe_name
+        path = _enforce_max_path(path)
         path.mkdir(parents=True, exist_ok=True)
         return path
     except Exception as e:
@@ -101,6 +136,7 @@ def get_bulk_folder(tags: str) -> Path:
         safe = "unsorted"
 
     path = settings.manager.get_download_dir() / settings.manager.active_booru / safe
+    path = _enforce_max_path(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
