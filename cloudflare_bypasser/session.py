@@ -260,15 +260,16 @@ async def _try_curl_cffi(
                         timeout=timeout,
                         allow_redirects=True,
                     )
-                # Eagerly capture everything
-                content = resp.content
-                text = resp.text
-                status_code = resp.status_code
-                final_url = resp.url
-                try:
-                    json_data = resp.json()
-                except Exception:
-                    json_data = None
+            
+            # Eagerly capture everything outside the if/else blocks
+            content = resp.content
+            text = resp.text
+            status_code = resp.status_code
+            final_url = resp.url
+            try:
+                json_data = resp.json()
+            except Exception:
+                json_data = None
 
             result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}")
 
@@ -364,14 +365,15 @@ async def _try_httpx(
                 proxy=proxy_url or None,
             ) as c:
                 resp = await c.get(url, params=params, headers=headers)
-            content = resp.content
-            text = resp.text
-            status_code = resp.status_code
-            final_url = str(resp.url)
-            try:
-                json_data = resp.json()
-            except Exception:
-                json_data = None
+        
+        content = resp.content
+        text = resp.text
+        status_code = resp.status_code
+        final_url = str(resp.url)
+        try:
+            json_data = resp.json()
+        except Exception:
+            json_data = None
 
         return BypassResponse(content, text, status_code, final_url, json_data, "httpx")
     except Exception as e:
@@ -515,6 +517,9 @@ class BypassSession:
         
         self._httpx_client = None
         self._cffi_sessions = {}
+        self._successful_engine = None
+        self._last_request_time = 0.0
+        self._rate_limit_lock = threading.Lock()
         
     async def close(self):
         """Close any persistent underlying clients. Must be called if reused across multiple requests."""
@@ -600,6 +605,7 @@ class BypassSession:
         params: dict | None = None,
         headers: dict | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
+        bypass_rate_limit: bool = False,
     ) -> BypassResponse:
         """
         GET with automatic engine failover and retry.
@@ -609,25 +615,30 @@ class BypassSession:
         transient failures (5xx, timeouts).
         """
         from ui import settings_view as settings
-        global _last_request_time
 
-        if getattr(settings.manager, "use_rate_limit", False):
+        if not bypass_rate_limit and getattr(settings.manager, "use_rate_limit", False):
             delay_needed = 0
             delay = getattr(settings.manager, "rate_limit_delay", 0.25)
-            with _rate_limit_lock:
+            with self._rate_limit_lock:
                 now = time.time()
-                elapsed = now - _last_request_time
+                elapsed = now - self._last_request_time
                 if elapsed < delay:
                     delay_needed = delay - elapsed
-                    _last_request_time = now + delay_needed
+                    self._last_request_time = now + delay_needed
                 else:
-                    _last_request_time = now
+                    self._last_request_time = now
             if delay_needed > 0:
                 await asyncio.sleep(delay_needed)
 
         merged_headers = self._build_headers(headers)
         last_response: Optional[BypassResponse] = None
+        
+        # In auto mode, try the previously successful engine first
         engines = self._get_engine_order()
+        if self.method == "auto" and self._successful_engine and self._successful_engine in engines:
+            # Reorder so successful engine is first
+            engines.remove(self._successful_engine)
+            engines.insert(0, self._successful_engine)
 
         for attempt in range(1, _MAX_RETRIES + 1):
             for engine in engines:
@@ -635,6 +646,8 @@ class BypassSession:
                     engine, url, params, merged_headers, timeout,
                 )
                 if resp and not resp.is_blocked and resp.status_code < 500:
+                    if self.method == "auto":
+                        self._successful_engine = engine
                     return resp
                 if resp:
                     last_response = resp

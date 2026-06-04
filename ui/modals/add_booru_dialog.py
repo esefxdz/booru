@@ -14,6 +14,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from ui import settings_view as settings
 import boorus
+import threading
 
 
 from ui import colors
@@ -49,6 +50,10 @@ class AutoDetectThread(QThread):
     def __init__(self, url):
         super().__init__()
         self.url = url.rstrip("/")
+        # Set by AddBooruDialog.closeEvent() to signal the probe loop to stop
+        # between requests so the thread exits quickly instead of waiting up
+        # to 5 seconds for the current httpx timeout to expire.
+        self.cancel_event = threading.Event()
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  run  — tries a ranked list of (path, engine, checker) tuples.  │
@@ -87,6 +92,10 @@ class AutoDetectThread(QThread):
         try:
             with httpx.Client(timeout=5.0, headers=headers, follow_redirects=True) as client:
                 for path, expected_type, check_fn in tests:
+                    # Check the cancel flag between each probe so closeEvent()
+                    # can stop the loop quickly without waiting for a full timeout.
+                    if self.cancel_event.is_set():
+                        return
                     try:
                         r = client.get(self.url + path)
                         if r.status_code == 200 and check_fn(r):
@@ -121,6 +130,10 @@ class AddBooruDialog(QDialog):
         self.setMinimumWidth(420)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setStyleSheet(f"background-color: {colors.PANEL_BG}; color: {colors.TEXT_SECONDARY};")
+        # Always initialize so closeEvent and _on_detect_finished are safe to
+        # call even if the user closes the dialog without clicking Auto-Detect.
+        self.detect_thread = None
+        self._closed = False
 
         from adapters import adapter_choices
         choices = adapter_choices()
@@ -227,6 +240,12 @@ class AddBooruDialog(QDialog):
     # │  on success or orange if detection failed.                      │
     # └──────────────────────────────────────────────────────────────────┘
     def _on_detect_finished(self, msg, api_type, api_path):
+        # Guard: if the dialog was already closed, do not touch any Qt widgets.
+        # The thread may emit this signal after closeEvent() has returned if the
+        # current httpx request hadn't finished by the time we called wait().
+        if self._closed:
+            return
+
         self.detect_btn.setEnabled(True)
         self.detect_btn.setText("Auto-Detect")
 
@@ -244,11 +263,46 @@ class AddBooruDialog(QDialog):
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  closeEvent  — cleanup background threads so they don't segfault │
+    # │                                                                  │
+    # │  Why we DON'T call quit() + wait() here:                        │
+    # │    - quit() sends a message to the thread's Qt event loop, but  │
+    # │      AutoDetectThread.run() never calls exec(), so there is no  │
+    # │      event loop to receive it — quit() would be a complete no-op.│
+    # │    - wait() would freeze the UI for up to 5s (the httpx timeout) │
+    # │      while the user is trying to close a dialog they gave up on. │
+    # │                                                                  │
+    # │  Instead, we use a two-layer defence and let the thread die      │
+    # │  naturally without blocking:                                     │
+    # │    Layer 1: Disconnect the finished signal. Even if the thread   │
+    # │      runs to completion and emits, the signal goes nowhere —     │
+    # │      _on_detect_finished is never called.                        │
+    # │    Layer 2: Set cancel_event so the probe loop stops starting    │
+    # │      new HTTP requests between probes (fast-exits at the next    │
+    # │      check). Cannot interrupt an in-flight httpx request, but    │
+    # │      it bounds runaway work to at most one more probe (≤5s).     │
     # └──────────────────────────────────────────────────────────────────┘
     def closeEvent(self, event):
-        if hasattr(self, "detect_thread") and self.detect_thread.isRunning():
-            self.detect_thread.quit()
-            self.detect_thread.wait(1000)
+        # Mark the dialog as closed. _on_detect_finished checks this flag
+        # as a secondary guard in case the signal was already in the Qt
+        # event queue before we had a chance to disconnect it.
+        self._closed = True
+        if self.detect_thread is not None and self.detect_thread.isRunning():
+            # Layer 1: Disconnect the signal so _on_detect_finished can never
+            # be called, even if the thread runs to completion in the background.
+            try:
+                self.detect_thread.finished.disconnect(self._on_detect_finished)
+            except RuntimeError:
+                pass  # Already disconnected or signal was never connected
+
+            # Layer 2: Set the cancel flag so the probe loop stops launching
+            # new HTTP requests. Cannot interrupt an in-flight request, but
+            # limits runaway background work to at most one more probe (≤5s).
+            self.detect_thread.cancel_event.set()
+
+            # Do NOT call quit() or wait() — quit() is a no-op because
+            # AutoDetectThread.run() has no Qt event loop, and wait() would
+            # freeze the UI for up to 5s (the httpx request timeout).
+            # The thread will finish naturally and be garbage-collected.
         super().closeEvent(event)
 
     # ┌──────────────────────────────────────────────────────────────────┐

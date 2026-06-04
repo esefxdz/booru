@@ -49,10 +49,10 @@ class NetworkManager:
         return cls._semaphores[loop]
 
     @classmethod
-    async def fetch(cls, session, url, params=None, headers=None):
+    async def fetch(cls, session, url, params=None, headers=None, bypass_rate_limit=False):
         """Fetch a URL, optionally throttled by the network semaphore."""
         if settings.manager.use_network_semaphore:
             async with cls.get_semaphore():
-                return await session.get(url, params=params, headers=headers)
+                return await session.get(url, params=params, headers=headers, bypass_rate_limit=bypass_rate_limit)
         else:
-            return await session.get(url, params=params, headers=headers)
+            return await session.get(url, params=params, headers=headers, bypass_rate_limit=bypass_rate_limit)
