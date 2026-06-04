@@ -105,13 +105,28 @@ def _download_urllib(url: str, dest: Path, headers: dict,
 #  Engine 2 — requests (popular third-party library)
 # ═══════════════════════════════════════════════════════════════════════
 
+_requests_session_verify_true = None
+_requests_session_verify_false = None
+
 def _download_requests(url: str, dest: Path, headers: dict,
                         on_progress: Callable | None = None) -> bool:
     """Download using the ``requests`` library."""
     import requests as _req
+    global _requests_session_verify_true, _requests_session_verify_false
 
     def _attempt(verify: bool) -> bool:
-        with _req.get(url, headers=headers, stream=True, timeout=60, verify=verify) as r:
+        global _requests_session_verify_true, _requests_session_verify_false
+        if verify:
+            if _requests_session_verify_true is None:
+                _requests_session_verify_true = _req.Session()
+            session = _requests_session_verify_true
+        else:
+            if _requests_session_verify_false is None:
+                _requests_session_verify_false = _req.Session()
+                _requests_session_verify_false.verify = False
+            session = _requests_session_verify_false
+
+        with session.get(url, headers=headers, stream=True, timeout=60, verify=verify) as r:
             r.raise_for_status()
             total = int(r.headers.get("Content-Length", 0))
             downloaded = 0
@@ -256,6 +271,20 @@ ENGINE_FNS: dict[str, Callable] = {
     "curl_cffi":  _download_curl_cffi,
     "powershell": _download_powershell,
 }
+
+def shutdown():
+    """Close any globally cached sessions to avoid unclosed socket warnings on exit."""
+    global _requests_session_verify_true, _requests_session_verify_false
+    if _requests_session_verify_true is not None:
+        _requests_session_verify_true.close()
+    if _requests_session_verify_false is not None:
+        _requests_session_verify_false.close()
+
+    global _httpx_client_verify_true, _httpx_client_verify_false
+    if _httpx_client_verify_true is not None:
+        _httpx_client_verify_true.close()
+    if _httpx_client_verify_false is not None:
+        _httpx_client_verify_false.close()
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

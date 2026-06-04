@@ -219,6 +219,7 @@ async def _try_curl_cffi(
     cookies: dict,
     proxy_url: str,
     timeout: int,
+    session_cache: dict | None = None,
 ) -> Optional[BypassResponse]:
     """Attempt a request using curl_cffi with Chrome TLS impersonation."""
     if not _HAS_CURL_CFFI:
@@ -229,11 +230,14 @@ async def _try_curl_cffi(
 
     for target in _IMPERSONATE_TARGETS:
         try:
-            async with cffi_requests.AsyncSession(
-                impersonate=target,
-                proxies=proxies,
-                verify=True,
-            ) as session:
+            if session_cache is not None:
+                if target not in session_cache:
+                    session_cache[target] = cffi_requests.AsyncSession(
+                        impersonate=target,
+                        proxies=proxies,
+                        verify=True,
+                    )
+                session = session_cache[target]
                 resp = await session.get(
                     url,
                     params=params,
@@ -242,6 +246,20 @@ async def _try_curl_cffi(
                     timeout=timeout,
                     allow_redirects=True,
                 )
+            else:
+                async with cffi_requests.AsyncSession(
+                    impersonate=target,
+                    proxies=proxies,
+                    verify=True,
+                ) as session:
+                    resp = await session.get(
+                        url,
+                        params=params,
+                        headers=headers,
+                        cookies=cookies,
+                        timeout=timeout,
+                        allow_redirects=True,
+                    )
                 # Eagerly capture everything
                 content = resp.content
                 text = resp.text
@@ -328,20 +346,24 @@ async def _try_httpx(
     cookies: dict,
     proxy_url: str,
     timeout: int,
+    client: httpx.AsyncClient | None = None,
 ) -> Optional[BypassResponse]:
     """Attempt a request using httpx with HTTP/2."""
     if not _HAS_HTTPX:
         return None
 
     try:
-        async with httpx.AsyncClient(
-            http2=True,
-            follow_redirects=True,
-            timeout=timeout,
-            cookies=cookies or None,
-            proxy=proxy_url or None,
-        ) as client:
+        if client is not None:
             resp = await client.get(url, params=params, headers=headers)
+        else:
+            async with httpx.AsyncClient(
+                http2=True,
+                follow_redirects=True,
+                timeout=timeout,
+                cookies=cookies or None,
+                proxy=proxy_url or None,
+            ) as c:
+                resp = await c.get(url, params=params, headers=headers)
             content = resp.content
             text = resp.text
             status_code = resp.status_code
@@ -490,6 +512,18 @@ class BypassSession:
         self.cookies = cookies or {}
         self.proxy_url = proxy_url
         self.method = method if method in BYPASS_METHODS else "auto"
+        
+        self._httpx_client = None
+        self._cffi_sessions = {}
+        
+    async def close(self):
+        """Close any persistent underlying clients. Must be called if reused across multiple requests."""
+        if self._httpx_client is not None:
+            await self._httpx_client.aclose()
+            self._httpx_client = None
+        for s in self._cffi_sessions.values():
+            s.close() # curl_cffi AsyncSession close is sync
+        self._cffi_sessions.clear()
 
     def _build_headers(self, extra_headers: dict | None = None) -> dict:
         """Merge browser baseline headers with the session UA and any extras."""
@@ -522,7 +556,7 @@ class BypassSession:
 
         if engine == "curl_cffi":
             return await _try_curl_cffi(
-                url, params, headers, self.cookies, self.proxy_url, timeout,
+                url, params, headers, self.cookies, self.proxy_url, timeout, self._cffi_sessions
             )
         elif engine == "cloudscraper":
             return await loop.run_in_executor(
@@ -531,8 +565,16 @@ class BypassSession:
                 url, params, headers, self.cookies, self.proxy_url, timeout,
             )
         elif engine == "httpx":
+            if self._httpx_client is None and _HAS_HTTPX:
+                self._httpx_client = httpx.AsyncClient(
+                    http2=True,
+                    follow_redirects=True,
+                    timeout=timeout,
+                    cookies=self.cookies or None,
+                    proxy=self.proxy_url or None,
+                )
             return await _try_httpx(
-                url, params, headers, self.cookies, self.proxy_url, timeout,
+                url, params, headers, self.cookies, self.proxy_url, timeout, self._httpx_client
             )
         elif engine == "requests":
             return await loop.run_in_executor(

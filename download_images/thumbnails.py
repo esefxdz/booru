@@ -109,7 +109,7 @@ async def fetch_previews(posts, adapter, fetch_fn, callback, cancel_event: threa
             if _cancelled():
                 return
             try:
-                r = await fetch_fn(url, timeout=10.0)
+                r = await fetch_fn(url, timeout=10.0, booru=booru)
                 if r.status_code != 200:
                     logging.error(f"[thumbnails] Fetch failed: HTTP {r.status_code} for {url}")
                     return

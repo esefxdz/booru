@@ -68,14 +68,18 @@ class BooruDownloader(QObject):
     #  HTTP fetcher (CF bypass session + stealth headers)
     # ──────────────────────────────────────────────────────────────
 
-    async def _fetch(self, url, params=None, timeout=None, booru=None):
+    async def _fetch(self, url, params=None, timeout=None, booru=None, session_manager=None):
         """Fetch a URL through the Cloudflare bypass session.
 
         Used for API requests and thumbnail downloads.
         Full image downloads use download_images.engines instead.
         """
-        from cloudflare_bypasser import get_session
-        session = get_session(booru or settings.manager.active_booru)
+        booru_name = booru or settings.manager.active_booru
+        if session_manager:
+            session = session_manager(booru_name)
+        else:
+            from cloudflare_bypasser import get_session
+            session = get_session(booru_name)
 
         headers = self.headers.copy()
 
@@ -137,21 +141,29 @@ class BooruDownloader(QObject):
     #  API search (delegates to api_client.py)
     # ──────────────────────────────────────────────────────────────
 
-    async def get_image_urls(self, tags, limit, page=0):
+    async def get_image_urls(self, tags, limit, page=0, session_manager=None):
         """Search the active booru and return a list of post dicts."""
         from download_images.api_client import search_posts
+        
+        async def bound_fetch(url, params=None, timeout=None, booru=None):
+            return await self._fetch(url, params=params, timeout=timeout, booru=booru, session_manager=session_manager)
+            
         return await search_posts(
-            self._adapter(), self.site_data, self._fetch, tags, limit, page
+            self._adapter(), self.site_data, bound_fetch, tags, limit, page
         )
 
     # ──────────────────────────────────────────────────────────────
     #  Thumbnail fetching (delegates to thumbnails.py)
     # ──────────────────────────────────────────────────────────────
 
-    async def fetch_previews(self, posts, callback, cancel_event=None):
+    async def fetch_previews(self, posts, callback, cancel_event=None, session_manager=None):
         """Fetch and decode thumbnails for a list of posts."""
         from download_images.thumbnails import fetch_previews
-        await fetch_previews(posts, self._adapter(), self._fetch, callback, cancel_event)
+        
+        async def bound_fetch(url, params=None, timeout=None, booru=None):
+            return await self._fetch(url, params=params, timeout=timeout, booru=booru, session_manager=session_manager)
+            
+        await fetch_previews(posts, self._adapter(), bound_fetch, callback, cancel_event)
 
     # ──────────────────────────────────────────────────────────────
     #  Credentials
