@@ -93,24 +93,22 @@ class MediaOverlay(QWidget):
     # │  Triggers infinite scroll if we reach the end.                  │
     # └──────────────────────────────────────────────────────────────────┘
     def prev_post(self):
-        if not self.isVisible() or not self.post: return
-        items = self.parent_gui.gallery._items
-        try:
-            idx = next(i for i, item in enumerate(items) if item['post'].get('id') == self.post.get('id'))
-            if idx > 0:
-                self.show_post(items[idx-1]['post'])
-        except StopIteration:
-            pass
+        if not self.isVisible() or not self.post:
+            return
+        gallery = self.parent_gui.gallery
+        idx = gallery._post_id_to_idx.get(self.post.get('id'))
+        if idx is not None and idx > 0:
+            self.show_post(gallery._posts[idx - 1])
 
     def next_post(self):
-        if not self.isVisible() or not self.post: return
-        items = self.parent_gui.gallery._items
-        try:
-            idx = next(i for i, item in enumerate(items) if item['post'].get('id') == self.post.get('id'))
-            if idx < len(items) - 1:
-                self.show_post(items[idx+1]['post'])
-            else:
-                # Ask gallery to load more
-                self.parent_gui.gallery.load_more_requested.emit()
-        except StopIteration:
-            pass
+        if not self.isVisible() or not self.post:
+            return
+        gallery = self.parent_gui.gallery
+        idx = gallery._post_id_to_idx.get(self.post.get('id'))
+        if idx is None:
+            return
+        if idx < len(gallery._posts) - 1:
+            self.show_post(gallery._posts[idx + 1])
+        else:
+            # Reached the last loaded post — ask gallery to load more
+            gallery.load_more_requested.emit()
