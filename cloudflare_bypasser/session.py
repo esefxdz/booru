@@ -517,9 +517,21 @@ class BypassSession:
         
         self._httpx_client = None
         self._cffi_sessions = {}
+        self._loop_id = None
         self._successful_engine = None
         self._last_request_time = 0.0
         self._rate_limit_lock = threading.Lock()
+        
+    def _check_loop(self):
+        """Invalidate cached clients if the event loop has changed."""
+        try:
+            current_loop = id(asyncio.get_running_loop())
+            if self._loop_id != current_loop:
+                self._httpx_client = None
+                self._cffi_sessions.clear()
+                self._loop_id = current_loop
+        except RuntimeError:
+            pass
         
     async def close(self):
         """Close any persistent underlying clients. Must be called if reused across multiple requests."""
@@ -614,6 +626,7 @@ class BypassSession:
         → urllib.  Retries up to 3 times with exponential backoff on
         transient failures (5xx, timeouts).
         """
+        self._check_loop()
         from ui import settings_view as settings
 
         if not bypass_rate_limit and getattr(settings.manager, "use_rate_limit", False):
