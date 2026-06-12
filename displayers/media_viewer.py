@@ -245,8 +245,9 @@ class MediaViewer(QWidget):
         def work():
             try:
                 data = _fetch_bytes(url, self.post.get('_booru'))
-                tmp = Path("./temp_media")
-                tmp.mkdir(exist_ok=True)
+                from ui import settings_view as settings
+                tmp = settings.manager.get_download_dir() / "temp_media"
+                tmp.mkdir(exist_ok=True, parents=True)
                 path = tmp / f"view_{self.post.get('id')}.gif"
                 path.write_bytes(data)
                 self.gif_ready.emit(str(path))
@@ -290,8 +291,9 @@ class MediaViewer(QWidget):
         def work():
             try:
                 data = _fetch_bytes(url, self.post.get('_booru'))
-                tmp = Path("./temp_media")
-                tmp.mkdir(exist_ok=True)
+                from ui import settings_view as settings
+                tmp = settings.manager.get_download_dir() / "temp_media"
+                tmp.mkdir(exist_ok=True, parents=True)
                 path = tmp / f"view_{self.post.get('id')}.{ext}"
                 path.write_bytes(data)
                 self.video_ready.emit(str(path))

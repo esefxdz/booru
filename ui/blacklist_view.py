@@ -32,17 +32,18 @@ class BlacklistView(QWidget):
         self.main_app = main_app
         self.setStyleSheet(f"background-color: {colors.MAIN_BG}; color: {colors.TEXT_SECONDARY};")
 
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(40, 40, 40, 40)
-        self.layout.setSpacing(24)
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(40, 40, 40, 40)
+        self._main_layout.setSpacing(24)
 
         # Build the title bar with the Save button
         self._build_header()
 
-        # Split the body into left (tag management) and right (info card)
+        # Split: list of tags vs right-side edit/add panel
         content_h = QHBoxLayout()
+        content_h.setContentsMargins(0, 0, 0, 0)
         content_h.setSpacing(32)
-        self.layout.addLayout(content_h, 1)
+        self._main_layout.addLayout(content_h, 1)
 
         # ── Left Column: all the interactive tag controls ──────────────
         left_v = QVBoxLayout()
@@ -169,8 +170,8 @@ class BlacklistView(QWidget):
         # Status label that shows "✔ Changes saved" briefly after saving
         self.status_lbl = QLabel("")
         self.status_lbl.setStyleSheet(f"color: {colors.SUCCESS}; font-weight: bold;")
-        self.layout.addWidget(self.status_lbl)
-        self.layout.addWidget(QLabel(""))  # Small spacer at the bottom
+        self._main_layout.addWidget(self.status_lbl)
+        self._main_layout.addWidget(QLabel(""))  # visual spacer at the bottom
 
         # Tracks whether we are in raw text edit mode (True) or chip mode (False)
         self._bulk_mode = False
@@ -202,7 +203,7 @@ class BlacklistView(QWidget):
         """)
         self.save_btn.clicked.connect(self.save_blacklist)
         header.addWidget(self.save_btn)
-        self.layout.addLayout(header)
+        self._main_layout.addLayout(header)
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  load_blacklist  — called every time this page becomes visible  │

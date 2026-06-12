@@ -6,9 +6,9 @@ class DownloadProgressBar(QWidget):
     """A single progress bar for a file download."""
     def __init__(self, filename, parent=None):
         super().__init__(parent)
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(5, 5, 5, 5)
-        self.layout.setSpacing(2)
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(5, 5, 5, 5)
+        self._main_layout.setSpacing(2)
 
         # Top row: Filename and percentage text
         self.top_row = QHBoxLayout()
@@ -20,7 +20,7 @@ class DownloadProgressBar(QWidget):
         self.top_row.addWidget(self.filename_lbl)
         self.top_row.addStretch()
         self.top_row.addWidget(self.pct_lbl)
-        self.layout.addLayout(self.top_row)
+        self._main_layout.addLayout(self.top_row)
 
         # Progress bar
         self.progress = QProgressBar()
@@ -37,7 +37,7 @@ class DownloadProgressBar(QWidget):
                 border-radius: 3px;
             }}
         """)
-        self.layout.addWidget(self.progress)
+        self._main_layout.addWidget(self.progress)
 
     def update_progress(self, current, total):
         if total > 0:
@@ -67,18 +67,18 @@ class DownloadWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMaximumWidth(216)
 
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(10, 10, 10, 10)
-        self.layout.setSpacing(5)
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(10, 10, 10, 10)
+        self._main_layout.setSpacing(5)
 
         self.title_lbl = QLabel("Downloads")
         self.title_lbl.setStyleSheet(f"color: {colors.TEXT_PRIMARY}; font-size: 14px; font-weight: bold;")
-        self.layout.addWidget(self.title_lbl)
+        self._main_layout.addWidget(self.title_lbl)
 
     def add_download(self, task_id, filename):
         bar = DownloadProgressBar(filename)
         self.bars[task_id] = bar
-        self.layout.addWidget(bar)
+        self._main_layout.addWidget(bar)
         self.show()  # Ensure it is visible
 
     def update_download(self, task_id, current, total):
@@ -88,7 +88,7 @@ class DownloadWindow(QWidget):
     def remove_download(self, task_id):
         if task_id in self.bars:
             bar = self.bars.pop(task_id)
-            self.layout.removeWidget(bar)
+            self._main_layout.removeWidget(bar)
             bar.deleteLater()
         
         # Hide if no downloads are active

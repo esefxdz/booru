@@ -200,11 +200,7 @@ class ActionButtons(QWidget):
         
         QApplication.clipboard().setText(resolved)
         self.share_btn.setText("Copied!")
-        
-        def reset():
-            import time; time.sleep(2)
-            QTimer.singleShot(0, lambda: self.share_btn.setText("Share"))
-        threading.Thread(target=reset, daemon=True).start()
+        QTimer.singleShot(2000, lambda: self.share_btn.setText("Share"))
 
     def _view_original(self):
         if not self.post: return

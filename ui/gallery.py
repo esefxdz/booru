@@ -180,8 +180,8 @@ class Gallery(QWidget):
     def _compute_pool_size(self) -> int:
         """Calculate the ideal pool size based on current viewport dimensions.
 
-        Formula: (columns × visible_rows × 3), clamped to [_POOL_MIN, _POOL_MAX].
-        The ×3 factor ensures the buffer zone (±2 pages) always has free slots.
+        Formula: (columns × visible_rows × (1 + 2 * _BUFFER_ZONE_PAGES)).
+        This ensures the buffer zone always has free slots.
         """
         vp_w = self.scroll.viewport().width()
         vp_h = self.scroll.viewport().height()
@@ -189,8 +189,8 @@ class Gallery(QWidget):
             return self._POOL_MIN
         cols = max(1, vp_w // self._col_width)
         rows = max(1, vp_h // self._col_width) + 1
-        target = cols * rows * 3
-        return max(self._POOL_MIN, min(self._POOL_MAX, target))
+        target = cols * rows * (1 + 2 * self._BUFFER_ZONE_PAGES)
+        return max(self._POOL_MIN, target)
 
     def _grow_pool_if_needed(self, target_size: int):
         """Allocate new pool slots until pool reaches target_size.
@@ -449,14 +449,13 @@ class Gallery(QWidget):
         vis_bottom = vp_y + vp_h + buffer_margin
 
         # Grow pool if the viewport has become larger since last check
-        target_pool = self._compute_pool_size()
-        self._grow_pool_if_needed(target_pool)
-
-        # Determine which post indices should be mapped
         if self._y_index:
             wanted = set(self._find_visible_indices(vis_top, vis_bottom))
         else:
             wanted = set()
+
+        target_pool = max(self._compute_pool_size(), len(wanted))
+        self._grow_pool_if_needed(target_pool)
 
         currently_mapped = set(self._post_to_slot.keys())
 
@@ -474,14 +473,18 @@ class Gallery(QWidget):
             btn.setIconSize(rect.size())
 
         # ── Assign free slots to newly visible posts ───────────
-        for post_idx in sorted(wanted - currently_mapped):
+        # Sort by distance from viewport center, so items actually on screen get slots first
+        vp_center = vp_y + vp_h / 2
+        def dist_to_center(pidx):
+            rect = self._rects[pidx]
+            item_center = rect.y() + rect.height() / 2
+            return abs(item_center - vp_center)
+
+        for post_idx in sorted(wanted - currently_mapped, key=dist_to_center):
             if not self._free_slots:
-                # Pool is exhausted — this shouldn't happen if sized correctly.
-                # Log so we can tune the pool constants if it ever does.
                 import logging
                 logging.warning(
-                    "[gallery] Pool exhausted (%d slots, %d wanted). "
-                    "Consider raising _POOL_MAX.",
+                    "[gallery] Pool exhausted (%d slots, %d wanted).",
                     len(self._pool), len(wanted),
                 )
                 break
