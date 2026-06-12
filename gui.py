@@ -212,7 +212,7 @@ class BooruGui(QMainWindow):
 
     def _load_more(self):
         """Called by gallery when user scrolls near bottom (infinite scroll)."""
-        if self.controller._is_loading:
+        if self.controller.is_loading:
             return
         tags = self.search_bar.text()
         # Validate search terms
@@ -236,7 +236,8 @@ class BooruGui(QMainWindow):
             self.sidebar.page_lbl.setText(f"Pg {self.current_page}")
 
     def change_page(self, delta: int):
-        if self.controller._is_loading:
+        # Prevent next page fetch while still fetching
+        if self.controller.is_loading:
             return
         self.current_page = max(1, self.current_page + delta)
         self.trigger_fetch()

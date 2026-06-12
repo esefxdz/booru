@@ -39,9 +39,9 @@ class BooruSearchBar(QFrame):
             }}
         """)
         
-        self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(5, 0, 5, 0)
-        self.layout.setSpacing(5)
+        self._main_layout = QHBoxLayout(self)
+        self._main_layout.setContentsMargins(5, 0, 5, 0)
+        self._main_layout.setSpacing(5)
         
         # ── Chip Container (Scrollable) ────────────────────────────────
         # If the user has 50 tags, they should scroll horizontally, not wrap
@@ -58,7 +58,7 @@ class BooruSearchBar(QFrame):
         self.chip_layout.setSpacing(6)
         
         self.scroll.setWidget(self.chip_container)
-        self.layout.addWidget(self.scroll, 1) # Give it all available stretch
+        self._main_layout.addWidget(self.scroll, 1) # Give it all available stretch
         
         # ── Text Input ─────────────────────────────────────────────────
         self.entry = QLineEdit()

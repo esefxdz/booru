@@ -31,10 +31,10 @@ class ServerBar(QWidget):
         self.icon_cache = {}  # booru_name -> local path to favicon
         self.fetchers = {}    # Keeps track of running FaviconFetcher threads
         
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 12, 0, 12)
-        self.layout.setSpacing(8)
-        self.layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(0, 12, 0, 12)
+        self._main_layout.setSpacing(8)
+        self._main_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         
         self.rebuild_list()
 
@@ -45,8 +45,8 @@ class ServerBar(QWidget):
     # └──────────────────────────────────────────────────────────────────┘
     def rebuild_list(self):
         # Clear existing buttons (properly delete widgets to avoid memory leaks)
-        while self.layout.count():
-            item = self.layout.takeAt(0)
+        while self._main_layout.count():
+            item = self._main_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
@@ -58,14 +58,14 @@ class ServerBar(QWidget):
         self.bookmark_btn.setToolTip("Global Bookmarks")
         self.bookmark_btn.clicked.connect(self.main_gui.toggle_bookmarks_mode)
         self.update_bookmark_style()
-        self.layout.addWidget(self.bookmark_btn)
+        self._main_layout.addWidget(self.bookmark_btn)
 
         # Subtle separator line
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFixedWidth(32)
         sep.setStyleSheet(f"background-color: {colors.BUTTON_HOVER}; border: none; min-height: 2px;")
-        self.layout.addWidget(sep)
+        self._main_layout.addWidget(sep)
 
         # ── BOORU SITE BUTTONS ─────────────────────────────────────────
         # Render the user's curated list. boorus.REGISTRY is just the catalog
@@ -73,7 +73,7 @@ class ServerBar(QWidget):
         for name in settings.manager.booru_order:
             if name in boorus.REGISTRY:
                 btn = DraggableBooruButton(name, boorus.REGISTRY[name], self)
-                self.layout.addWidget(btn)
+                self._main_layout.addWidget(btn)
 
         # ── ADD BOORU BUTTON (Pinned to bottom) ───────────────────────
         self.add_btn = QPushButton()
@@ -95,8 +95,8 @@ class ServerBar(QWidget):
         # Modals package handles the Add Booru dialog
         from ui.modals import AddBooruDialog
         self.add_btn.clicked.connect(lambda: AddBooruDialog.show_dialog(self.main_gui))
-        self.layout.addStretch()
-        self.layout.addWidget(self.add_btn)
+        self._main_layout.addStretch()
+        self._main_layout.addWidget(self.add_btn)
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  update_button_styles  — compatibility alias for BooruGui        │
@@ -109,8 +109,8 @@ class ServerBar(QWidget):
     # │  over all buttons to refresh their highlight borders/shapes.    │
     # └──────────────────────────────────────────────────────────────────┘
     def update_active(self):
-        for i in range(self.layout.count()):
-            w = self.layout.itemAt(i).widget()
+        for i in range(self._main_layout.count()):
+            w = self._main_layout.itemAt(i).widget()
             if isinstance(w, DraggableBooruButton):
                 w.update_style()
         self.update_bookmark_style()

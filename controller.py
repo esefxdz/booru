@@ -137,6 +137,10 @@ class AppController(QObject):
         self._thread_lock = threading.Lock()  # guards _is_loading check-and-set
         self.thread: FetchThread | None = None
 
+    @property
+    def is_loading(self) -> bool:
+        return self._is_loading
+
     def _cancel_active_thread(self):
         """Signal the current FetchThread to stop and wait up to 2 s for it.
 

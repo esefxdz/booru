@@ -278,9 +278,10 @@ class DisplayerWindow(QMainWindow):
         self._gif_optimized = optimized
         def work():
             try:
-                data = _fetch_bytes(url)
-                tmp = Path("./temp_media")
-                tmp.mkdir(exist_ok=True)
+                data = _fetch_bytes(url, self.post.get('_booru'))
+                from ui import settings_view as settings
+                tmp = settings.manager.get_download_dir() / "temp_media"
+                tmp.mkdir(exist_ok=True, parents=True)
                 path = tmp / f"view_{self.post_id}.gif"
                 path.write_bytes(data)
                 self.gif_ready.emit(str(path))

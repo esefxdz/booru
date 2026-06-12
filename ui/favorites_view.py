@@ -32,15 +32,15 @@ class FavoritesView(QWidget):
         self.main_app = main_app
         self.setStyleSheet(f"background-color: {colors.MAIN_BG}; color: {colors.TEXT_SECONDARY};")
 
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(40, 40, 40, 40)
-        self.layout.setSpacing(24)
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(40, 40, 40, 40)
+        self._main_layout.setSpacing(24)
 
         self._build_header()
 
         content_h = QHBoxLayout()
         content_h.setSpacing(32)
-        self.layout.addLayout(content_h, 1)
+        self._main_layout.addLayout(content_h, 1)
 
         # ── Left Column: all interactive tag controls ──────────────────
         left_v = QVBoxLayout()
@@ -167,8 +167,8 @@ class FavoritesView(QWidget):
         # Confirmation label that briefly appears after saving
         self.status_lbl = QLabel("")
         self.status_lbl.setStyleSheet(f"color: {colors.SUCCESS}; font-weight: bold;")
-        self.layout.addWidget(self.status_lbl)
-        self.layout.addWidget(QLabel(""))  # Visual bottom spacer
+        self._main_layout.addWidget(self.status_lbl)
+        self._main_layout.addWidget(QLabel(""))  # Visual bottom spacer
 
         # Tracks whether the user is currently in raw text bulk edit mode
         self._bulk_mode = False
@@ -199,7 +199,7 @@ class FavoritesView(QWidget):
         """)
         self.save_btn.clicked.connect(self.save_favorites)
         header.addWidget(self.save_btn)
-        self.layout.addLayout(header)
+        self._main_layout.addLayout(header)
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  load_favorites  — called every time this page becomes visible  │
