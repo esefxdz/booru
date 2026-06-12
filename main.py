@@ -124,5 +124,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-
+    try:
+        main()
+    except Exception as e:
+        import traceback, sys
+        with open("FATAL_CRASH.txt", "w", encoding="utf-8") as f:
+            f.write("Application failed to start entirely!\n")
+            traceback.print_exc(file=f)
+        sys.exit(1)

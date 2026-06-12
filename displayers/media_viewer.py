@@ -117,6 +117,17 @@ class MediaViewer(QWidget):
     # └──────────────────────────────────────────────────────────────────┘
     def load_post(self, post, original=False):
         self.stop()
+        
+        # Clean up any previously viewed temp files to prevent disk leak
+        from ui import settings_view as settings
+        tmp = settings.manager.get_download_dir() / "temp_media"
+        if tmp.exists():
+            for f in tmp.glob("view_*"):
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+
         self.post = post
         self._viewing_original = original
         self.lbl.setText("Loading...")

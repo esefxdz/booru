@@ -26,8 +26,9 @@ class TagPanel(QWidget):
         self.main_app = main_app
         self.setFixedWidth(self.WIDTH)
         self.setStyleSheet(f"background-color: {colors.PANEL_BG};")
-        # Pool of reusable QPushButton tag widgets
+        # Pool of reusable tag widgets
         self._btn_pool: list[QPushButton] = []
+        self._lbl_pool: list[QLabel] = []
         self._build()
 
     # ┌──────────────────────────────────────────────────────────────────┐
@@ -115,8 +116,14 @@ class TagPanel(QWidget):
                     self._btn_pool.append(w)
                 else:
                     w.deleteLater()
+            elif isinstance(w, QLabel):
+                w.hide()
+                w.setParent(None)
+                if len(self._lbl_pool) < 50:
+                    self._lbl_pool.append(w)
+                else:
+                    w.deleteLater()
             else:
-                # QLabels (section headers / score) are cheap — just destroy
                 w.deleteLater()
 
     # ┌──────────────────────────────────────────────────────────────────┐
@@ -179,6 +186,11 @@ class TagPanel(QWidget):
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         return btn
 
+    def _acquire_lbl(self) -> QLabel:
+        if self._lbl_pool:
+            return self._lbl_pool.pop()
+        return QLabel()
+
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _render_tags                                                    │
     # └──────────────────────────────────────────────────────────────────┘
@@ -186,10 +198,12 @@ class TagPanel(QWidget):
         self.clear_tags()
         
         if getattr(self, "current_score", ""):
-            score_lbl = QLabel(f"SCORE — {self.current_score}")
+            score_lbl = self._acquire_lbl()
+            score_lbl.setText(f"SCORE — {self.current_score}")
             score_lbl.setStyleSheet(
                 f"color: {colors.TEXT_MUTED}; font-size: 11px; font-weight: bold; margin-top: 10px;"
             )
+            score_lbl.show()
             self.container_layout.addWidget(score_lbl)
 
         cat_colors = {
@@ -211,10 +225,12 @@ class TagPanel(QWidget):
             if not tags:
                 continue
 
-            lbl = QLabel(f"{labels[cat]} — {len(tags)}")
+            lbl = self._acquire_lbl()
+            lbl.setText(f"{labels[cat]} — {len(tags)}")
             lbl.setStyleSheet(
                 f"color: {colors.TEXT_MUTED}; font-size: 11px; font-weight: bold; margin-top: 10px;"
             )
+            lbl.show()
             self.container_layout.addWidget(lbl)
 
             tag_color = cat_colors[cat]
