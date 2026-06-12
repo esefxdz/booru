@@ -44,6 +44,7 @@ technical_debt*.md
 test_*.py
 generate_*.py
 replace_*.py
+CODEBASE_GUIDE.md
 =======
 /.vscode
 __pycache__
