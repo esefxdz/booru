@@ -62,12 +62,10 @@ class BooruGui(QMainWindow):
         self.controller.posts_fetched.connect(self._on_posts_fetched)
         self.gallery.load_more_requested.connect(self._load_more)
 
-        # ── Floating download progress overlay ──────────────────
-        from ui.download_window import DownloadWindow
-        self.download_window = DownloadWindow(self)
-        self.downloader.download_started.connect(self.download_window.add_download)
-        self.downloader.download_progress.connect(self.download_window.update_download)
-        self.downloader.download_finished.connect(self.download_window.remove_download)
+        # ── Download progress (lives in sidebar) ──────────────
+        self.downloader.download_started.connect(self.sidebar.download_window.add_download)
+        self.downloader.download_progress.connect(self.sidebar.download_window.update_download)
+        self.downloader.download_finished.connect(self.sidebar.download_window.remove_download)
         self.downloader.download_failed.connect(self._on_download_failed_overlay)
 
         self.server_bar.rebuild_list()
@@ -200,9 +198,6 @@ class BooruGui(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, 'overlay') and self.overlay.isVisible():
             self.overlay.setGeometry(self.stack.rect())
-        # Reposition floating download overlay to bottom-right
-        if hasattr(self, 'download_window') and self.download_window.isVisible():
-            self._position_download_overlay()
 
     def trigger_fetch(self, new: bool = False):
         if self.is_bookmarks_mode:
@@ -388,37 +383,14 @@ class BooruGui(QMainWindow):
     # ─────────────────────────────────────────────────────────
     # Floating download overlay
     # ─────────────────────────────────────────────────────────
-    def _position_download_overlay(self):
-        """Anchor the download progress widget to the bottom-right of the content area."""
-        dw = self.download_window
-        margin = 16
-        dw_width = 280
-        dw_height = dw.sizeHint().height() or 80
-        # Position relative to the stack (content area), not the full window
-        if hasattr(self, 'stack'):
-            stack_rect = self.stack.geometry()
-            # Convert to parent coordinates (central widget)
-            parent = self.centralWidget()
-            if parent:
-                offset = parent.mapTo(self, stack_rect.topLeft())
-                x = offset.x() + stack_rect.width() - dw_width - margin
-                y = offset.y() + stack_rect.height() - dw_height - margin
-            else:
-                x = self.width() - dw_width - margin
-                y = self.height() - dw_height - margin - 40
-        else:
-            x = self.width() - dw_width - margin
-            y = self.height() - dw_height - margin - 40
-        dw.setGeometry(x, y, dw_width, min(dw_height, 400))
-        dw.raise_()
-
     def _on_download_failed_overlay(self, task_id, error):
-        """Show a brief error in the download overlay, then remove it."""
-        if task_id in self.download_window.bars:
-            bar = self.download_window.bars[task_id]
+        """Show a brief error in the download widget, then remove it."""
+        dw = self.sidebar.download_window
+        if task_id in dw.bars:
+            bar = dw.bars[task_id]
             bar.pct_lbl.setText("Failed")
             bar.pct_lbl.setStyleSheet(f"color: {colors.DANGER}; font-size: 11px;")
-            QTimer.singleShot(3000, lambda: self.download_window.remove_download(task_id))
+            QTimer.singleShot(3000, lambda: dw.remove_download(task_id))
 
     # ─────────────────────────────────────────────────────────
     # Window close
