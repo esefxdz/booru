@@ -20,13 +20,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import threading
 from typing import Optional
 
 log = logging.getLogger("cloudflare_bypasser")
-
-_rate_limit_lock = threading.Lock()
-_last_request_time = 0.0
 
 # ---------------------------------------------------------------------------
 # Try to import optional engines at module level — never crash on import
@@ -289,6 +285,81 @@ async def _try_curl_cffi(
     return last_err  # return the 403 if all targets gave 403, else None
 
 
+def _try_curl_cffi_sync(
+    url: str,
+    params: dict | None,
+    headers: dict,
+    cookies: dict,
+    proxy_url: str,
+    timeout: int,
+    session_cache: dict | None = None,
+) -> Optional[BypassResponse]:
+    """Synchronous curl_cffi engine — uses persistent sync Sessions so
+    get_sync() callers get connection reuse without touching an event loop."""
+    if not _HAS_CURL_CFFI:
+        return None
+
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    last_err = None
+
+    for target in _IMPERSONATE_TARGETS:
+        try:
+            if session_cache is not None:
+                if target not in session_cache:
+                    session_cache[target] = cffi_requests.Session(
+                        impersonate=target,
+                        proxies=proxies,
+                        verify=True,
+                    )
+                session = session_cache[target]
+                resp = session.get(
+                    url,
+                    params=params,
+                    headers=headers,
+                    cookies=cookies,
+                    timeout=timeout,
+                    allow_redirects=True,
+                )
+            else:
+                with cffi_requests.Session(
+                    impersonate=target,
+                    proxies=proxies,
+                    verify=True,
+                ) as session:
+                    resp = session.get(
+                        url,
+                        params=params,
+                        headers=headers,
+                        cookies=cookies,
+                        timeout=timeout,
+                        allow_redirects=True,
+                    )
+
+            content = resp.content
+            text = resp.text
+            status_code = resp.status_code
+            final_url = resp.url
+            try:
+                json_data = resp.json()
+            except Exception:
+                json_data = None
+
+            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}")
+
+            if status_code != 403:
+                return result
+
+            log.debug("curl_cffi_sync/%s got 403 for %s, trying next target", target, url)
+            last_err = result
+
+        except Exception as e:
+            log.debug("curl_cffi_sync/%s failed for %s: %s", target, url, e)
+            last_err = None
+            continue
+
+    return last_err
+
+
 def _try_cloudscraper_sync(
     url: str,
     params: dict | None,
@@ -517,10 +588,11 @@ class BypassSession:
         
         self._httpx_client = None
         self._cffi_sessions = {}
+        self._cffi_sync_sessions = {}  # sync Session cache for get_sync() — never loop-bound
         self._loop_id = None
         self._successful_engine = None
         self._last_request_time = 0.0
-        self._rate_limit_lock = threading.Lock()
+        self._rate_limit_lock = None  # asyncio.Lock, created lazily per event loop
         
     def _check_loop(self):
         """Invalidate cached clients if the event loop has changed."""
@@ -529,6 +601,7 @@ class BypassSession:
             if self._loop_id != current_loop:
                 self._httpx_client = None
                 self._cffi_sessions.clear()
+                self._rate_limit_lock = None  # force re-creation on new loop
                 self._loop_id = current_loop
         except RuntimeError:
             pass
@@ -630,9 +703,11 @@ class BypassSession:
         from ui import settings_view as settings
 
         if not bypass_rate_limit and getattr(settings.manager, "use_rate_limit", False):
+            if self._rate_limit_lock is None:
+                self._rate_limit_lock = asyncio.Lock()
             delay_needed = 0
             delay = getattr(settings.manager, "rate_limit_delay", 0.25)
-            with self._rate_limit_lock:
+            async with self._rate_limit_lock:
                 now = time.time()
                 elapsed = now - self._last_request_time
                 if elapsed < delay:
@@ -701,26 +776,85 @@ class BypassSession:
         headers: dict | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
     ) -> BypassResponse:
-        """Synchronous wrapper.  Detects existing loops to avoid conflicts."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+        """Synchronous wrapper.
 
-        if loop and loop.is_running():
-            # We're inside an existing event loop (e.g. Qt) — create a new
-            # thread to run our own loop to avoid "loop already running"
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    self.get(url, params=params, headers=headers, timeout=timeout),
+        Tries sync engines first (curl_cffi → cloudscraper → requests →
+        urllib) using persistent sync sessions for connection reuse.  Falls
+        back to the full async engine chain only when httpx HTTP/2 is needed
+        or when locked to an async-only engine.
+        """
+        merged_headers = self._build_headers(headers)
+
+        # ── Pick engine list ──────────────────────────────────────────
+        engines = self._get_engine_order()
+        # Remove httpx from the sync-first pass (it has no sync session cache)
+        sync_engines = [e for e in engines if e != "httpx"]
+        last_response: Optional[BypassResponse] = None
+
+        # ── Try sync engines directly (no asyncio overhead) ───────────
+        for attempt in range(1, _MAX_RETRIES + 1):
+            for engine in sync_engines:
+                resp = self._try_sync_engine(engine, url, params, merged_headers, timeout)
+                if resp and not resp.is_blocked and resp.status_code < 500:
+                    if self.method == "auto":
+                        self._successful_engine = engine
+                    return resp
+                if resp:
+                    last_response = resp
+            if attempt < _MAX_RETRIES:
+                wait = _RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                time.sleep(wait)
+
+        # ── Fallback: full async chain (needed for httpx or locked method) ──
+        if last_response is None or "httpx" in engines:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        asyncio.run,
+                        self.get(url, params=params, headers=headers, timeout=timeout),
+                    )
+                    async_resp = future.result(timeout=timeout + 10)
+            else:
+                async_resp = asyncio.run(
+                    self.get(url, params=params, headers=headers, timeout=timeout)
                 )
-                return future.result(timeout=timeout + 10)
-        else:
-            return asyncio.run(
-                self.get(url, params=params, headers=headers, timeout=timeout)
+            if async_resp and async_resp.status_code > 0:
+                return async_resp
+
+        # ── Total failure ─────────────────────────────────────────────
+        if last_response:
+            return last_response
+        return BypassResponse(b"", "", 0, url, None, "none")
+
+    def _try_sync_engine(
+        self, engine: str, url: str, params: dict | None,
+        headers: dict, timeout: int,
+    ) -> Optional[BypassResponse]:
+        """Dispatch a single synchronous engine attempt (no asyncio)."""
+        if engine == "curl_cffi":
+            return _try_curl_cffi_sync(
+                url, params, headers, self.cookies, self.proxy_url,
+                timeout, self._cffi_sync_sessions,
             )
+        elif engine == "cloudscraper":
+            return _try_cloudscraper_sync(
+                url, params, headers, self.cookies, self.proxy_url, timeout,
+            )
+        elif engine == "requests":
+            return _try_requests_sync(
+                url, params, headers, self.cookies, self.proxy_url, timeout,
+            )
+        elif engine == "urllib":
+            return _try_urllib_sync(
+                url, params, headers, self.cookies, self.proxy_url, timeout,
+            )
+        return None
 
     # ------------------------------------------------------------------
     # Helpers

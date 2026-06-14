@@ -10,7 +10,6 @@ Improvements over the original (TECHNICAL_DEBT §6.5):
 """
 import re
 import json
-import asyncio
 import httpx
 from PyQt6.QtCore import QRunnable, QObject, pyqtSignal
 
@@ -73,32 +72,27 @@ class TagCompleteWorker(QRunnable):
                 self.signals.results_ready.emit([])
             return
 
-        # ── 3. Fetch from network ──
+        # ── 3. Fetch from network (sync httpx — no event loop overhead) ──
         try:
-            loop = asyncio.new_event_loop()
-
-            async def fetch():
-                headers = settings.DEFAULT_HEADERS.copy()
-                async with httpx.AsyncClient(timeout=4.0, headers=headers) as c:
-                    for url in urls:
+            results = []
+            headers = settings.DEFAULT_HEADERS.copy()
+            with httpx.Client(timeout=4.0, headers=headers) as c:
+                for url in urls:
+                    if self._is_cancelled:
+                        break
+                    try:
+                        r = c.get(url)
                         if self._is_cancelled:
-                            return []
-                        try:
-                            r = await c.get(url)
-                            if self._is_cancelled:
-                                return []
-                            if r.status_code == 200:
-                                # JSONP stripping (§6.5.1)
-                                data = _strip_jsonp(r.text)
-                                res = adapter.parse_tag_autocomplete(data)
-                                if res:
-                                    return res
-                        except Exception:
-                            continue
-                return []
-
-            results = loop.run_until_complete(fetch())
-            loop.close()
+                            break
+                        if r.status_code == 200:
+                            # JSONP stripping (§6.5.1)
+                            data = _strip_jsonp(r.text)
+                            res = adapter.parse_tag_autocomplete(data)
+                            if res:
+                                results = res
+                                break
+                    except Exception:
+                        continue
 
             # ── 4. Populate cache from network results ──
             if results:

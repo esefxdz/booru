@@ -391,16 +391,22 @@ class APISettingsDialog(QDialog):
         self._sess_status.setText("⏳ Attempting login…")
         self._sess_status.setStyleSheet(f"color: {colors.WARNING};")
 
+        # Build a CF bypass session so login requests pass through Cloudflare
+        from cloudflare_bypasser import get_session
+        bypass = get_session(self.name)
+
         # Inner thread: runs the async login coroutine on a new event loop
         class LoginThread(QThread):
             done = pyqtSignal(dict)
-            def __init__(self, url, atype, user, pwd):
+            def __init__(self, url, atype, user, pwd, bypass_sess):
                 super().__init__()
                 self._url, self._atype, self._user, self._pwd = url, atype, user, pwd
+                self._bypass = bypass_sess
             def run(self):
                 loop = asyncio.new_event_loop()
                 result = loop.run_until_complete(
-                    perform_login(self._url, self._atype, self._user, self._pwd)
+                    perform_login(self._url, self._atype, self._user, self._pwd,
+                                  bypass_session=self._bypass)
                 )
                 loop.close()
                 self.done.emit(result)
@@ -420,7 +426,7 @@ class APISettingsDialog(QDialog):
                 self._sess_status.setText("✗ Auto-login failed — try the Browser login below.")
                 self._sess_status.setStyleSheet(f"color: {colors.DANGER};")
 
-        self._login_thread = LoginThread(site_url, api_type, username, password)
+        self._login_thread = LoginThread(site_url, api_type, username, password, bypass)
         self._login_thread.done.connect(on_done)
         self._login_thread.start()
 

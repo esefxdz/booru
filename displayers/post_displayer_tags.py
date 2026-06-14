@@ -58,8 +58,8 @@ class _CategorizerThread(QThread):
 
     def run(self):
         try:
-            from tag_categorizer import categorizer
-            cats = categorizer.categorize_tags(self._tags)
+            from tag_categorizer import get_categorizer
+            cats = get_categorizer().categorize_tags(self._tags)
             self.done.emit(cats)
         except Exception as e:
             logging.error(f"[post_displayer_tags] Categorizer thread failed: {e}")

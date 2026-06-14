@@ -117,6 +117,12 @@ class TagCategorizer:
             except Exception as e:
                 logging.error(f"[tag_categorizer] Danbooru API error: {e}")
 
-# Global instance
-categorizer = TagCategorizer()
+# Global instance — lazily created to avoid import-time filesystem access
+_categorizer = None
+
+def get_categorizer():
+    global _categorizer
+    if _categorizer is None:
+        _categorizer = TagCategorizer()
+    return _categorizer
 

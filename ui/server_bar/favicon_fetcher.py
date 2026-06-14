@@ -1,10 +1,14 @@
 from PyQt6.QtCore import QThread, pyqtSignal
+import logging
 import httpx
 from ui import settings_view as settings
 
-# The favicon cache lives next to the downloads folder, in a hidden .icons subfolder.
-# This avoids hitting the network every time the app launches.
-CACHE_DIR = settings.manager.get_download_dir() / ".icons"
+_log = logging.getLogger(__name__)
+
+def _cache_dir():
+    """Return the favicon cache directory, resolved lazily so settings are
+    guaranteed to be initialized before the first call."""
+    return settings.manager.get_download_dir() / ".icons"
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                      CLASS: FaviconFetcher                          ║
@@ -30,13 +34,14 @@ class FaviconFetcher(QThread):
     # └──────────────────────────────────────────────────────────────────┘
     def run(self):
         try:
-            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_dir = _cache_dir()
+            cache_dir.mkdir(parents=True, exist_ok=True)
             # Extract just "danbooru.donmai.us" from "https://danbooru.donmai.us"
             domain = self.url.replace("https://", "").replace("http://", "").split("/")[0]
             if not domain:
                 return
             
-            cache_file = CACHE_DIR / f"{domain}.png"
+            cache_file = cache_dir / f"{domain}.png"
 
             # If we already downloaded this favicon before, emit from cache immediately
             if cache_file.exists():
@@ -51,6 +56,5 @@ class FaviconFetcher(QThread):
                 with open(cache_file, "wb") as f:
                     f.write(resp.content)
                 self.finished.emit(self.name, str(cache_file))
-        except Exception:
-            # Silently fail — missing favicons just show the default box icon
-            pass
+        except Exception as e:
+            _log.warning("Favicon fetch failed for %s (%s): %s", self.name, self.url, e)

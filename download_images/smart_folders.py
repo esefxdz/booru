@@ -165,8 +165,8 @@ def _categorize_post_tags(adapter, post: dict, tags: list) -> dict:
 
     # ── TagCategorizer fallback ───────────────────────────────────
     try:
-        from tag_categorizer import categorizer
-        cats = categorizer.categorize_tags(tags)
+        from tag_categorizer import get_categorizer
+        cats = get_categorizer().categorize_tags(tags)
     except Exception as e:
         log.warning("TagCategorizer fallback failed: %s", e)
 

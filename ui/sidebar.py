@@ -56,14 +56,6 @@ class Sidebar(QWidget):
         layout.addLayout(self.header_layout)
         self.btn_home = self._add_item("Home", "home", True)
         self.btn_home.clicked.connect(self.main_app.show_gallery)
-        self.btn_explore = self._add_item("Explore", "explore")
-        self.btn_explore.clicked.connect(self.main_app.show_gallery)
-        self.btn_pools = self._add_item("Pools", "pools")
-        self.btn_pools.clicked.connect(self.main_app.show_gallery)
-        self.btn_forum = self._add_item("Forum", "forum")
-        self.btn_forum.clicked.connect(self.main_app.show_gallery)
-        self.btn_artists = self._add_item("Artists", "artists")
-        self.btn_artists.clicked.connect(self.main_app.show_gallery)
         layout.addWidget(self._hline())
         self.btn_bookmarks = self._add_item("Your bookmarks", "bookmarks")
         self.btn_bookmarks.clicked.connect(self.main_app.toggle_bookmarks_mode)
@@ -104,11 +96,7 @@ class Sidebar(QWidget):
         btn_next.clicked.connect(lambda: self.main_app.change_page(1))
         nav.addWidget(btn_next)
         layout.addWidget(self.nav_widget)
-
-        from ui.download_window import DownloadWindow
-        self.download_window = DownloadWindow(self)
-        layout.addWidget(self.download_window)
-        self.download_window.hide()
+        layout.addStretch(1)
 
         self.update_active_booru()
 

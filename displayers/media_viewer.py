@@ -166,6 +166,18 @@ class MediaViewer(QWidget):
         # Clear any leftover pixmap
         self.lbl.setPixmap(QPixmap())
 
+    # ┌──────────────────────────────────────────────────────────────────┐
+    # │  _cleanup_previous_temp  — deletes the last-viewed GIF/video    │
+    # │  temp file so the temp_media folder doesn't grow unbounded      │
+    # │  during long browsing sessions (Part 6 §3).                     │
+    # └──────────────────────────────────────────────────────────────────┘
+    def _cleanup_previous_temp(self):
+        if hasattr(self, "_current_temp_path"):
+            try:
+                Path(self._current_temp_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
     # ══════════════════════════════════════════════════════════════════
     #  PRIVATE — adapter / URL helpers
     # ══════════════════════════════════════════════════════════════════
@@ -253,6 +265,9 @@ class MediaViewer(QWidget):
         url = _resolve_url(self.file_url, site_data)
         self._gif_optimized = optimized
 
+        # ── Clean up previous temp file to prevent unbounded disk growth ──
+        self._cleanup_previous_temp()
+
         def work():
             try:
                 data = _fetch_bytes(url, self.post.get('_booru'))
@@ -261,6 +276,7 @@ class MediaViewer(QWidget):
                 tmp.mkdir(exist_ok=True, parents=True)
                 path = tmp / f"view_{self.post.get('id')}.gif"
                 path.write_bytes(data)
+                self._current_temp_path = str(path)
                 self.gif_ready.emit(str(path))
             except Exception as e:
                 logging.error(f"[media_viewer] GIF load error: {e}")
@@ -297,7 +313,10 @@ class MediaViewer(QWidget):
     def _load_video(self):
         site_data = self._get_site_data()
         url = _resolve_url(self.file_url, site_data)
-        ext = url.rsplit("?", 1)[0].split(".")[-1]
+        ext = url.rsplit("?", 1)[0].split(".")[-1] or "mp4"
+
+        # ── Clean up previous temp file to prevent unbounded disk growth ──
+        self._cleanup_previous_temp()
 
         def work():
             try:
@@ -307,6 +326,7 @@ class MediaViewer(QWidget):
                 tmp.mkdir(exist_ok=True, parents=True)
                 path = tmp / f"view_{self.post.get('id')}.{ext}"
                 path.write_bytes(data)
+                self._current_temp_path = str(path)
                 self.video_ready.emit(str(path))
             except Exception as e:
                 logging.error(f"[media_viewer] Video load error: {e}")
