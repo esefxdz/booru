@@ -45,6 +45,7 @@ test_*.py
 generate_*.py
 replace_*.py
 CODEBASE_GUIDE.md
+prompt.txt
 =======
 /.vscode
 __pycache__

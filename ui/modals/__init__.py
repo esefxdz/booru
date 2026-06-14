@@ -7,13 +7,11 @@ continues to work without any changes after the split into separate files.
 """
 from ui.modals.api_settings_dialog import APISettingsDialog
 from ui.modals.bulk_download_dialog import BulkDownloadDialog
-from ui.modals.global_settings_dialog import GlobalSettingsDialog
 from ui.modals.add_booru_dialog import AddBooruDialog, AutoDetectThread
 
 __all__ = [
     "APISettingsDialog",
     "BulkDownloadDialog",
-    "GlobalSettingsDialog",
     "AddBooruDialog",
     "AutoDetectThread",
 ]

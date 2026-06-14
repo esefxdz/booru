@@ -33,9 +33,12 @@ from ui import settings_view as settings
 #  MODULE HELPERS  (standalone — no dependency on the rest of the app)
 # ══════════════════════════════════════════════════════════════════════
 
-_IMAGE_HEADERS = {
-    "User-Agent": settings.manager.get_user_agent(),
+_IMAGE_HEADERS_BASE = {
     "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Fetch-Dest": "image",
+    "Sec-Fetch-Mode": "no-cors",
+    "Sec-Fetch-Site": "cross-site",
 }
 
 
@@ -46,9 +49,32 @@ def _resolve_url(url):
     return url or ""
 
 
-def _fetch_bytes(url):
-    """Download URL bytes. Raises on failure."""
-    res = httpx.get(url, headers=_IMAGE_HEADERS, follow_redirects=True, timeout=30)
+def _fetch_bytes(url, booru_name=None):
+    """Download URL bytes with optional CF bypass cookie injection.
+
+    When *booru_name* is provided, stored cf_clearance cookies and the
+    bypass User-Agent are injected so Cloudflare-protected CDNs work.
+    Raises on HTTP failure.
+    """
+    headers = dict(_IMAGE_HEADERS_BASE)
+    cookies = None
+
+    if booru_name:
+        try:
+            from cloudflare_bypasser import store as cf_store
+            bypass_ua = cf_store.get_user_agent(booru_name)
+            if bypass_ua:
+                headers["User-Agent"] = bypass_ua
+            bypass_cookies = cf_store.get_cookies(booru_name)
+            if bypass_cookies:
+                cookies = bypass_cookies
+        except Exception:
+            pass
+
+    if "User-Agent" not in headers:
+        headers["User-Agent"] = settings.manager.get_user_agent()
+
+    res = httpx.get(url, headers=headers, cookies=cookies, follow_redirects=True, timeout=30)
     if res.status_code != 200:
         raise RuntimeError(f"HTTP {res.status_code} from {url}")
     return res.content

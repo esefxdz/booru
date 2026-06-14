@@ -389,8 +389,7 @@ class BooruGui(QMainWindow):
         AddBooruDialog(self).exec()
 
     def _on_global_settings(self):
-        from ui.modals import GlobalSettingsDialog
-        GlobalSettingsDialog(self).exec()
+        self.show_settings()
 
     def _on_bulk_dl(self):
         from ui.modals import BulkDownloadDialog

@@ -150,8 +150,8 @@ class TagPanel(QWidget):
             import threading
 
             def fetch_and_render():
-                from tag_categorizer import categorizer
-                new_cats = categorizer.categorize_tags(cats["general"])
+                from tag_categorizer import get_categorizer
+                new_cats = get_categorizer().categorize_tags(cats["general"])
                 from PyQt6.QtCore import QMetaObject, Q_ARG
                 QMetaObject.invokeMethod(
                     self, "_render_tags_safe",

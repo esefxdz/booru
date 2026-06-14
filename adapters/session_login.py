@@ -87,10 +87,20 @@ def supports_session_login(api_type: str) -> bool:
     return api_type in _LOGIN_CONFIGS and bool(_LOGIN_CONFIGS[api_type].get("fields"))
 
 
-async def perform_login(site_url: str, api_type: str, username: str, password: str) -> dict[str, str]:
+async def perform_login(
+    site_url: str,
+    api_type: str,
+    username: str,
+    password: str,
+    bypass_session=None,  # Optional BypassSession for CF-protected login pages
+) -> dict[str, str]:
     """
     Attempts a programmatic login (POST credentials) and returns a dict of
     {cookie_name: cookie_value} for any session cookies found in the response.
+
+    If *bypass_session* is provided (a :class:`BypassSession`), its cookies
+    (including cf_clearance) and User-Agent are injected so the login request
+    passes through Cloudflare protection.
 
     Returns an empty dict on failure.
     Falls back gracefully — the caller should use InAppBrowser if this returns empty.
@@ -110,14 +120,22 @@ async def perform_login(site_url: str, api_type: str, username: str, password: s
     }
 
     url = site_url + path
+
+    # Build headers — merge bypass session cookies/UA if available
     headers = {
         "User-Agent": settings.manager.get_user_agent(),
         "Referer": site_url + "/",
     }
+    client_cookies = None
+    if bypass_session is not None:
+        headers["User-Agent"] = bypass_session.user_agent
+        if bypass_session.cookies:
+            client_cookies = bypass_session.cookies
 
     try:
         async with httpx.AsyncClient(
             headers=headers,
+            cookies=client_cookies,
             follow_redirects=True,
             timeout=15.0,
         ) as client:
