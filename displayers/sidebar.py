@@ -2,13 +2,12 @@
 displayers/sidebar.py — Overlay info sidebar.
 
 A dark right-aligned panel that contains all the metadata panels
-(Details, Actions, Comments, Tags).
+(Details, Actions, Tags).
 """
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
 
 from displayers.details import FileDetails
 from displayers.actions import ActionButtons
-from displayers.comments import CommentsSection
 from displayers.post_displayer_tags import ClickableTagsDropdown
 from ui import colors
 from PyQt6.QtCore import Qt
@@ -52,15 +51,8 @@ class OverlaySidebar(QWidget):
         self.actions = ActionButtons(self)
         self.content_layout.addWidget(self.actions)
         
-        # Place Tags and Comments in a standard layout instead of a Splitter
-        # so they can't crush each other
-        
         self.tags = ClickableTagsDropdown(self)
-        self.content_layout.addWidget(self.tags)
-        
-        self.comments = CommentsSection(self)
-        self.comments.setMinimumHeight(150) # Ensure it's never squished
-        self.content_layout.addWidget(self.comments, 1) # Comments takes up remaining space
+        self.content_layout.addWidget(self.tags, 1)  # tags fill remaining space
         
         self.scroll.setWidget(self.content_widget)
         self._main_layout.addWidget(self.scroll)
@@ -72,7 +64,6 @@ class OverlaySidebar(QWidget):
         self.post = post
         self.details.load_post(post)
         self.actions.load_post(post)
-        self.comments.load_post(post)
         self.tags.load_post(post)
 
     def set_original_loaded(self, loaded):
