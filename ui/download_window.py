@@ -79,7 +79,10 @@ class DownloadWindow(QWidget):
         bar = DownloadProgressBar(filename)
         self.bars[task_id] = bar
         self._main_layout.addWidget(bar)
-        self.show()  # Ensure it is visible
+        self.show()
+        # Reposition if the parent window supports it
+        if hasattr(self.parent(), '_position_download_overlay'):
+            self.parent()._position_download_overlay()
 
     def update_download(self, task_id, current, total):
         if task_id in self.bars:

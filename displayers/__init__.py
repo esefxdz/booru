@@ -8,8 +8,7 @@ Architecture:
     └── OverlaySidebar (sidebar.py)
         ├── FileDetails (details.py)   — collapsible post metadata
         ├── ActionButtons (actions.py)  — bookmark, download, share, view-original
-        ├── TagsDropdown (tags.py)      — categorized tag display
-        └── CommentsSection (comments.py) — fetches & renders post comments
+        └── TagsDropdown (tags.py)      — categorized tag display
 """
 from displayers.overlay import MediaOverlay
 

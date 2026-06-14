@@ -63,8 +63,8 @@ class Sidebar(QWidget):
         self.btn_blacklist.clicked.connect(self.main_app.show_blacklist)
         self.btn_tags = self._add_item("Favorite tags", "tags")
         self.btn_tags.clicked.connect(self.main_app.show_favorites)
-        self.btn_bulk = self._add_item("Bulk download", "download")
-        self.btn_bulk.clicked.connect(self.main_app._on_bulk_dl)
+        self.btn_downloads = self._add_item("Downloads", "download")
+        self.btn_downloads.clicked.connect(self.main_app.show_downloads)
         layout.addWidget(self._hline())
         self.btn_settings = self._add_item("Settings", "settings")
         self.btn_settings.clicked.connect(self.main_app.show_settings)
@@ -73,7 +73,8 @@ class Sidebar(QWidget):
         self.btn_cheat.clicked.connect(self.main_app.show_cheat_sheet)
         
         layout.addStretch(1)
-        self.status_lbl = QLabel("Ready")
+        self.status_lbl = QLabel("")
+        self._refresh_status()
         self.status_lbl.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 11px; font-weight: bold;")
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_lbl)
@@ -132,3 +133,12 @@ class Sidebar(QWidget):
         else:
             self.header_icon.setPixmap(Icons.get("box", colors.TEXT_SECONDARY, 24).pixmap(24, 24))
         self._set_active_item(self.btn_home)
+
+    def _refresh_status(self):
+        from ui.bookmarks_main.bookmarks_db import db
+        count = len(db.get_all_bookmarks())
+        self.status_lbl.setText(f"📌 {count} bookmarks" if count else "Ready")
+        self.status_lbl.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 11px; font-weight: bold;")
+
+    def refresh_bookmark_count(self):
+        self._refresh_status()

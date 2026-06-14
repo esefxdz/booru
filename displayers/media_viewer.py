@@ -13,8 +13,8 @@ import logging
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap, QMovie
+from PyQt6.QtCore import Qt, QTimer, QPoint, pyqtSignal
+from PyQt6.QtGui import QPixmap, QMovie, QPainter
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
 from ui import settings_view as settings
@@ -102,10 +102,31 @@ class MediaViewer(QWidget):
         )
         self._main_layout.addWidget(self.lbl)
 
+        # ── Loading animation ────────────────────────────────────
+        self._loading_dots = 0
+        self._loading_timer = QTimer(self)
+        self._loading_timer.timeout.connect(self._pulse_loading)
+        self._loading_timer.setInterval(400)
+
         # Cross-thread signals → GUI-thread slots
         self.image_ready.connect(self._show_image)
         self.gif_ready.connect(self._show_gif)
         self.video_ready.connect(self._show_video)
+
+    def _pulse_loading(self):
+        dots = [".  ", ".. ", "..."]
+        self._loading_dots = (self._loading_dots + 1) % 3
+        self.lbl.setText(f"Loading{dots[self._loading_dots]}")
+
+    def _start_loading(self):
+        self._loading_dots = 0
+        self.lbl.setText("Loading.  ")
+        self.lbl.show()
+        self._loading_timer.start()
+
+    def _stop_loading(self):
+        self._loading_timer.stop()
+        self.lbl.setText("")
 
     # ══════════════════════════════════════════════════════════════════
     #  PUBLIC API
@@ -225,11 +246,14 @@ class MediaViewer(QWidget):
     # │  a QPixmap, scales it to fit, and updates the sidebar details. │
     # └──────────────────────────────────────────────────────────────────┘
     def _show_image(self, data):
+        self._stop_loading()
         pix = QPixmap()
         if not pix.loadFromData(data):
             self.lbl.setText("Failed to load image")
             return
         self._pixmap = pix
+        self._zoom = 1.0
+        self._pan_offset = QPoint(0, 0)
         self._fit_pixmap()
         self.lbl.setText("")
 
@@ -289,6 +313,7 @@ class MediaViewer(QWidget):
     # │  sample version.                                               │
     # └──────────────────────────────────────────────────────────────────┘
     def _show_gif(self, path):
+        self._stop_loading()
         self._movie = QMovie(path)
         if self._gif_optimized:
             target = self.size()
@@ -359,7 +384,75 @@ class MediaViewer(QWidget):
     # │  resizeEvent  — re-scales image to fit when the overlay is     │
     # │  resized (e.g. window maximise/restore).                       │
     # └──────────────────────────────────────────────────────────────────┘
+    # ══════════════════════════════════════════════════════════════════
+    #  Zoom & Pan
+    # ══════════════════════════════════════════════════════════════════
+
+    def wheelEvent(self, event):
+        if self._media_type != "image" or not hasattr(self, "_pixmap"):
+            return
+        delta = event.angleDelta().y()
+        factor = 1.15 if delta > 0 else 1 / 1.15
+        self._zoom = getattr(self, "_zoom", 1.0) * factor
+        self._zoom = max(0.25, min(self._zoom, 10.0))
+        self._apply_zoom()
+        event.accept()
+
+    def mousePressEvent(self, event):
+        if self._media_type == "image" and event.button() == Qt.MouseButton.LeftButton:
+            self._panning = True
+            self._pan_start = event.pos()
+            self._pan_offset_start = getattr(self, "_pan_offset", QPoint(0, 0))
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, "_panning", False):
+            delta = event.pos() - self._pan_start
+            self._pan_offset = self._pan_offset_start + delta
+            self._apply_zoom()
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._panning = False
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if self._media_type == "image":
+            self._zoom = 1.0
+            self._pan_offset = QPoint(0, 0)
+            self._apply_zoom()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def _apply_zoom(self):
+        if not hasattr(self, "_pixmap"):
+            return
+        zoom = getattr(self, "_zoom", 1.0)
+        offset = getattr(self, "_pan_offset", QPoint(0, 0))
+        target_size = self.size()
+        scaled = self._pixmap.scaled(
+            target_size * zoom, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        # Create a larger pixmap to pan within, then crop to the widget
+        result = QPixmap(target_size)
+        result.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(result)
+        x = (target_size.width() - scaled.width()) // 2 + offset.x()
+        y = (target_size.height() - scaled.height()) // 2 + offset.y()
+        painter.drawPixmap(x, y, scaled)
+        painter.end()
+        self.lbl.setPixmap(result)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self._media_type == "image":
-            self._fit_pixmap()
+            if getattr(self, "_zoom", 1.0) != 1.0:
+                self._apply_zoom()
+            else:
+                self._fit_pixmap()

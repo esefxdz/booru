@@ -85,12 +85,19 @@ class DraggableBooruButton(QPushButton):
             and not self.server_bar.main_gui.is_bookmarks_mode
         )
 
+        # ── CF bypass status indicator ────────────────────────────
+        from cloudflare_bypasser import store as cf_store
+        cf_ok = cf_store.has_active_bypass(self.booru_name)
+        cf_color = colors.SUCCESS if cf_ok else colors.WARNING
+        cf_border = f"border-bottom: 3px solid {cf_color};" if not is_active else ""
+
         if is_active:
             # Solid square with tight radius = selected/active look
             self.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {colors.ACCENT};
                     border-radius: 16px;
+                    {cf_border}
                 }}
             """)
         else:
@@ -99,12 +106,17 @@ class DraggableBooruButton(QPushButton):
                 QPushButton {{
                     background-color: {colors.MAIN_BG};
                     border-radius: 24px;
+                    {cf_border}
                 }}
                 QPushButton:hover {{
                     background-color: {colors.ACCENT};
                     border-radius: 16px;
                 }}
             """)
+        self.setToolTip(
+            f"{self.booru_name}\n"
+            f"{'✓ Cloudflare bypass active' if cf_ok else '⚠ Cloudflare bypass needed — right-click to solve CAPTCHA'}"
+        )
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  mousePressEvent  — records where the drag started so we can    │
