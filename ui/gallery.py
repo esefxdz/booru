@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QScrollArea, QVBoxLayout, QPushButton
+from PyQt6.QtWidgets import QWidget, QScrollArea, QVBoxLayout, QPushButton, QLabel
 from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSlot, pyqtSignal, QRect
 from PyQt6.QtGui import QPixmap, QIcon, QPainter, QPainterPath
 
@@ -173,6 +173,15 @@ class Gallery(QWidget):
         self.scroll.setWidget(self.container)
         layout.addWidget(self.scroll)
 
+        # ── Empty-state label (shown when no posts are loaded) ─────
+        self._empty_lbl = QLabel("No results")
+        self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_lbl.setStyleSheet(
+            f"color: {colors.TEXT_MUTED}; font-size: 18px; font-weight: 600;"
+        )
+        self._empty_lbl.hide()
+        layout.addWidget(self._empty_lbl)
+
     # ══════════════════════════════════════════════════════════════
     #  POOL MANAGEMENT
     # ══════════════════════════════════════════════════════════════
@@ -261,7 +270,14 @@ class Gallery(QWidget):
         if safe_bytes:
             pixmap = self._get_l1_pixmap(post.get('id'), safe_bytes)
             btn.setIcon(QIcon(pixmap))
-            btn.setStyleSheet("border: none; background: transparent; padding: 0;")
+            is_bm = self._post_bookmarked.get(post_idx, False)
+            if is_bm:
+                btn.setStyleSheet(
+                    f"border: 2px solid {colors.FAVORITE}; "
+                    f"background: transparent; padding: 0; border-radius: 12px;"
+                )
+            else:
+                btn.setStyleSheet("border: none; background: transparent; padding: 0;")
             if post_idx not in self._post_animated:
                 import ui.animations as anims
                 anims.animate_fade_in(btn, duration=500)
@@ -389,6 +405,7 @@ class Gallery(QWidget):
         rows  = (n + self._col_count - 1) // self._col_count if n else 0
         max_h = rows * (sz + self._spacing) + self._spacing
         self.container.setMinimumHeight(max(max_h, 0))
+        self._empty_lbl.setVisible(n == 0)
 
     # ══════════════════════════════════════════════════════════════
     #  Y-INDEX — O(log n) viewport intersection via binary search
@@ -679,3 +696,6 @@ class Gallery(QWidget):
         if post_idx is not None:
             self._post_bookmarked[post_idx] = is_now_bookmarked
         self._style_star(star_btn, is_now_bookmarked, 16)
+        # Refresh the sidebar bookmark count
+        if hasattr(self.main_app, 'sidebar'):
+            self.main_app.sidebar.refresh_bookmark_count()

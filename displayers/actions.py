@@ -51,6 +51,27 @@ class ActionButtons(QWidget):
         self._main_layout.addWidget(self.dl_btn)
         self._main_layout.addWidget(self.share_btn)
         self._main_layout.addWidget(self.orig_btn)
+
+        # ── Connect download signals so the button reflects outcome ──
+        self._pending_dl_tid = None
+        self._dl_signals_connected = False
+
+    def _connect_dl_signals(self):
+        """Wire up the downloader signals (only once)."""
+        if self._dl_signals_connected:
+            return
+        self._dl_signals_connected = True
+        dl = self.sidebar.overlay.parent_gui.downloader
+        dl.download_finished.connect(self._on_dl_finished)
+        dl.download_failed.connect(self._on_dl_failed)
+
+    def _on_dl_finished(self, task_id):
+        if task_id == self._pending_dl_tid:
+            self._set_dl_status("Done", colors.SUCCESS)
+
+    def _on_dl_failed(self, task_id, error):
+        if task_id == self._pending_dl_tid:
+            self._set_dl_status("Failed", colors.DANGER)
         
     def _make_btn(self, text):
         btn = QPushButton(text)
@@ -132,20 +153,18 @@ class ActionButtons(QWidget):
         if not self.post: return
         self.dl_btn.setText("⏳ ...")
         parent_gui = self.sidebar.overlay.parent_gui
+        self._connect_dl_signals()
+        self._pending_dl_tid = str(self.post.get("id", ""))
         post = self.post  # capture reference — self.post may change
         
         def work():
             try:
-                from download_images import download_post, get_download_folder
+                from download_images import get_download_folder
                 dl_dir = get_download_folder(post, parent_gui.downloader)
-                ok = download_post(post, dl_dir, parent_gui.downloader)
-                if ok:
-                    QTimer.singleShot(0, lambda: self._set_dl_status("Done", colors.SUCCESS))
-                else:
-                    QTimer.singleShot(0, lambda: self._set_dl_status("Failed", colors.DANGER))
+                parent_gui.downloader.download_file(post.get("id"), post, dl_dir)
             except Exception as e:
                 logging.error(f"[actions] Download error: {e}")
-                QTimer.singleShot(0, lambda: self._set_dl_status("Failed", colors.DANGER))
+                parent_gui.downloader.download_failed.emit(str(post.get("id", "unknown")), str(e))
                 
         threading.Thread(target=work, daemon=True).start()
 

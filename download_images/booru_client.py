@@ -40,6 +40,7 @@ class BooruDownloader(QObject):
     download_started  = pyqtSignal(str, str)       # task_id, filename
     download_progress = pyqtSignal(str, int, int)  # task_id, current, total
     download_finished = pyqtSignal(str)            # task_id
+    download_failed   = pyqtSignal(str, str)       # task_id, error_message
 
     def __init__(self):
         super().__init__()
@@ -174,6 +175,43 @@ class BooruDownloader(QObject):
     def save_credentials(self, name, uid, api_key):
         """Persist API credentials to secure storage."""
         settings.manager.set_credential(name, uid, api_key)
+
+    # ──────────────────────────────────────────────────────────────
+    #  Download orchestration (emits signals for progress UI)
+    # ──────────────────────────────────────────────────────────────
+
+    def download_file(self, task_id: str, post: dict, folder, engine: str | None = None):
+        """Download a single post's file to *folder*, emitting progress signals.
+
+        This is the main entry point for per-post downloads.  It runs
+        synchronously (callers should wrap in a thread) and emits
+        ``download_started``, ``download_progress``, ``download_finished``
+        or ``download_failed`` as the transfer progresses.
+        """
+        import uuid
+        from download_images.image_downloader import download_post
+        from download_images.engines import ENGINE_FNS, DEFAULT_ENGINE
+
+        tid = str(task_id) if task_id else str(uuid.uuid4())[:8]
+        filename = str(post.get("id", "unknown"))
+        ext = post.get("file_ext", "")
+        if not ext and "file_url" in post:
+            ext = post["file_url"].rsplit("?", 1)[0].split(".")[-1]
+        display_name = f"{filename}.{ext}" if ext else str(filename)
+
+        self.download_started.emit(tid, display_name)
+
+        def _on_progress(current, total):
+            self.download_progress.emit(tid, current, total)
+
+        try:
+            ok = download_post(post, folder, self, engine=engine, on_progress=_on_progress)
+            if ok:
+                self.download_finished.emit(tid)
+            else:
+                self.download_failed.emit(tid, "Download engine returned failure")
+        except Exception as e:
+            self.download_failed.emit(tid, str(e))
 
     # ──────────────────────────────────────────────────────────────
     #  Cleanup
