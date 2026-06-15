@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from ui import settings_view as settings
 from ui import colors
+import thumb_cache
 
 
 class AboutSection(QWidget):
@@ -99,8 +100,6 @@ class AboutSection(QWidget):
 
     def _clear_cache(self):
         try:
-            import thumb_cache
-
             # Grab stats before clearing so we can show how much was freed
             pre = thumb_cache.stats()
             thumb_cache.clear()

@@ -15,6 +15,7 @@ from PyQt6.QtGui import QCursor
 from ui import settings_view as settings
 from ui import colors
 from ui.icons import Icons
+import ui.animations as anims
 from ui.settings_view.section_display import DisplaySection
 from ui.settings_view.section_media import MediaSection
 from ui.settings_view.section_network import NetworkSection
@@ -216,7 +217,6 @@ class SettingsView(QWidget):
             QTimer.singleShot(3000, self.status_lbl.hide)
 
             try:
-                import ui.animations as anims
                 anims.animate_button_press(self.save_btn)
             except Exception:
                 pass

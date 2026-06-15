@@ -23,6 +23,20 @@ from ui.server_bar import ServerBar
 from ui.icons import Icons
 from ui.blacklist_view import BlacklistView
 from ui.favorites_view import FavoritesView
+from ui.download_window import DownloadWindow
+from ui.downloads_view import DownloadsView
+from ui.bookmarks_main.bookmarks_db import db
+from ui.browser_dialog import CloudflareBrowserDialog
+from ui.modals import AddBooruDialog, BulkDownloadDialog
+from PyQt6.QtGui import QKeySequence, QShortcut
+from cloudflare_bypasser import store as cf_store
+import boorus as boorus_mod
+import shutil
+import os
+try:
+    from displayers.legacy_window import UniversalViewer
+except ImportError:
+    pass
 from ui.settings_view import SettingsView
 from ui.cheat_sheet import CheatSheetView
 from validation import validate_search_term
@@ -64,7 +78,6 @@ class BooruGui(QMainWindow):
         self.gallery.load_more_requested.connect(self._load_more)
 
         # ── Floating download progress overlay (bottom-right corner) ──
-        from ui.download_window import DownloadWindow
         self.download_overlay = DownloadWindow(self.centralWidget())
         self.download_overlay.hide()
         self._reposition_download_overlay()
@@ -81,9 +94,8 @@ class BooruGui(QMainWindow):
         self.tag_panel.update_tags(post)
         if settings.manager.use_legacy_viewer:
             try:
-                from displayers.legacy_window import UniversalViewer
                 UniversalViewer(self, post)
-            except ImportError:
+            except NameError:
                 logging.info("Legacy viewer not found, using overlay.")
                 self.overlay.show_post(post)
         else:
@@ -166,7 +178,6 @@ class BooruGui(QMainWindow):
         self.stack.addWidget(self.settings_view)
         
         # Downloads Page
-        from ui.downloads_view import DownloadsView
         self.downloads_view = DownloadsView(self)
         self.stack.addWidget(self.downloads_view)
 
@@ -183,8 +194,6 @@ class BooruGui(QMainWindow):
         self._setup_hotkeys()
 
     def _setup_hotkeys(self):
-        from PyQt6.QtGui import QKeySequence, QShortcut
-
         QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self.search_bar.entry.setFocus)
         QShortcut(QKeySequence("Right"), self).activated.connect(lambda: self.change_page(1))
         QShortcut(QKeySequence("Left"), self).activated.connect(lambda: self.change_page(-1))
@@ -220,7 +229,6 @@ class BooruGui(QMainWindow):
 
     def trigger_fetch(self, new: bool = False):
         if self.is_bookmarks_mode:
-            from ui.bookmarks_main.bookmarks_db import db
             db.load_bookmarks()
         tags = self.search_bar.text()
         # Validate search terms
@@ -351,7 +359,6 @@ class BooruGui(QMainWindow):
         self.topbar.hide()
 
     def remove_booru(self, name: str):
-        import os
         # Remove from in-memory registry
         if name in boorus.REGISTRY:
             del boorus.REGISTRY[name]
@@ -407,10 +414,6 @@ class BooruGui(QMainWindow):
     @pyqtSlot(str, str)
     def _on_cf_blocked(self, booru_name: str, error_msg: str):
         """Cloudflare blocked the current booru — offer to solve CAPTCHA."""
-        from ui.browser_dialog import CloudflareBrowserDialog
-        from cloudflare_bypasser import store as cf_store
-        import boorus as boorus_mod
-
         # Get the booru URL from the registry so we open the right site
         site = boorus_mod.REGISTRY.get(booru_name, {})
         url = site.get("url", "")
@@ -451,7 +454,6 @@ class BooruGui(QMainWindow):
     # Window close
     # ─────────────────────────────────────────────────────────
     def closeEvent(self, event):
-        import shutil
         tmp = settings.manager.get_download_dir() / "temp_media"
         if tmp.exists():
             try:
@@ -464,14 +466,12 @@ class BooruGui(QMainWindow):
     # Modals
     # ─────────────────────────────────────────────────────────
     def _on_add_booru(self):
-        from ui.modals import AddBooruDialog
         AddBooruDialog(self).exec()
 
     def _on_global_settings(self):
         self.show_settings()
 
     def _on_bulk_dl(self):
-        from ui.modals import BulkDownloadDialog
         current_tags = self.search_bar.text().strip()
         BulkDownloadDialog(self, current_tags).exec()
 

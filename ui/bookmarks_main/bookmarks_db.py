@@ -1,4 +1,5 @@
 import os
+import shutil
 import json
 import sqlite3
 import logging
@@ -23,7 +24,6 @@ class BookmarksDB:
         """One-time: copy bookmarks.db from %APPDATA% to the app folder."""
         if not self.db_path.exists() and _LEGACY_DB.exists():
             try:
-                import shutil
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(_LEGACY_DB, self.db_path)
                 _LEGACY_DB.unlink(missing_ok=True)

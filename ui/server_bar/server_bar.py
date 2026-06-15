@@ -5,6 +5,7 @@ from ui import settings_view as settings
 import boorus
 from ui.icons import Icons
 from ui.server_bar.draggable_booru_button import DraggableBooruButton
+from ui.modals import AddBooruDialog, APISettingsDialog
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                         CLASS: ServerBar                            ║
@@ -92,8 +93,6 @@ class ServerBar(QWidget):
                 icon: none; /* swaps to white icon via code on hover if we wanted */
             }}
         """)
-        # Modals package handles the Add Booru dialog
-        from ui.modals import AddBooruDialog
         self.add_btn.clicked.connect(lambda: AddBooruDialog.show_dialog(self.main_gui))
         self._main_layout.addStretch()
         self._main_layout.addWidget(self.add_btn)
@@ -163,7 +162,6 @@ class ServerBar(QWidget):
         """)
         
         act = QAction(f"⚙ Settings for {name}", self)
-        from ui.modals import APISettingsDialog
         act.triggered.connect(lambda: APISettingsDialog.show_dialog(self.main_gui, name))
         menu.addAction(act)
         

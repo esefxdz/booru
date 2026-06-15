@@ -4,8 +4,8 @@ from PyQt6.QtWidgets import (
     QLabel, QFrame, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QCursor
-
+from PyQt6.QtGui import QCursor, QIcon
+from ui.bookmarks_main.bookmarks_db import db
 from ui import settings_view as settings
 import boorus
 from ui import colors
@@ -128,7 +128,6 @@ class Sidebar(QWidget):
         data = boorus.REGISTRY.get(name, {})
         display_name = data.get("url", name).replace("https://", "").replace("http://", "").strip("/")
         self.header_label.setText(display_name)
-        from PyQt6.QtGui import QIcon
         if hasattr(self.main_app, 'server_bar') and name in self.main_app.server_bar.icon_cache:
             self.header_icon.setPixmap(QIcon(self.main_app.server_bar.icon_cache[name]).pixmap(24, 24))
         else:
@@ -136,7 +135,6 @@ class Sidebar(QWidget):
         self._set_active_item(self.btn_home)
 
     def _refresh_status(self):
-        from ui.bookmarks_main.bookmarks_db import db
         count = len(db.get_all_bookmarks())
         self.status_lbl.setText(f"📌 {count} bookmarks" if count else "Ready")
         self.status_lbl.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 11px; font-weight: bold;")

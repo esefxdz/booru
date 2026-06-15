@@ -1,12 +1,15 @@
 import os
 import sys
 
+import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+import traceback
+import thumb_cache
+import download_images.engines as engines
+
 def _setup_logging():
     """Wire up rotating file logs so crashes are diagnosable in packaged builds."""
-    import logging
-    from logging.handlers import RotatingFileHandler
-    from pathlib import Path
-
     if getattr(sys, 'frozen', False):
         log_dir = Path(os.path.dirname(sys.executable))
     else:
@@ -30,7 +33,13 @@ def _setup_logging():
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=handlers,
     )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    # Silence noisy loggers that spam every HTTP request / retry
+    for noisy in (
+        "httpx", "httpcore", "h2", "urllib3", "curl_cffi",
+        "asyncio", "cloudflare_bypasser",
+    ):
+        logging.getLogger(noisy).setLevel(logging.ERROR)
 
     def handle_exception(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
@@ -40,9 +49,7 @@ def _setup_logging():
         logging.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
         
         # Show a critical error dialog so the user knows what crashed
-        import traceback
         try:
-            from PyQt6.QtWidgets import QApplication, QMessageBox
             if QApplication.instance():
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
                 msg = QMessageBox()
@@ -63,7 +70,7 @@ _setup_logging()
 # without having to disable the Chromium sandbox (--no-sandbox).
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtGui import QFont
 from PyQt6.QtCore import Qt
 
@@ -115,8 +122,6 @@ def main():
     exit_code = app.exec()
 
     # ── Clean shutdown: close the SQLite cache connection ──────────
-    import thumb_cache
-    import download_images.engines as engines
 
     thumb_cache.shutdown()
     engines.shutdown()

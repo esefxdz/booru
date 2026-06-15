@@ -96,20 +96,42 @@ class CloudflareBrowserDialog(InAppBrowser):
 
     def _add_status_bar(self):
         bar = QWidget()
-        bar.setFixedHeight(32)
+        bar.setFixedHeight(36)
         bar.setStyleSheet(
-            f"background-color: {colors.MAIN_BG}; "
+            f"background-color: {colors.ACCENT}22; "
             f"border-bottom: 1px solid {colors.BORDER};"
         )
         h = QHBoxLayout(bar)
         h.setContentsMargins(15, 0, 15, 0)
 
-        self._status_lbl = QLabel("⏳ Waiting for Cloudflare challenge…")
-        self._status_lbl.setStyleSheet(
-            f"color: {colors.TEXT_MUTED}; font-size: 11px; font-weight: bold;"
+        self._status_lbl = QLabel(
+            f"🔐 Cloudflare is blocking {self.booru_name}.  "
+            "Solve the \"Verify you are human\" challenge below — "
+            "this window will close automatically once unlocked."
         )
+        self._status_lbl.setStyleSheet(
+            f"color: {colors.TEXT_PRIMARY}; font-size: 12px; font-weight: bold;"
+        )
+        self._status_lbl.setWordWrap(True)
         h.addWidget(self._status_lbl)
         h.addStretch()
+
+        # "Solved" button — manual fallback when auto-detect misses
+        self._solved_btn = QPushButton("✅ Solved — Capture Cookies")
+        self._solved_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._solved_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors.SUCCESS};
+                color: {colors.TEXT_PRIMARY};
+                padding: 6px 14px;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{ background: {colors.SUCCESS}CC; }}
+        """)
+        self._solved_btn.clicked.connect(self._manual_capture)
+        h.addWidget(self._solved_btn)
 
         # Insert after the progress bar (index 2 in the layout)
         self.layout().insertWidget(2, bar)
@@ -119,6 +141,31 @@ class CloudflareBrowserDialog(InAppBrowser):
         self._status_lbl.setStyleSheet(
             f"color: {color}; font-size: 11px; font-weight: bold;"
         )
+
+    def _manual_capture(self):
+        """User clicked 'Solved' — grab all cookies now and finalize."""
+        if self._captured:
+            return
+        self._captured = True
+        self._poll_timer.stop()
+        # Dump all cookies from the store + document.cookie
+        self._cf_profile.cookieStore().loadAllCookies()
+        self.browser.page().runJavaScript(
+            "document.cookie",
+            lambda result: self._finalize_from_scan(result or "")
+        )
+
+    def _finalize_from_scan(self, js_cookies: str):
+        """Merge JS cookies with store cookies and finalize."""
+        if js_cookies:
+            for part in js_cookies.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    k, _, v = part.partition("=")
+                    self._found_cookies[k.strip()] = v.strip()
+        # Load all cookies signal will fire _on_cookie_added for each,
+        # but give it a moment then finalize with whatever we have.
+        QTimer.singleShot(500, lambda: self._finalize(self._found_cookies))
 
     # ═══════════════════════════════════════════════════════════════════
     #  Engine 1 — In-App Browser (cookie detection)
@@ -140,6 +187,27 @@ class CloudflareBrowserDialog(InAppBrowser):
             lambda title: self._check_challenge_page(title or "")
         )
 
+        # After CF redirect, cookies may already be set.  Actively scan
+        # the cookie store after a short delay (the cookieAdded signal
+        # sometimes misses cookies set during HTTP redirects).
+        QTimer.singleShot(2000, self._scan_cookie_store)
+
+    def _scan_cookie_store(self):
+        """Query the profile cookie store + document.cookie for any CF token."""
+        if self._captured:
+            return
+        url = self.browser.url().toString()
+        if not url.startswith("http"):
+            return
+        # Ask the cookie store to emit all cookies (they arrive via
+        # _on_cookie_added which accumulates them into _found_cookies).
+        self._cf_profile.cookieStore().loadAllCookies()
+        # Also do a JS-level check immediately
+        self.browser.page().runJavaScript(
+            "document.cookie",
+            lambda result: self._check_js_cookies(result or "")
+        )
+
     def _check_challenge_page(self, title: str):
         if self._captured:
             return
@@ -159,8 +227,13 @@ class CloudflareBrowserDialog(InAppBrowser):
         value = cookie.value().data().decode()
         self._found_cookies[name] = value
 
-        # Capture on cf_clearance OR __cf_bm — either indicates CF clearance
-        if name in ("cf_clearance", "__cf_bm"):
+        # Capture on any Cloudflare-related cookie
+        cf_names = (
+            "cf_clearance", "__cf_bm", "cf_chl_rc_m", "cf_chl_rc_i",
+            "cf_ob_info", "cf_use_ob", "cf_chl_2", "cf_chl_3",
+            "cf_chl_prog", "cf_chl_seq",
+        )
+        if name in cf_names or name.startswith("cf_"):
             self._captured = True
             self._poll_timer.stop()
             self._set_status(f"✅ Cloudflare cookie captured ({name}) — closing…", colors.SUCCESS)
@@ -186,14 +259,14 @@ class CloudflareBrowserDialog(InAppBrowser):
             if "=" in part:
                 k, _, v = part.partition("=")
                 cookies[k.strip()] = v.strip()
-        # Always merge found cookies — useful even without cf_clearance
+        # Always merge found cookies
         self._found_cookies.update(cookies)
-        # Trigger on cf_clearance OR __cf_bm
-        if any(k in cookies for k in ("cf_clearance", "__cf_bm")):
+        # Trigger on any CF-related cookie
+        cf_keys = [k for k in cookies if k.startswith("cf_") or k == "__cf_bm"]
+        if cf_keys:
             self._captured = True
             self._poll_timer.stop()
-            key = "cf_clearance" if "cf_clearance" in cookies else "__cf_bm"
-            self._set_status(f"✅ Cloudflare cookie captured ({key}) — closing…", colors.SUCCESS)
+            self._set_status(f"✅ Cloudflare cookie captured ({cf_keys[0]}) — closing…", colors.SUCCESS)
             QTimer.singleShot(800, lambda: self._finalize(self._found_cookies))
 
     # ═══════════════════════════════════════════════════════════════════

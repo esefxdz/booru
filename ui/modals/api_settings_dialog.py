@@ -20,8 +20,12 @@ from PyQt6.QtWidgets import (
     QWidget, QFormLayout, QFrame
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from validation import ValidationError
-
+from validation import ValidationError, validate_filename
+from adapters.session_login import supports_session_login, get_session_cookie_names, perform_login, get_login_url
+from adapters import adapter_choices
+import ui.animations as anims
+from cloudflare_bypasser import get_session, invalidate_session
+from ui.browser_dialog import SessionLoginBrowserDialog, CloudflareBrowserDialog
 from ui import settings_view as settings
 import boorus
 
@@ -48,7 +52,6 @@ class APISettingsDialog(QDialog):
         self._closed = False
         self.api_type = boorus.REGISTRY.get(name, {}).get("api_type", "gelbooru")
 
-        from adapters.session_login import supports_session_login, get_session_cookie_names
         self._supports_session = supports_session_login(self.api_type)
         self._session_cookie_names = get_session_cookie_names(self.api_type)
 
@@ -228,7 +231,6 @@ class APISettingsDialog(QDialog):
         engine_layout.addWidget(engine_info)
 
         engine_form = QFormLayout()
-        from adapters import adapter_choices
         choices = adapter_choices()
         self.engine_types = [at for at, _ in choices]
         engine_labels = [lbl for _, lbl in choices]
@@ -285,7 +287,6 @@ class APISettingsDialog(QDialog):
     # └──────────────────────────────────────────────────────────────────┘
     def showEvent(self, event):
         super().showEvent(event)
-        import ui.animations as anims
         anims.animate_slide_up_fade(self, duration=300, offset=15)
 
     def closeEvent(self, event):
@@ -313,7 +314,6 @@ class APISettingsDialog(QDialog):
             api_key = api_key.text().strip() if api_key else ""
             if user_id and api_key:
                 try:
-                    from validation import validate_filename
                     user_id = validate_filename(user_id)
                     api_key = validate_filename(api_key)
                     settings.manager.set_credential(self.name, user_id, api_key)
@@ -369,12 +369,10 @@ class APISettingsDialog(QDialog):
     # │  is stored in settings.manager.session_keys for this booru.            │
     # └──────────────────────────────────────────────────────────────────┘
     def _do_session_login(self):
-        from adapters.session_login import perform_login
         username = self._sess_user.text().strip()
         password = self._sess_pass.text().strip()
 
         try:
-            from validation import validate_filename
             if not username or not password:
                 raise ValidationError("Username and password are required")
             username = validate_filename(username)
@@ -391,7 +389,6 @@ class APISettingsDialog(QDialog):
         self._sess_status.setStyleSheet(f"color: {colors.WARNING};")
 
         # Build a CF bypass session so login requests pass through Cloudflare
-        from cloudflare_bypasser import get_session
         bypass = get_session(self.name)
 
         # Inner thread: runs the async login coroutine on a new event loop
@@ -435,9 +432,6 @@ class APISettingsDialog(QDialog):
     # │  captures the session cookie automatically and returns it.      │
     # └──────────────────────────────────────────────────────────────────┘
     def _do_browser_login(self):
-        from adapters.session_login import get_login_url, get_session_cookie_names
-        from ui.browser_dialog import SessionLoginBrowserDialog
-
         login_url    = get_login_url(boorus.REGISTRY[self.name]["url"], self.api_type)
         cookie_names = get_session_cookie_names(self.api_type)
 
@@ -466,7 +460,6 @@ class APISettingsDialog(QDialog):
     # │  pass the Cloudflare challenge without the browser.             │
     # └──────────────────────────────────────────────────────────────────┘
     def _run_cf_bypass(self):
-        from ui.browser_dialog import CloudflareBrowserDialog
         url = boorus.REGISTRY[self.name]["url"]
         dlg = CloudflareBrowserDialog(url, self.name, self)
         # _finalize() inside CloudflareBrowserDialog already calls
@@ -483,7 +476,6 @@ class APISettingsDialog(QDialog):
     # │  challenge (useful when cf_clearance expires)                   │
     # └──────────────────────────────────────────────────────────────────┘
     def _clear_cf(self):
-        from cloudflare_bypasser import invalidate_session
         invalidate_session(self.name)
         self.accept()
 

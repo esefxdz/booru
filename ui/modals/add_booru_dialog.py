@@ -15,6 +15,9 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from ui import settings_view as settings
 import boorus
 import threading
+import httpx
+from adapters import adapter_choices
+from validation import validate_url, validate_filename
 
 
 from ui import colors
@@ -62,7 +65,6 @@ class AutoDetectThread(QThread):
     # │  This avoids asking the user which engine their site runs.      │
     # └──────────────────────────────────────────────────────────────────┐
     def run(self):
-        import httpx
         headers = {"User-Agent": settings.manager.get_user_agent()}
 
         def is_json_type(r, check):
@@ -135,7 +137,6 @@ class AddBooruDialog(QDialog):
         self.detect_thread = None
         self._closed = False
 
-        from adapters import adapter_choices
         choices = adapter_choices()
         self.labels    = [lbl for _, lbl in choices]
         self.api_types = [at  for at, _  in choices]
@@ -220,7 +221,6 @@ class AddBooruDialog(QDialog):
             return
 
         try:
-            from validation import validate_url
             url = validate_url(url)
         except Exception as e:
             self._set_status(f"Invalid URL: {e}", "red")
@@ -312,15 +312,14 @@ class AddBooruDialog(QDialog):
     # │  registry so the server bar icon appears immediately            │
     # └──────────────────────────────────────────────────────────────────┘
     def _add_booru(self):
-        name     = self.name_ent.text().strip().lower().replace(" ", "_")
-        url      = self.url_ent.text().strip().rstrip("/")
+        name = self.name_ent.text().strip().lower().replace(" ", "_")
+        url = self.url_ent.text().strip().rstrip("/")
         api_type = self.api_types[self.api_combo.currentIndex()]
         api_path = self.path_ent.text().strip() or _DEFAULT_API_PATHS.get(api_type, "/index.php")
 
         try:
-            from validation import validate_filename, validate_url
             name = validate_filename(name)
-            url  = validate_url(url)
+            url = validate_url(url)
         except Exception as e:
             self._set_status(f"Invalid input: {e}", "red")
             return

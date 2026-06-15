@@ -12,7 +12,8 @@ from ui.text_bar import BooruTextBar
 from ui.tag_chip import TagChip
 
 
-
+from validation import sanitize_tag_list
+import ui.animations as anims
 from ui import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -355,7 +356,6 @@ class BlacklistView(QWidget):
 
         # Run through the security sanitiser to strip any injected characters
         try:
-            from validation import sanitize_tag_list
             cleaned = sanitize_tag_list(cleaned)
         except Exception:
             pass  # If validation module isn't available, use the raw list
@@ -366,8 +366,6 @@ class BlacklistView(QWidget):
         # Show the confirmation label and animate the save button
         self.status_lbl.setText("✔ Changes saved")
         self.status_lbl.show()
-
-        import ui.animations as anims
         anims.animate_button_press(self.save_btn)
 
         # Auto-hide the confirmation after 2 seconds so it doesn't linger

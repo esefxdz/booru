@@ -1,7 +1,10 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QLabel, QPushButton,
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QSize
+from PyQt6.QtCore import Qt, pyqtSlot, QSize, pyqtSignal
+import threading
+from ui.icons import Icons
+from tag_categorizer import get_categorizer
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -14,6 +17,9 @@ from ui import colors
 # ╚══════════════════════════════════════════════════════════════════════╝
 class TagPanel(QWidget):
     """Right panel: static tag display area."""
+
+    # Signal carries (cats_dict, generation) — emitted from background thread
+    _cats_ready = pyqtSignal(dict, int)
 
     WIDTH = 240
     _POOL_MAX = 300   # Maximum pooled buttons before we start destroying extras
@@ -29,6 +35,10 @@ class TagPanel(QWidget):
         # Pool of reusable tag widgets
         self._btn_pool: list[QPushButton] = []
         self._lbl_pool: list[QLabel] = []
+        # Generation counter — incremented on every update_tags call so stale
+        # background callbacks from a previous post are silently discarded.
+        self._generation = 0
+        self._cats_ready.connect(self._on_cats_ready)
         self._build()
 
     # ┌──────────────────────────────────────────────────────────────────┐
@@ -60,9 +70,7 @@ class TagPanel(QWidget):
         self.results_count_lbl = QLabel("0 Results")
         self.results_count_lbl.setStyleSheet(f"color: {colors.TEXT_PRIMARY}; font-size: 16px; font-weight: 800;")
         res_h.addWidget(self.results_count_lbl)
-        
         self.refresh_btn = QPushButton()
-        from ui.icons import Icons
         self.refresh_btn.setIcon(Icons.get("refresh", colors.TEXT_MUTED))
         self.refresh_btn.setIconSize(QSize(18, 18))
         self.refresh_btn.setFixedSize(30, 30)
@@ -131,6 +139,7 @@ class TagPanel(QWidget):
     # └──────────────────────────────────────────────────────────────────┘
     def update_tags(self, post):
         self.clear_tags()
+        self._generation += 1   # invalidate any in-flight background fetch
         
         raw_score = post.get("score")
         if isinstance(raw_score, dict):
@@ -147,27 +156,26 @@ class TagPanel(QWidget):
 
         if is_flat:
             self._render_tags(cats)
-            import threading
+
+            gen = self._generation
 
             def fetch_and_render():
-                from tag_categorizer import get_categorizer
                 new_cats = get_categorizer().categorize_tags(cats["general"])
-                from PyQt6.QtCore import QMetaObject, Q_ARG
-                QMetaObject.invokeMethod(
-                    self, "_render_tags_safe",
-                    Qt.ConnectionType.QueuedConnection,
-                    Q_ARG(dict, new_cats),
-                )
+                # Emit via signal — PyQt6 handles dict natively and queues to GUI thread
+                self._cats_ready.emit(new_cats, gen)
 
             threading.Thread(target=fetch_and_render, daemon=True).start()
         else:
             self._render_tags(cats)
 
     # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _render_tags_safe  (thread-safe slot)                           │
+    # │  _on_cats_ready  — slot connected to _cats_ready signal          │
     # └──────────────────────────────────────────────────────────────────┘
-    @pyqtSlot(dict)
-    def _render_tags_safe(self, cats):
+    @pyqtSlot(dict, int)
+    def _on_cats_ready(self, cats: dict, gen: int):
+        # Discard results that belong to a previous post
+        if gen != self._generation:
+            return
         self._render_tags(cats)
 
     # ┌──────────────────────────────────────────────────────────────────┐

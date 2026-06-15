@@ -49,21 +49,22 @@ _CAT_LABELS = {
 # ---------------------------------------------------------------------------
 class _CategorizerThread(QThread):
     """Runs TagCategorizer.categorize_tags() in a background thread."""
-    done = pyqtSignal(dict)
-    failed = pyqtSignal()
+    done = pyqtSignal(dict, int)   # (categories, generation)
+    failed = pyqtSignal(int)       # generation
 
-    def __init__(self, tags: list[str]):
+    def __init__(self, tags: list[str], generation: int):
         super().__init__()
         self._tags = tags
+        self._generation = generation
 
     def run(self):
         try:
             from tag_categorizer import get_categorizer
             cats = get_categorizer().categorize_tags(self._tags)
-            self.done.emit(cats)
+            self.done.emit(cats, self._generation)
         except Exception as e:
-            logging.error(f"[post_displayer_tags] Categorizer thread failed: {e}")
-            self.failed.emit()
+            logging.error("[post_displayer_tags] Categorizer thread failed: %s", e)
+            self.failed.emit(self._generation)
 
 
 # ---------------------------------------------------------------------------
@@ -178,11 +179,13 @@ class ClickableTagsDropdown(CollapsibleWidget):
 
     def load_post(self, post: dict):
         self._current_post = post
+        self._generation = getattr(self, '_generation', 0) + 1
+        gen = self._generation
 
         # Stop any running worker
         if self._worker and self._worker.isRunning():
             self._worker.quit()
-            self._worker.wait(300)
+            self._worker.wait(500)
 
         self._clear()
         self._all_cats = {}
@@ -209,27 +212,54 @@ class ClickableTagsDropdown(CollapsibleWidget):
 
         # Show a loading state while the categorizer works
         self._show_loading()
-        self._worker = _CategorizerThread(tags)
+        self._worker = _CategorizerThread(tags, gen)
         self._worker.done.connect(self._on_cats_ready)
-        self._worker.failed.connect(lambda: self._on_cats_ready(cats))
+        self._worker.failed.connect(self._on_cats_failed)
         self._worker.start()
 
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
 
-    def _on_cats_ready(self, cats: dict):
-        if self._current_post is None:
+    def _on_cats_ready(self, cats: dict, generation: int):
+        if generation != getattr(self, '_generation', 0):
+            return  # stale result from a previous post
+        self._apply_cats(cats)
+
+    def _on_cats_failed(self, generation: int):
+        if generation != getattr(self, '_generation', 0):
             return
-        
-        # If categorizer failed entirely, flatten everything into general
+        # Fallback: show all tags as general
+        try:
+            from adapters import get_adapter
+            import boorus
+            post = self._current_post
+            if post:
+                booru_name = post.get("_booru", "")
+                site_data = boorus.REGISTRY.get(booru_name, {})
+                adapter = get_adapter(site_data.get("api_type", "gelbooru"))
+                tags = adapter.get_tags(post)
+                self._apply_cats({"general": tags})
+        except Exception:
+            self._apply_cats({"general": []})
+
+    def _apply_cats(self, cats: dict):
+        # If categorizer returned nothing useful, flatten into general
         if not any(cats.values()):
             all_tags = []
-            for v in cats.values(): all_tags.extend(v)
+            for v in cats.values():
+                all_tags.extend(v)
             cats = {"general": all_tags}
-            
         self._all_cats = cats
         self._render_all_tags()
+
+        # If only meta + general have tags, API categorization didn't work —
+        # show a hint to unlock Danbooru so artist/character/copyright appear.
+        has_meaningful = bool(
+            cats.get("artist") or cats.get("character") or cats.get("copyright")
+        )
+        if not has_meaningful and (cats.get("general") or cats.get("meta")):
+            self._show_unlock_hint()
 
     # ------------------------------------------------------------------
     # Rendering
@@ -276,6 +306,47 @@ class ClickableTagsDropdown(CollapsibleWidget):
         lbl = QLabel("No tags found.")
         lbl.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 12px; font-style: italic;")
         self.tags_layout.addWidget(lbl)
+
+    def _show_unlock_hint(self):
+        """Show a hint when all tags are uncategorized (Danbooru API blocked)."""
+        hint = QLabel(
+            "💡 Tags are not categorized yet.\n"
+            "Click below to unlock Danbooru — solve one CAPTCHA and all "
+            "future tags will show artist/character/copyright groups."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet(
+            f"color: {colors.WARNING}; font-size: 11px; "
+            f"background: {colors.WARNING}15; padding: 8px; border-radius: 6px;"
+        )
+        self.tags_layout.addWidget(hint)
+
+        btn = QPushButton("🔐  Unlock Tag Categories (Solve CAPTCHA)")
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {colors.ACCENT};
+                color: {colors.TEXT_PRIMARY};
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background: {colors.ACCENT}DD; }}
+        """)
+        btn.clicked.connect(self._open_danbooru_cf_bypass)
+        self.tags_layout.addWidget(btn)
+
+    def _open_danbooru_cf_bypass(self):
+        """Open the Cloudflare bypass dialog for Danbooru."""
+        from ui.browser_dialog import CloudflareBrowserDialog
+        dlg = CloudflareBrowserDialog("https://danbooru.donmai.us", "danbooru", self)
+        dlg.cookies_captured.connect(lambda c: self._on_danbooru_unlocked())
+        dlg.exec()
+
+    def _on_danbooru_unlocked(self):
+        """Called after the user solves the Danbooru CAPTCHA — re-categorize."""
+        if self._current_post:
+            self.load_post(self._current_post)
 
     def _add_section(self, cat: str, tags: list[str]):
         color = _CAT_COLORS.get(cat, colors.TEXT_MUTED)
