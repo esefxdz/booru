@@ -12,7 +12,7 @@ class HtmlScraperAdapter(BaseAdapter):
     pagination_style = "pid"
 
     def build_url(self, site_data: dict) -> str:
-        return f"{site_data['url']}/index.php"
+        return f"{site_data.get('url', '')}/index.php"
 
     def build_params(self, tags: str, limit: int, page: int, creds: dict) -> dict:
         params = {
@@ -34,7 +34,7 @@ class HtmlScraperAdapter(BaseAdapter):
         )
         
         posts = []
-        base_url = site_data["url"].rstrip("/")
+        base_url = site_data.get("url", "").rstrip("/")
 
         for pid, thumb, title in matches:
             # Reconstruct the thumbnail URL properly

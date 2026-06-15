@@ -76,11 +76,13 @@ class BooruDownloader(QObject):
         Full image downloads use download_images.engines instead.
         """
         booru_name = booru or settings.manager.active_booru
+        own_session = False
         if session_manager:
             session = session_manager(booru_name)
         else:
             from cloudflare_bypasser import get_session
             session = get_session(booru_name)
+            own_session = True
 
         headers = self.headers.copy()
 
@@ -109,7 +111,14 @@ class BooruDownloader(QObject):
             })
             bypass_rate_limit = True
 
-        return await NetworkManager.fetch(session, url, params=params, headers=headers, bypass_rate_limit=bypass_rate_limit)
+        try:
+            return await NetworkManager.fetch(session, url, params=params, headers=headers, bypass_rate_limit=bypass_rate_limit)
+        finally:
+            if own_session:
+                try:
+                    await session.close()
+                except Exception:
+                    pass
 
     # ──────────────────────────────────────────────────────────────
     #  Post field accessors (delegate to adapter)
@@ -192,7 +201,7 @@ class BooruDownloader(QObject):
         from download_images.image_downloader import download_post
         from download_images.engines import ENGINE_FNS, DEFAULT_ENGINE
 
-        tid = str(task_id) if task_id else str(uuid.uuid4())[:8]
+        tid = str(task_id) if task_id is not None else str(uuid.uuid4())[:8]
         filename = str(post.get("id", "unknown"))
         ext = post.get("file_ext", "")
         if not ext and "file_url" in post:

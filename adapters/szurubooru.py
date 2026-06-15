@@ -10,7 +10,7 @@ class SzurubooruAdapter(BaseAdapter):
     pagination_style = "offset"
 
     def build_url(self, site_data: dict) -> str:
-        return f"{site_data['url']}/api/posts"
+        return f"{site_data.get('url', '')}/api/posts"
 
     def build_params(self, tags: str, limit: int, page: int, creds: dict) -> dict:
         params = {

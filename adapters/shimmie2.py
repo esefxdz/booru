@@ -13,7 +13,7 @@ class Shimmie2Adapter(BaseAdapter):
         return {"page": page_index}  # Shimmie2 is 0-indexed
 
     def build_url(self, site_data: dict) -> str:
-        return f"{site_data['url']}/api/json/index"
+        return f"{site_data.get('url', '')}/api/json/index"
 
     def build_params(self, tags: str, limit: int, page: int, creds: dict) -> dict:
         params = {

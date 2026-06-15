@@ -10,7 +10,7 @@ class PhilomenaAdapter(BaseAdapter):
     label = "Philomena (MLP boorus)"
 
     def build_url(self, site_data: dict) -> str:
-        return f"{site_data['url']}/api/v1/json/search/images"
+        return f"{site_data.get('url', '')}/api/v1/json/search/images"
 
     def build_params(self, tags: str, limit: int, page: int, creds: dict) -> dict:
         params = {
