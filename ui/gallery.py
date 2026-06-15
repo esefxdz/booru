@@ -478,13 +478,19 @@ class Gallery(QWidget):
 
         # ── Release slots for posts that scrolled out ──────────
         for post_idx in (currently_mapped - wanted):
-            self._release_slot(self._post_to_slot[post_idx])
+            slot_idx = self._post_to_slot.get(post_idx)
+            if slot_idx is not None:
+                self._release_slot(slot_idx)
 
         # ── Update geometry for already-mapped posts ───────────
         # (needed when the window is resized or column count changes)
         for post_idx in (wanted & currently_mapped):
-            slot_idx = self._post_to_slot[post_idx]
+            slot_idx = self._post_to_slot.get(post_idx)
+            if slot_idx is None:
+                continue
             btn, star = self._pool[slot_idx]
+            if post_idx >= len(self._rects):
+                continue
             rect = self._rects[post_idx]
             btn.setGeometry(rect)
             btn.setIconSize(rect.size())
@@ -498,6 +504,8 @@ class Gallery(QWidget):
             return abs(item_center - vp_center)
 
         for post_idx in sorted(wanted - currently_mapped, key=dist_to_center):
+            if post_idx >= len(self._rects):
+                continue
             if not self._free_slots:
                 import logging
                 logging.warning(

@@ -11,7 +11,7 @@ class GelbooruAdapter(BaseAdapter):
     pagination_style = "pid"
 
     def build_url(self, site_data: dict) -> str:
-        return f"{site_data['url']}{site_data.get('api_path', '/index.php')}"
+        return f"{site_data.get('url', '')}{site_data.get('api_path', '/index.php')}"
 
     def build_params(self, tags: str, limit: int, page: int, creds: dict) -> dict:
         params = {

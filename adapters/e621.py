@@ -10,7 +10,7 @@ class E621Adapter(BaseAdapter):
     label = "e621 / e926"
 
     def build_url(self, site_data: dict) -> str:
-        return f"{site_data['url']}/posts.json"
+        return f"{site_data.get('url', '')}/posts.json"
 
     def build_params(self, tags: str, limit: int, page: int, creds: dict) -> dict:
         params = {"tags": tags, "limit": limit}

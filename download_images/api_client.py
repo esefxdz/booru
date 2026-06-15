@@ -65,11 +65,17 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
     try:
         r = await fetch_fn(url, params=params)
 
-        # ── 401 retry: stale API key alongside a valid CF bypass ──
-        if r.status_code == 401 and creds:
-            logging.error("[api_client] Auth failed (401), retrying without credentials...")
-            params_no_auth = adapter.build_params(search_tags, limit, page, {})
-            r = await fetch_fn(url, params=params_no_auth)
+        # ── 401: authentication required ────────────────────────
+        if r.status_code == 401:
+            booru = settings.manager.active_booru
+            if creds:
+                logging.error("[api_client] Auth failed (401) with stored credentials — they may be expired")
+            else:
+                logging.warning("[api_client] %s requires an API key — get one from the site and add it in Settings > Credentials", booru)
+            # Retry without credentials in case they're stale (some boorus work anonymously)
+            if creds:
+                params_no_auth = adapter.build_params(search_tags, limit, page, {})
+                r = await fetch_fn(url, params=params_no_auth)
 
         # ── Cloudflare challenge wall detection ───────────────────
         if hasattr(r, "is_blocked") and r.is_blocked:
@@ -84,7 +90,15 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
 
         # ── Non-200 response ─────────────────────────────────────
         if r.status_code != 200:
-            logging.info(f"[api_client] HTTP {r.status_code} from {url}")
+            booru = settings.manager.active_booru
+            if r.status_code == 403:
+                logging.warning("[api_client] %s returned 403 Forbidden — the site may be blocking automated access (Cloudflare)", booru)
+            elif r.status_code == 404:
+                logging.warning("[api_client] %s returned 404 — the API endpoint may be wrong or the site is down", booru)
+            elif r.status_code == 401:
+                logging.warning("[api_client] %s requires authentication — add an API key in Settings > Credentials", booru)
+            else:
+                logging.warning("[api_client] HTTP %d from %s", r.status_code, url)
             return []
 
         return adapter.parse_response(r, site_data)

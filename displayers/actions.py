@@ -161,7 +161,7 @@ class ActionButtons(QWidget):
             try:
                 from download_images import get_download_folder
                 dl_dir = get_download_folder(post, parent_gui.downloader)
-                parent_gui.downloader.download_file(post.get("id"), post, dl_dir)
+                parent_gui.downloader.download_file(str(post.get("id", "")), post, dl_dir)
             except Exception as e:
                 logging.error(f"[actions] Download error: {e}")
                 parent_gui.downloader.download_failed.emit(str(post.get("id", "unknown")), str(e))

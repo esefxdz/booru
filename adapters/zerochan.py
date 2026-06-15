@@ -13,7 +13,7 @@ class ZerochanAdapter(BaseAdapter):
         return {"p": page_index + 1}
 
     def build_url(self, site_data: dict) -> str:
-        return f"{site_data['url']}/search"
+        return f"{site_data.get('url', '')}/search"
 
     def build_params(self, tags: str, limit: int, page: int, creds: dict) -> dict:
         params = {"q": tags if tags else "*"}
@@ -33,7 +33,7 @@ class ZerochanAdapter(BaseAdapter):
             )
             
             posts = []
-            base_url = site_data["url"].rstrip("/")
+            base_url = site_data.get("url", "").rstrip("/")
             
             for post_id, tags_str, img_src, title in matches:
                 # Zerochan serves thumbnails; construct full image URL
