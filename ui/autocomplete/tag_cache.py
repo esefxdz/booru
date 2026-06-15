@@ -10,6 +10,8 @@ Populated automatically from network autocomplete results.
 import sqlite3
 import os
 import threading
+import shutil
+import logging
 from pathlib import Path
 
 from ui.settings_view.manager import BASE_DIR
@@ -25,14 +27,11 @@ def _conn() -> sqlite3.Connection:
     if not hasattr(_local, "conn") or _local.conn is None:
         if not _DB_PATH.exists() and _LEGACY_DB.exists():
             try:
-                import shutil
-                import logging
                 _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(_LEGACY_DB, _DB_PATH)
                 _LEGACY_DB.unlink(missing_ok=True)
                 logging.info("[autocomplete] Migrated tag_cache.db from %%APPDATA%%")
             except Exception as e:
-                import logging
                 logging.warning("[autocomplete] Could not migrate legacy tag_cache.db: %s", e)
 
         _DB_PATH.parent.mkdir(parents=True, exist_ok=True)

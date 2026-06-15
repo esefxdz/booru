@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from ui import settings_view as settings
 from ui import colors
+import ui.animations as anims
 
 class GlobalSettingsDialog(QDialog):
     def __init__(self, parent_gui):
@@ -172,7 +173,6 @@ class GlobalSettingsDialog(QDialog):
     def showEvent(self, event):
         super().showEvent(event)
         try:
-            import ui.animations as anims
             anims.animate_slide_up_fade(self, duration=300, offset=20)
         except Exception:
             pass

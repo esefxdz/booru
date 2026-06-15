@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from ui import settings_view as settings
 from ui import colors
+from cloudflare_bypasser.session import BYPASS_METHODS, BYPASS_METHOD_LABELS, get_available_engines
 
 
 class NetworkSection(QWidget):
@@ -89,7 +90,6 @@ class NetworkSection(QWidget):
         """)
 
         # Populate the dropdown from the engine module
-        from cloudflare_bypasser.session import BYPASS_METHODS, BYPASS_METHOD_LABELS, get_available_engines
         available = get_available_engines()
 
         current_method = getattr(settings.manager, "cf_bypass_method", "auto")

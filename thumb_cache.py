@@ -57,6 +57,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
+from ui import settings_view as settings
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -403,7 +404,6 @@ def _init() -> tuple[_L1, _L2]:
     if _l1 is not None and _l2 is not None:
         return _l1, _l2
 
-    from ui import settings_view as settings
     cache_dir = Path(settings._SETTINGS_DIR) / "thumb_cache"
     db_path = cache_dir / "cache.db"
 

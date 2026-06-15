@@ -9,7 +9,9 @@ Credentials stored securely using system keyring.
 import logging
 import json
 import os
+import shutil
 from pathlib import Path
+from credentials import migrate_from_settings, get_sensitive, set_sensitive, get_credential, set_credential
 
 # --- STATIC CONSTANTS ---
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -86,7 +88,6 @@ class SettingsManager:
         _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
         # One-time migration from legacy %APPDATA% location
         if not _SETTINGS_FILE.exists() and _LEGACY_SETTINGS_FILE.exists():
-            import shutil
             try:
                 shutil.copy2(_LEGACY_SETTINGS_FILE, _SETTINGS_FILE)
                 logging.info(
@@ -121,7 +122,6 @@ class SettingsManager:
         if "credentials" in data:
             logging.info("[settings] Migrating plaintext credentials to secure storage...")
             try:
-                from credentials import migrate_from_settings
                 migrate_from_settings(data["credentials"])
             except Exception as e:
                 logging.error(f"[settings] Credential migration failed: {e}")
@@ -136,7 +136,6 @@ class SettingsManager:
 
         # Load sensitive fields from secure storage
         try:
-            from credentials import get_sensitive
             self.bypass_data = get_sensitive("_bypass_data") or {}
             self.session_keys = get_sensitive("_session_keys") or {}
             self.auth_tokens = get_sensitive("_auth_tokens") or {}
@@ -180,7 +179,6 @@ class SettingsManager:
         _SENSITIVE_KEYS = {"bypass_data", "session_keys", "auth_tokens"}
         
         try:
-            from credentials import set_sensitive
             set_sensitive("_bypass_data", self.bypass_data)
             set_sensitive("_session_keys", self.session_keys)
             set_sensitive("_auth_tokens", self.auth_tokens)
@@ -213,12 +211,10 @@ class SettingsManager:
 
     def get_credential(self, booru):
         """Retrieve API credentials from secure storage."""
-        from credentials import get_credential
         return get_credential(booru)
 
     def set_credential(self, booru, user_id, api_key):
         """Store API credentials securely using encrypted local storage."""
-        from credentials import set_credential
         set_credential(booru, user_id, api_key)
 
     # --- Bypass helpers ---

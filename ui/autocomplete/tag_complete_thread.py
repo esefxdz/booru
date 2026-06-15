@@ -12,6 +12,7 @@ import re
 import json
 import httpx
 from PyQt6.QtCore import QRunnable, QObject, pyqtSignal
+from ui.autocomplete.tag_cache import search_tags, store_tags
 
 from ui import settings_view as settings
 import boorus
@@ -53,7 +54,6 @@ class TagCompleteWorker(QRunnable):
         booru_name = settings.manager.active_booru
 
         # ── 1. Check local SQLite cache first (instant, offline) ──
-        from ui.autocomplete.tag_cache import search_tags, store_tags
         cached = search_tags(booru_name, self._prefix, limit=15)
         if cached and not self._is_cancelled:
             self.signals.results_ready.emit(cached)

@@ -37,11 +37,19 @@ class DanbooruAdapter(BaseAdapter):
         return post.get("large_file_url") or post.get("file_url") or ""
 
     def get_tags(self, post: dict) -> list:
-        for field in ("tag_string", "tag_string_general"):
+        # Danbooru splits tags across category-specific fields.  The old
+        # code only read tag_string_general, silently dropping artist,
+        # character, copyright, and meta tags.
+        tag_fields = (
+            "tag_string_general", "tag_string_artist", "tag_string_character",
+            "tag_string_copyright", "tag_string_meta",
+        )
+        all_tags = []
+        for field in tag_fields:
             val = post.get(field, "")
             if val:
-                return val.replace(",", " ").split()
-        return []
+                all_tags.extend(val.replace(",", " ").split())
+        return all_tags
 
     # ##################################################################
     # Used by the downloader to determine the smart folder name (artist/character/etc)

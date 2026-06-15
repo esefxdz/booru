@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from ui import settings_view as settings
 from ui import colors
+from download_images.engines import ENGINES, ENGINE_LABELS, get_available_engines
 
 
 class DownloadsSection(QWidget):
@@ -76,8 +77,6 @@ class DownloadsSection(QWidget):
                 padding: 4px 8px;
             }}
         """)
-
-        from download_images.engines import ENGINES, ENGINE_LABELS, get_available_engines
         available = get_available_engines()
         current = getattr(settings.manager, "download_engine", "urllib")
         selected_index = 0

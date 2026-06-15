@@ -13,6 +13,8 @@ from ui.text_bar import BooruTextBar
 from ui.tag_chip import TagChip
 
 
+from validation import sanitize_tag_list
+import ui.animations as anims
 from ui import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -346,7 +348,6 @@ class FavoritesView(QWidget):
 
         # Sanitise through the validation module if available
         try:
-            from validation import sanitize_tag_list
             cleaned = sanitize_tag_list(cleaned)
         except Exception:
             pass
@@ -357,7 +358,6 @@ class FavoritesView(QWidget):
         self.status_lbl.setText("✔ Changes saved")
         self.status_lbl.show()
 
-        import ui.animations as anims
         anims.animate_button_press(self.save_btn)
 
         # Auto-hide the confirmation after 2 seconds

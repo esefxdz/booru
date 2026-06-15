@@ -9,8 +9,9 @@ from ui.server_bar.favicon_fetcher import FaviconFetcher
 # ║                   CLASS: DraggableBooruButton                       ║
 # ║  A QPushButton that also acts as a drag source and drop target,     ║
 # ║  letting the user reorder boorus by dragging them in the sidebar.   ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 from ui import colors
+import ui.animations as anims
+from cloudflare_bypasser import store as cf_store
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                   CLASS: DraggableBooruButton                       ║
@@ -48,9 +49,7 @@ class DraggableBooruButton(QPushButton):
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _on_clicked  — plays a quick press animation and switches the  │
     # │  active booru to this one in the main window                    │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_clicked(self):
-        import ui.animations as anims
         anims.animate_button_press(self)
         self.server_bar.main_gui.select_booru(self.booru_name)
 
@@ -86,7 +85,6 @@ class DraggableBooruButton(QPushButton):
         )
 
         # ── CF bypass status indicator ────────────────────────────
-        from cloudflare_bypasser import store as cf_store
         cf_ok = cf_store.has_active_bypass(self.booru_name)
         cf_color = colors.SUCCESS if cf_ok else colors.WARNING
         cf_border = f"border-bottom: 3px solid {cf_color};" if not is_active else ""

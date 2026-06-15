@@ -6,6 +6,10 @@ from ui import settings_view as settings
 from collections import OrderedDict
 from ui import colors
 import bisect
+import logging
+import thumb_cache
+from ui.bookmarks_main.bookmarks_db import db
+import ui.animations as anims
 
 
 # ── QPixmap LRU (byte-bounded) ─────────────────────────────────
@@ -288,7 +292,6 @@ class Gallery(QWidget):
             else:
                 btn.setStyleSheet("border: none; background: transparent; padding: 0;")
             if post_idx not in self._post_animated:
-                import ui.animations as anims
                 anims.animate_fade_in(btn, duration=500)
                 self._post_animated.add(post_idx)
         else:
@@ -596,7 +599,6 @@ class Gallery(QWidget):
             if post_idx >= len(self._rects):
                 continue
             if not self._free_slots:
-                import logging
                 logging.warning(
                     "[gallery] Pool exhausted (%d slots, %d wanted).",
                     len(self._pool), len(wanted),
@@ -634,7 +636,6 @@ class Gallery(QWidget):
 
     def _reload_from_cache(self, post_id):
         """Reload thumbnail bytes from the two-tier cache (L1 memory / L2 disk)."""
-        import thumb_cache
         return thumb_cache.get(post_id)
 
     # ══════════════════════════════════════════════════════════════
@@ -650,7 +651,6 @@ class Gallery(QWidget):
         per post, which caused Qt layout thrash and RAM growth under
         infinite scroll.
         """
-        from ui.bookmarks_main.bookmarks_db import db
         for post in posts:
             post_id = post.get('id')
             if post_id in self._post_id_set:
@@ -725,7 +725,6 @@ class Gallery(QWidget):
     # ══════════════════════════════════════════════════════════════
 
     def _on_btn_clicked(self, post, btn):
-        import ui.animations as anims
         anims.animate_button_press(btn)
         self.open_preview(post)
 
@@ -786,7 +785,6 @@ class Gallery(QWidget):
 
     def _toggle_bookmark_direct(self, post, star_btn):
         pid = post.get("id")
-        from ui.bookmarks_main.bookmarks_db import db
         is_now_bookmarked = not db.is_post_bookmarked(pid)
         if is_now_bookmarked:
             db.add_bookmark(post)
