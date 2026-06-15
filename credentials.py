@@ -51,7 +51,18 @@ class CredentialManager:
 
     @staticmethod
     def _get_credentials_file() -> Path:
-        """Get the path to the credentials file."""
+        """Get the path to the credentials file.
+
+        Stored next to settings.json in the app directory so the whole
+        folder is portable (copy to USB, another machine, etc.).
+        Falls back to the legacy %APPDATA% location for migration.
+        """
+        from ui.settings_view.manager import BASE_DIR
+        return BASE_DIR / "credentials.bin"
+
+    @staticmethod
+    def _get_legacy_credentials_file() -> Path:
+        """Legacy %APPDATA% path — only used for one-time migration."""
         appdata = os.environ.get("APPDATA", ".")
         return Path(appdata) / "BooruBrowser" / "credentials.bin"
 
@@ -63,24 +74,40 @@ class CredentialManager:
             cred_file.write_text(_encrypt("{}"))
 
     def _load_credentials(self) -> Dict[str, Any]:
-        """Load credentials from file."""
+        """Load credentials from file, migrating from legacy %APPDATA% location if needed."""
         try:
             cred_file = self._get_credentials_file()
-            # Support legacy plaintext file if exists and bin doesn't
-            legacy_file = cred_file.with_name("credentials.json")
-            
+
+            # One-time migration: if the portable file doesn't exist yet but the
+            # old %APPDATA% file does, copy it over so the user doesn't lose data.
+            if not cred_file.exists():
+                legacy_bin = self._get_legacy_credentials_file()
+                legacy_json = cred_file.with_name("credentials.json")
+                if legacy_bin.exists():
+                    try:
+                        cred_file.parent.mkdir(parents=True, exist_ok=True)
+                        import shutil
+                        shutil.copy2(legacy_bin, cred_file)
+                        legacy_bin.unlink(missing_ok=True)
+                        logging.info("[credentials] Migrated credentials.bin from %APPDATA%")
+                    except Exception as me:
+                        logging.warning("[credentials] Could not migrate legacy credentials.bin: %s", me)
+                elif legacy_json.exists():
+                    try:
+                        data = json.loads(legacy_json.read_text())
+                        self._save_credentials(data)
+                        legacy_json.unlink()
+                        return data
+                    except Exception:
+                        pass
+
             if cred_file.exists():
                 return json.loads(_decrypt(cred_file.read_text()))
-            elif legacy_file.exists():
-                data = json.loads(legacy_file.read_text())
-                # Migrate to encrypted format
-                self._save_credentials(data)
-                legacy_file.unlink()
-                return data
             return {}
         except Exception as e:
             logging.error(f"[credentials] Failed to load credentials: {e}")
             return {}
+
 
     def _save_credentials(self, credentials: Dict[str, Any]):
         """Save credentials to file."""

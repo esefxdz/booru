@@ -335,32 +335,31 @@ class APISettingsDialog(QDialog):
             QMessageBox.information(self, "No Change", "Engine is already set to this type.")
             return
 
+        # Update in-memory registry…
         if self.name in boorus.REGISTRY:
             boorus.REGISTRY[self.name]["api_type"] = new_engine
+        else:
+            QMessageBox.warning(self, "Error", "Booru not found in registry.")
+            return
 
-        booru_file = settings.BASE_DIR / "boorus" / f"{self.name}.py"
-        if os.path.exists(booru_file):
-            try:
-                with open(booru_file, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                
-                tmp_file = booru_file.with_suffix(".py.tmp")
-                with open(tmp_file, "w", encoding="utf-8") as f:
-                    for line in lines:
-                        if line.startswith("API_TYPE"):
-                            f.write(f'API_TYPE = "{new_engine}"\n')
-                        else:
-                            f.write(line)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_file, booru_file)
-            except Exception as e:
-                logging.error(f"Error updating booru file engine: {e}")
+        # …then atomically rewrite the .py file from the full REGISTRY data
+        # (replaces the old brittle line-by-line readlines() approach).
+        if not boorus.write_booru_file(self.name):
+            QMessageBox.warning(
+                self, "Error",
+                f"Could not write {self.name}.py — check file permissions."
+            )
+            return
+
+        # Invalidate any stale importlib cache + .pyc so the next startup
+        # picks up the correct engine type.
+        boorus.invalidate_cache(self.name)
 
         self.api_type = new_engine
         QMessageBox.information(
             self, "Saved",
-            f"Engine switched to {new_engine}.\nPlease reopen this dialog to see updated credential fields."
+            f"Engine switched to {new_engine}.\n"
+            f"Reopen this dialog to see updated credential fields."
         )
 
     # ┌──────────────────────────────────────────────────────────────────┐

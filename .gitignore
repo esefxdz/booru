@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # IDE and Editor
 .vscode/
 .idea/
@@ -15,13 +14,22 @@ __pycache__/
 venv/
 .venv/
 env/
-.env/
+.env
 
-# Packaging
-build/
-dist/
-*.egg-info/
-*.spec
+# Secrets & Local Config
+settings.json
+credentials.bin
+custom_boorus.json
+auth_tokens.json
+displayers.ini
+tag_cache.db
+tag_cache.json
+bookmarks.db
+bookmarks.json
+.env.*
+*.pem
+*.key
+*.pfx
 
 # Application Data & Media
 files/
@@ -29,6 +37,17 @@ temp_media/
 ui/files/
 .cache/
 .icons/
+*.sqlite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Packaging
+build/
+dist/
+*.egg-info/
+*.spec
 
 # Debug and Logs
 error.txt
@@ -46,7 +65,4 @@ generate_*.py
 replace_*.py
 CODEBASE_GUIDE.md
 prompt.txt
-=======
-/.vscode
-__pycache__
->>>>>>> 864933b7c6fe05a3d8457bef800640e243f15ee7
+notice.txt

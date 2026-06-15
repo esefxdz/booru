@@ -60,12 +60,18 @@ class BooruGui(QMainWindow):
         self.controller.loading_finished.connect(self._on_loading_finished)
         self.controller.preview_ready.connect(self.gallery.add_item)
         self.controller.posts_fetched.connect(self._on_posts_fetched)
+        self.controller.cf_blocked.connect(self._on_cf_blocked)
         self.gallery.load_more_requested.connect(self._load_more)
 
-        # ── Download progress (lives in sidebar) ──────────────
-        self.downloader.download_started.connect(self.sidebar.download_window.add_download)
-        self.downloader.download_progress.connect(self.sidebar.download_window.update_download)
-        self.downloader.download_finished.connect(self.sidebar.download_window.remove_download)
+        # ── Floating download progress overlay (bottom-right corner) ──
+        from ui.download_window import DownloadWindow
+        self.download_overlay = DownloadWindow(self.centralWidget())
+        self.download_overlay.hide()
+        self._reposition_download_overlay()
+
+        self.downloader.download_started.connect(self.download_overlay.add_download)
+        self.downloader.download_progress.connect(self.download_overlay.update_download)
+        self.downloader.download_finished.connect(self.download_overlay.remove_download)
         self.downloader.download_failed.connect(self._on_download_failed_overlay)
 
         self.server_bar.rebuild_list()
@@ -198,6 +204,19 @@ class BooruGui(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, 'overlay') and self.overlay.isVisible():
             self.overlay.setGeometry(self.stack.rect())
+        if hasattr(self, 'download_overlay'):
+            self._reposition_download_overlay()
+
+    def _reposition_download_overlay(self):
+        """Keep the floating download widget anchored to the bottom-right."""
+        overlay = self.download_overlay
+        margin = 16
+        w = overlay.width() or 232
+        h = overlay.height() or overlay.sizeHint().height()
+        x = self.width() - w - margin
+        y = self.height() - h - margin
+        overlay.move(x, y)
+        overlay.raise_()
 
     def trigger_fetch(self, new: bool = False):
         if self.is_bookmarks_mode:
@@ -333,18 +352,23 @@ class BooruGui(QMainWindow):
 
     def remove_booru(self, name: str):
         import os
+        # Remove from in-memory registry
         if name in boorus.REGISTRY:
             del boorus.REGISTRY[name]
-        # Remove from BOORU_ORDER as well
+        # Remove from sidebar order
         if name in settings.manager.booru_order:
             settings.manager.booru_order.remove(name)
             settings.manager.save()
+        # Delete the .py file
         booru_file = settings.BASE_DIR / "boorus" / f"{name}.py"
         if os.path.exists(booru_file):
             try:
                 os.remove(booru_file)
             except Exception as e:
-                logging.error(f"[gui] Error deleting booru file: {e}")
+                logging.error("[gui] Error deleting booru file: %s", e)
+        # Invalidate any stale importlib cache + .pyc so a later re-add
+        # with the same name picks up the fresh file.
+        boorus.invalidate_cache(name)
         self.server_bar.rebuild_list()
         if settings.manager.active_booru == name:
             settings.manager.active_booru = (
@@ -379,6 +403,37 @@ class BooruGui(QMainWindow):
         self.tag_panel.set_results_count(f"{len(posts)} Results")
         if posts:
             self.gallery.prepare_skeletons(posts)
+
+    @pyqtSlot(str, str)
+    def _on_cf_blocked(self, booru_name: str, error_msg: str):
+        """Cloudflare blocked the current booru — offer to solve CAPTCHA."""
+        from ui.browser_dialog import CloudflareBrowserDialog
+        from cloudflare_bypasser import store as cf_store
+        import boorus as boorus_mod
+
+        # Get the booru URL from the registry so we open the right site
+        site = boorus_mod.REGISTRY.get(booru_name, {})
+        url = site.get("url", "")
+        if not url:
+            return
+
+        # Open the embedded browser so the user can solve the CAPTCHA
+        dlg = CloudflareBrowserDialog(url, booru_name, self)
+        dlg.cookies_captured.connect(
+            lambda cookies: self._on_cf_cookies_saved(booru_name)
+        )
+        dlg.exec()
+
+        # After dialog closes (regardless of success), retry the fetch
+        # so that if cookies were captured, the booru now works
+        QTimer.singleShot(500, lambda: self.trigger_fetch(new=True))
+
+    def _on_cf_cookies_saved(self, booru_name: str):
+        """Called after cookies were captured and saved by the bypass dialog."""
+        self.sidebar.status_lbl.setText(f"✅ {booru_name} bypass active — retrying…")
+        self.sidebar.status_lbl.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: bold;")
+        # Refresh the booru buttons so the tooltip shows "bypass active"
+        self.server_bar.rebuild_list()
 
     # ─────────────────────────────────────────────────────────
     # Floating download overlay

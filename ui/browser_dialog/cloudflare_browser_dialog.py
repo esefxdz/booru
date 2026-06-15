@@ -159,10 +159,11 @@ class CloudflareBrowserDialog(InAppBrowser):
         value = cookie.value().data().decode()
         self._found_cookies[name] = value
 
-        if name == "cf_clearance":
+        # Capture on cf_clearance OR __cf_bm — either indicates CF clearance
+        if name in ("cf_clearance", "__cf_bm"):
             self._captured = True
             self._poll_timer.stop()
-            self._set_status("✅ Clearance cookie captured — closing…", colors.SUCCESS)
+            self._set_status(f"✅ Cloudflare cookie captured ({name}) — closing…", colors.SUCCESS)
             QTimer.singleShot(800, lambda: self._finalize(self._found_cookies))
 
     def _poll_js_cookies(self):
@@ -176,7 +177,8 @@ class CloudflareBrowserDialog(InAppBrowser):
         )
 
     def _check_js_cookies(self, cookie_str: str):
-        if self._captured or "cf_clearance" not in cookie_str:
+        if self._captured:
+            self._poll_timer.stop()
             return
         cookies = {}
         for part in cookie_str.split(";"):
@@ -184,12 +186,14 @@ class CloudflareBrowserDialog(InAppBrowser):
             if "=" in part:
                 k, _, v = part.partition("=")
                 cookies[k.strip()] = v.strip()
-        if "cf_clearance" in cookies:
+        # Always merge found cookies — useful even without cf_clearance
+        self._found_cookies.update(cookies)
+        # Trigger on cf_clearance OR __cf_bm
+        if any(k in cookies for k in ("cf_clearance", "__cf_bm")):
             self._captured = True
             self._poll_timer.stop()
-            # Merge with any cookies found via the signal
-            self._found_cookies.update(cookies)
-            self._set_status("✅ Clearance cookie captured — closing…", colors.SUCCESS)
+            key = "cf_clearance" if "cf_clearance" in cookies else "__cf_bm"
+            self._set_status(f"✅ Cloudflare cookie captured ({key}) — closing…", colors.SUCCESS)
             QTimer.singleShot(800, lambda: self._finalize(self._found_cookies))
 
     # ═══════════════════════════════════════════════════════════════════

@@ -134,7 +134,9 @@ class VideoPlayerWidget(QWidget):
         self.vol_slider.setRange(0, 100)
         self.vol_slider.setFixedWidth(80)
 
-        saved_vol = QSettings("BooruBrowser", "VideoPlayer").value("volume", 50, type=int)
+        from ui.settings_view.manager import BASE_DIR
+        qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
+        saved_vol = qs.value("VideoPlayer/volume", 50, type=int)
         self.vol_slider.setValue(saved_vol)
         self.vol_slider.valueChanged.connect(self._set_volume)
 
@@ -209,7 +211,9 @@ class VideoPlayerWidget(QWidget):
         self.player.setAudioOutput(self._audio)
         self.player.setVideoOutput(self._qt_video_widget)
 
-        saved_vol = QSettings("BooruBrowser", "VideoPlayer").value("volume", 50, type=int)
+        from ui.settings_view.manager import BASE_DIR
+        qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
+        saved_vol = qs.value("VideoPlayer/volume", 50, type=int)
         self._audio.setVolume(saved_vol / 100.0)
 
         self.player.positionChanged.connect(self._qt_position_changed)
@@ -288,7 +292,9 @@ class VideoPlayerWidget(QWidget):
     # │  _set_volume  — applies volume and persists to QSettings.      │
     # └──────────────────────────────────────────────────────────────────┘
     def _set_volume(self, v):
-        QSettings("BooruBrowser", "VideoPlayer").setValue("volume", v)
+        from ui.settings_view.manager import BASE_DIR
+        qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
+        qs.setValue("VideoPlayer/volume", v)
         if self.engine_type == "vlc":
             if self.player:
                 self.player.audio_set_volume(v)

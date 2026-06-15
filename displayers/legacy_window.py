@@ -128,7 +128,8 @@ class DisplayerWindow(QMainWindow):
         self.setStyleSheet("background-color: #121212; color: #ffffff;")
 
         # Restore saved window geometry, default 700x550
-        self._qs = QSettings("BooruBrowser", "Displayer")
+        from ui.settings_view.manager import BASE_DIR
+        self._qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
         w = self._qs.value("window_w", 700, type=int)
         h = self._qs.value("window_h", 550, type=int)
         self.resize(w, h)
@@ -379,7 +380,8 @@ class DisplayerWindow(QMainWindow):
             QSlider::handle:horizontal { background: #fff; width: 10px; height: 10px; margin: -3px 0; border-radius: 5px; }
         """)
 
-        qs = QSettings("BooruBrowser", "Displayer")
+        from ui.settings_view.manager import BASE_DIR
+        qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
         saved = qs.value("volume", 50, type=int)
         self.vol_slider.setValue(saved)
         self.audio.setVolume(saved / 100.0)

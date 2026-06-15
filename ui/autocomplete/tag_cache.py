@@ -12,8 +12,10 @@ import os
 import threading
 from pathlib import Path
 
-_APPDATA = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser"
-_DB_PATH = _APPDATA / "tag_cache.db"
+from ui.settings_view.manager import BASE_DIR
+_DB_PATH = BASE_DIR / "tag_cache.db"
+# Legacy path — only used for one-time migration
+_LEGACY_DB = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "tag_cache.db"
 
 _local = threading.local()
 
@@ -21,7 +23,19 @@ _local = threading.local()
 def _conn() -> sqlite3.Connection:
     """Return a thread-local SQLite connection (one per thread)."""
     if not hasattr(_local, "conn") or _local.conn is None:
-        _APPDATA.mkdir(parents=True, exist_ok=True)
+        if not _DB_PATH.exists() and _LEGACY_DB.exists():
+            try:
+                import shutil
+                import logging
+                _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(_LEGACY_DB, _DB_PATH)
+                _LEGACY_DB.unlink(missing_ok=True)
+                logging.info("[autocomplete] Migrated tag_cache.db from %%APPDATA%%")
+            except Exception as e:
+                import logging
+                logging.warning("[autocomplete] Could not migrate legacy tag_cache.db: %s", e)
+
+        _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         _local.conn = sqlite3.connect(str(_DB_PATH), timeout=2.0)
         _local.conn.execute("PRAGMA journal_mode=WAL")
         _local.conn.execute("""

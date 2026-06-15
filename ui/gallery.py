@@ -138,6 +138,11 @@ class Gallery(QWidget):
         # ── Y-sorted index for O(log n) viewport intersection ─
         self._y_index: list[tuple[int, int]] = []
 
+        # ── Aspect ratio cache (masonry layout) ─────────────
+        # post_idx → width/height ratio.  Populated from post
+        # metadata (sample_width/height or width/height).
+        self._aspect_ratios: dict[int, float] = {}
+
         # ── Timers ────────────────────────────────────────────
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
@@ -190,16 +195,20 @@ class Gallery(QWidget):
         """Calculate the ideal pool size based on current viewport dimensions.
 
         Formula: (columns × visible_rows × (1 + 2 * _BUFFER_ZONE_PAGES)).
-        This ensures the buffer zone always has free slots.
+        Uses the minimum tile height (col_width // 2) for masonry so the
+        pool is large enough even when tiles are shorter than square.
         """
         vp_w = self.scroll.viewport().width()
         vp_h = self.scroll.viewport().height()
         if vp_w <= 0 or vp_h <= 0 or self._col_width <= 0:
             return self._POOL_MIN
         cols = max(1, vp_w // self._col_width)
-        rows = max(1, vp_h // self._col_width) + 1
+        # Masonry tiles can be as short as col_width // 2 — use that for
+        # a conservative row count so the pool is never too small.
+        tile_h = self._col_width // 2 if settings.manager.masonry_mode else self._col_width
+        rows = max(1, vp_h // max(tile_h, 1)) + 1
         target = cols * rows * (1 + 2 * self._BUFFER_ZONE_PAGES)
-        return max(self._POOL_MIN, target)
+        return max(self._POOL_MIN, min(target, self._POOL_MAX))
 
     def _grow_pool_if_needed(self, target_size: int):
         """Allocate new pool slots until pool reaches target_size.
@@ -380,11 +389,44 @@ class Gallery(QWidget):
         self._update_viewport()
 
     # ══════════════════════════════════════════════════════════════
-    #  LAYOUT — uniform grid (masonry removed; was broken)
+    #  LAYOUT — uniform grid or masonry waterfall
     # ══════════════════════════════════════════════════════════════
 
+    def _get_aspect_ratio(self, post: dict) -> float:
+        """Extract the width/height ratio from post metadata.
+
+        Returns 0.0 when dimensions are unknown (callers fall back to
+        a square tile).
+        """
+        # Sample / preview dimensions are preferred because thumbnails
+        # are usually generated at sample aspect ratio.
+        sw = post.get('sample_width') or post.get('preview_width') or post.get('image_width')
+        sh = post.get('sample_height') or post.get('preview_height') or post.get('image_height')
+        if sw and sh:
+            try:
+                return float(sw) / float(sh)
+            except (ValueError, ZeroDivisionError):
+                pass
+        # Fallback: raw image dimensions
+        w = post.get('width')
+        h = post.get('height')
+        if w and h:
+            try:
+                return float(w) / float(h)
+            except (ValueError, ZeroDivisionError):
+                pass
+        return 0.0
+
     def _recalculate_layout(self):
-        self._apply_grid()
+        # Build aspect ratio cache for all posts
+        for idx, post in enumerate(self._posts):
+            if idx not in self._aspect_ratios:
+                self._aspect_ratios[idx] = self._get_aspect_ratio(post)
+
+        if settings.manager.masonry_mode:
+            self._apply_masonry()
+        else:
+            self._apply_grid()
 
     def _apply_grid(self):
         """Place every post into a uniform grid and record its rect."""
@@ -406,6 +448,52 @@ class Gallery(QWidget):
         max_h = rows * (sz + self._spacing) + self._spacing
         self.container.setMinimumHeight(max(max_h, 0))
         self._empty_lbl.setVisible(n == 0)
+
+    def _apply_masonry(self):
+        """Place every post using waterfall / masonry layout.
+
+        Each post is placed in the shortest column so that tiles pack
+        tightly regardless of their intrinsic aspect ratios.
+        """
+        n = len(self._posts)
+        # Resize _rects to match current post count
+        while len(self._rects) < n:
+            self._rects.append(QRect())
+
+        if n == 0:
+            self.container.setMinimumHeight(0)
+            self._empty_lbl.setVisible(True)
+            return
+
+        col_count = max(1, self._col_count)
+        col_width = max(50, self._col_width)
+        spacing   = self._spacing
+
+        # Track the bottom y-coordinate of each column
+        col_bottoms = [spacing] * col_count
+
+        # Clamp tile heights to a sane range (0.5× – 3× column width)
+        min_h = col_width // 2
+        max_h = col_width * 3
+
+        for idx in range(n):
+            ar = self._aspect_ratios.get(idx, 0.0)
+            if ar > 0.01:
+                h = max(min_h, min(int(col_width / ar), max_h))
+            else:
+                h = col_width  # square fallback for unknown aspect ratios
+
+            # Place in the shortest column
+            col = min(range(col_count), key=lambda c: col_bottoms[c])
+            x = spacing + col * (col_width + spacing)
+            y = col_bottoms[col]
+
+            self._rects[idx] = QRect(x, y, col_width, h)
+            col_bottoms[col] = y + h + spacing
+
+        max_h = max(col_bottoms) + spacing
+        self.container.setMinimumHeight(max(max_h, 0))
+        self._empty_lbl.setVisible(False)
 
     # ══════════════════════════════════════════════════════════════
     #  Y-INDEX — O(log n) viewport intersection via binary search
@@ -432,8 +520,9 @@ class Gallery(QWidget):
             return []
 
         # Items can start above y_start and still overlap — search back
-        # by the maximum possible item height (square tiles = _col_width).
-        max_item_height = self._col_width
+        # by the maximum possible item height.  Masonry tiles can be up to
+        # 3× column width, grid tiles are exactly column width.
+        max_item_height = self._col_width * 3 if settings.manager.masonry_mode else self._col_width
         search_start    = y_start - max_item_height
 
         lo = bisect.bisect_left(self._y_index, (search_start,))
@@ -573,6 +662,9 @@ class Gallery(QWidget):
             self._post_id_to_idx[post_id] = idx
             self._rects.append(QRect())
             self._post_bookmarked[idx] = db.is_post_bookmarked(post_id)
+            # Pre-compute aspect ratio for masonry layout
+            if idx not in self._aspect_ratios:
+                self._aspect_ratios[idx] = self._get_aspect_ratio(post)
 
         self._do_refresh()
 
@@ -615,6 +707,7 @@ class Gallery(QWidget):
         self._post_id_set.clear()
         self._post_id_to_idx.clear()
         self._rects.clear()
+        self._aspect_ratios.clear()
         self._post_bytes.clear()
         self._post_bookmarked.clear()
         self._post_animated.clear()
