@@ -18,12 +18,24 @@ CAT_MAP = {
 
 class TagCategorizer:
     def __init__(self):
-        self.cache_file = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "tag_cache.json"
+        from ui.settings_view.manager import BASE_DIR
+        self.cache_file = BASE_DIR / "tag_cache.json"
+        self._legacy_cache_file = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "tag_cache.json"
         self.cache = {}
         self._load_cache()
         self._lock = threading.Lock()
         
     def _load_cache(self):
+        if not self.cache_file.exists() and self._legacy_cache_file.exists():
+            try:
+                import shutil
+                self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(self._legacy_cache_file, self.cache_file)
+                self._legacy_cache_file.unlink(missing_ok=True)
+                logging.info("[categorizer] Migrated tag_cache.json from %%APPDATA%%")
+            except Exception as e:
+                logging.warning("[categorizer] Could not migrate legacy tag_cache.json: %s", e)
+
         if self.cache_file.exists():
             try:
                 with open(self.cache_file, "r", encoding="utf-8") as f:

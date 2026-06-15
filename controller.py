@@ -128,6 +128,7 @@ class AppController(QObject):
     loading_started_append = pyqtSignal()  # does NOT clear gallery
     loading_finished = pyqtSignal()
     preview_ready = pyqtSignal(bytes, dict, int)
+    cf_blocked = pyqtSignal(str, str)      # booru_name, url — emitted when CF blocks a booru
 
     def __init__(self, downloader):
         super().__init__()
@@ -222,9 +223,16 @@ class AppController(QObject):
         with self._thread_lock:
             self._is_loading = False
         self.loading_finished.emit()
-        self.status_updated.emit("Error!", "red")
         import logging
         logging.getLogger(__name__).error("Fetch error: %s", error_msg)
+        # Route Cloudflare-block errors to the dedicated signal so the GUI
+        # can offer to open the CAPTCHA solver automatically.
+        if "Cloudflare" in error_msg:
+            from ui import settings_view as settings
+            self.status_updated.emit("🔐 Cloudflare blocked — solve CAPTCHA?", "orange")
+            self.cf_blocked.emit(settings.manager.active_booru, error_msg)
+        else:
+            self.status_updated.emit("Error!", "red")
 
     def bulk_download(self, tags, limit):
         self.bulk_thread = BulkThread(self.downloader, tags, limit)

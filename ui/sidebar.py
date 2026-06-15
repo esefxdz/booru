@@ -98,12 +98,6 @@ class Sidebar(QWidget):
         nav.addWidget(btn_next)
         layout.addWidget(self.nav_widget)
 
-        # ── Inline download progress (sits under the status area) ──
-        from ui.download_window import DownloadWindow
-        self.download_window = DownloadWindow(self.main_app)
-        self.download_window.hide()
-        layout.addWidget(self.download_window)
-
         layout.addStretch(1)
 
         self.update_active_booru()

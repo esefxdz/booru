@@ -91,8 +91,15 @@ _NAVIGATION_HEADERS = {
     "Sec-Fetch-User": "?1",
 }
 
-# curl-cffi impersonation targets — try latest first, fall back to older
-_IMPERSONATE_TARGETS = ["chrome136", "chrome124", "chrome120", "chrome119"]
+# curl-cffi impersonation targets — try latest Chrome first, then fall back.
+# chrome131 is the most recent stable; older versions are fallbacks for sites
+# that fingerprint-check against a narrower window.  edge101 and safari17_0
+# provide alternative TLS fingerprints that some CF configs accept.
+_IMPERSONATE_TARGETS = [
+    "chrome131", "chrome124", "chrome120", "chrome110",
+    "chrome107", "chrome104", "chrome101", "chrome100",
+    "edge101", "edge99", "safari17_0", "safari15_6",
+]
 
 _DEFAULT_TIMEOUT = 30
 _MAX_RETRIES = 3
@@ -139,7 +146,7 @@ class BypassResponse:
     never holds a dangling reference to a closed socket/session.
     """
 
-    __slots__ = ("content", "text", "status_code", "url", "_json_data", "engine_used")
+    __slots__ = ("content", "text", "status_code", "url", "_json_data", "engine_used", "cookies")
 
     def __init__(
         self,
@@ -149,6 +156,7 @@ class BypassResponse:
         url: object,
         json_data: object,
         engine_used: str = "unknown",
+        cookies: dict | None = None,
     ) -> None:
         self.content = content
         self.text = text
@@ -156,6 +164,7 @@ class BypassResponse:
         self.url = url
         self._json_data = json_data
         self.engine_used = engine_used
+        self.cookies = cookies or {}
 
     def json(self) -> object:
         if self._json_data is not None:
@@ -166,20 +175,40 @@ class BypassResponse:
     @property
     def is_blocked(self) -> bool:
         """True when the response looks like a Cloudflare challenge page."""
-        if self.status_code not in (403, 503):
+        if self.status_code not in (403, 503, 429):
             return False
+
+        # Quick heuristic: 403 with tiny body is almost certainly a block
+        if self.status_code == 403 and len(self.content) < 200:
+            return True
 
         # Check both decoded text and raw bytes (response may be brotli-compressed)
         text_lower = self.text[:4000].lower() if self.text else ""
         content_lower = self.content[:4000].lower() if self.content else b""
 
+        # Detect garbage / undecoded responses — some engines (cloudscraper)
+        # return raw compressed bytes as "text" when Content-Encoding
+        # (brotli/gzip) fails to decode.  A legitimate API response always
+        # starts with '[', '{', '<', or is empty.  Anything else at 403 is
+        # an undecoded CF challenge page.
+        if self.status_code == 403 and len(self.text) > 50:
+            first_char = self.text.strip()[0] if self.text.strip() else ''
+            if first_char not in '<{[{"':
+                return True
+
         cf_markers_text = (
             "cf-mitigated", "just a moment",
             "challenge-platform", "challenges.cloudflare.com",
+            "checking your browser", "enable javascript",
+            "cf-chl-bypass", "cf-chl-out",
+            "turnstile", "cf_captcha",
         )
         cf_markers_bytes = (
             b"cf-mitigated", b"just a moment",
             b"challenge-platform", b"challenges.cloudflare.com",
+            b"checking your browser", b"enable javascript",
+            b"cf-chl-bypass", b"cf-chl-out",
+            b"turnstile", b"cf_captcha",
         )
 
         for marker in cf_markers_text:
@@ -189,9 +218,12 @@ class BypassResponse:
             if marker in content_lower:
                 return True
 
-        # Check for Cloudflare-specific response headers baked into HTML
-        # (the word "cloudflare" alone is too generic — many CDN pages mention it)
+        # Cloudflare-specific response headers in HTML
         if "cf-ray" in text_lower and ("challenge" in text_lower or "captcha" in text_lower):
+            return True
+
+        # Detect CF block pages that return minimal body with 403
+        if self.status_code == 403 and len(self.content) < 500 and b"cloudflare" in content_lower:
             return True
 
         return False
@@ -202,6 +234,41 @@ class BypassResponse:
 
 # Keep backward compat alias
 _Response = BypassResponse
+
+
+# ---------------------------------------------------------------------------
+# Internal: cookie extraction
+# ---------------------------------------------------------------------------
+
+def _extract_cookies(resp) -> dict:
+    """Extract a plain dict of cookies from any HTTP response object."""
+    try:
+        # curl_cffi, requests, cloudscraper, httpx all support .cookies
+        if hasattr(resp, "cookies"):
+            jar = resp.cookies
+            if hasattr(jar, "get_dict"):
+                return {k: v for k, v in jar.get_dict().items()}
+            if hasattr(jar, "items"):
+                return {str(k): str(v) for k, v in jar.items()}
+            if isinstance(jar, dict):
+                return {str(k): str(v) for k, v in jar.items()}
+        # urllib / stdlib — parse Set-Cookie header
+        if hasattr(resp, "headers"):
+            raw = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
+            if raw:
+                result = {}
+                for part in raw.split(";"):
+                    part = part.strip()
+                    if "=" in part and not any(
+                        kw in part.lower()
+                        for kw in ("path=", "domain=", "expires=", "max-age=", "secure", "httponly", "samesite")
+                    ):
+                        k, v = part.split("=", 1)
+                        result[k.strip()] = v.strip()
+                return result
+    except Exception:
+        pass
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +334,8 @@ async def _try_curl_cffi(
             except Exception:
                 json_data = None
 
-            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}")
+            cookies = _extract_cookies(resp)
+            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}", cookies)
 
             # If we got a real response (even 403), return it
             if status_code != 403:
@@ -344,7 +412,8 @@ def _try_curl_cffi_sync(
             except Exception:
                 json_data = None
 
-            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}")
+            cookies_resp = _extract_cookies(resp)
+            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}", cookies_resp)
 
             if status_code != 403:
                 return result
@@ -405,7 +474,8 @@ def _try_cloudscraper_sync(
         except Exception:
             json_data = None
 
-        return BypassResponse(content, text, status_code, final_url, json_data, "cloudscraper")
+        cookies_resp = _extract_cookies(resp)
+        return BypassResponse(content, text, status_code, final_url, json_data, "cloudscraper", cookies_resp)
     except Exception as e:
         log.debug("cloudscraper failed for %s: %s", url, e)
         return None
@@ -446,7 +516,8 @@ async def _try_httpx(
         except Exception:
             json_data = None
 
-        return BypassResponse(content, text, status_code, final_url, json_data, "httpx")
+        cookies_resp = _extract_cookies(resp)
+        return BypassResponse(content, text, status_code, final_url, json_data, "httpx", cookies_resp)
     except Exception as e:
         log.debug("httpx failed for %s: %s", url, e)
         return None
@@ -488,7 +559,8 @@ def _try_requests_sync(
         except Exception:
             json_data = None
 
-        return BypassResponse(content, text, status_code, final_url, json_data, "requests")
+        cookies_resp = _extract_cookies(resp)
+        return BypassResponse(content, text, status_code, final_url, json_data, "requests", cookies_resp)
     except Exception as e:
         log.debug("requests failed for %s: %s", url, e)
         return None
@@ -543,11 +615,12 @@ def _try_urllib_sync(
                 json_data = _json.loads(text)
             except Exception:
                 json_data = None
-        return BypassResponse(content, text, status_code, final_url, json_data, "urllib")
+        cookies_resp = _extract_cookies(resp)
+        return BypassResponse(content, text, status_code, final_url, json_data, "urllib", cookies_resp)
     except urllib.error.HTTPError as e:
         content = e.read() if hasattr(e, "read") else b""
         text = content.decode("utf-8", errors="replace")
-        return BypassResponse(content, text, e.code, url, None, "urllib")
+        return BypassResponse(content, text, e.code, url, None, "urllib", {})
     except Exception as e:
         log.debug("urllib failed for %s: %s", url, e)
         return None
@@ -593,19 +666,55 @@ class BypassSession:
         self._successful_engine = None
         self._last_request_time = 0.0
         self._rate_limit_lock = None  # asyncio.Lock, created lazily per event loop
+        self._cookie_jar = {}         # accumulated cookies from responses (warmup + API calls)
         
     def _check_loop(self):
-        """Invalidate cached clients if the event loop has changed."""
+        """Invalidate cached clients if the event loop has changed.
+        We hold a strong reference to the loop object to prevent memory address
+        reuse (which would make id() checks falsely return True for new loops).
+        """
         try:
-            current_loop = id(asyncio.get_running_loop())
-            if self._loop_id != current_loop:
+            current_loop = asyncio.get_running_loop()
+            if getattr(self, "_loop_ref", None) is not current_loop:
                 self._httpx_client = None
                 self._cffi_sessions.clear()
                 self._rate_limit_lock = None  # force re-creation on new loop
-                self._loop_id = current_loop
+                self._loop_ref = current_loop
         except RuntimeError:
             pass
-        
+
+    async def warmup(self, base_url: str, timeout: int = _DEFAULT_TIMEOUT) -> dict:
+        """Visit the site homepage to establish cookies and a Referer chain.
+
+        Cloudflare's ML scoring penalises requests that hit API endpoints
+        directly without ever loading the main site.  This method makes a
+        lightweight GET to *base_url* (e.g. ``https://danbooru.donmai.us``)
+        with browser-like navigation headers, captures any cookies the server
+        sets (``__cf_bm``, session cookies, etc.), and feeds them into
+        subsequent API calls.
+
+        Returns the accumulated cookie jar so callers can persist it.
+        """
+        nav_headers = {**self._build_headers(), **_NAVIGATION_HEADERS}
+        resp = await self.get(base_url, headers=nav_headers, timeout=timeout, bypass_rate_limit=True)
+        if resp.cookies:
+            self._cookie_jar.update(resp.cookies)
+            log.debug("warmup captured %d cookies from %s", len(resp.cookies), base_url)
+        if resp.status_code in (200, 301, 302, 303, 307, 308):
+            log.info("warmup %s → %d (cookies: %d)", base_url, resp.status_code, len(self._cookie_jar))
+        else:
+            log.warning("warmup %s → %d (may be blocked)", base_url, resp.status_code)
+        return dict(self._cookie_jar)
+
+    def warmup_sync(self, base_url: str, timeout: int = _DEFAULT_TIMEOUT) -> dict:
+        """Synchronous version of :meth:`warmup`."""
+        nav_headers = {**self._build_headers(), **_NAVIGATION_HEADERS}
+        resp = self.get_sync(base_url, headers=nav_headers, timeout=timeout)
+        if resp.cookies:
+            self._cookie_jar.update(resp.cookies)
+            log.debug("warmup_sync captured %d cookies from %s", len(resp.cookies), base_url)
+        return dict(self._cookie_jar)
+
     async def close(self):
         """Close any persistent underlying clients. Must be called if reused across multiple requests."""
         if self._httpx_client is not None:
@@ -646,13 +755,13 @@ class BypassSession:
 
         if engine == "curl_cffi":
             return await _try_curl_cffi(
-                url, params, headers, self.cookies, self.proxy_url, timeout, self._cffi_sessions
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout, self._cffi_sessions
             )
         elif engine == "cloudscraper":
             return await loop.run_in_executor(
                 None,
                 _try_cloudscraper_sync,
-                url, params, headers, self.cookies, self.proxy_url, timeout,
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
             )
         elif engine == "httpx":
             if self._httpx_client is None and _HAS_HTTPX:
@@ -660,25 +769,36 @@ class BypassSession:
                     http2=True,
                     follow_redirects=True,
                     timeout=timeout,
-                    cookies=self.cookies or None,
+                    cookies=self._merged_cookies or None,
                     proxy=self.proxy_url or None,
                 )
             return await _try_httpx(
-                url, params, headers, self.cookies, self.proxy_url, timeout, self._httpx_client
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout, self._httpx_client
             )
         elif engine == "requests":
             return await loop.run_in_executor(
                 None,
                 _try_requests_sync,
-                url, params, headers, self.cookies, self.proxy_url, timeout,
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
             )
         elif engine == "urllib":
             return await loop.run_in_executor(
                 None,
                 _try_urllib_sync,
-                url, params, headers, self.cookies, self.proxy_url, timeout,
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
             )
         return None
+
+    # ------------------------------------------------------------------
+    # Cookie helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def _merged_cookies(self) -> dict:
+        """Stored cookies + warmup/response accumulated cookies."""
+        merged = {**self.cookies}
+        merged.update(self._cookie_jar)
+        return merged
 
     # ------------------------------------------------------------------
     # Async interface
@@ -736,6 +856,8 @@ class BypassSession:
                 if resp and not resp.is_blocked and resp.status_code < 500:
                     if self.method == "auto":
                         self._successful_engine = engine
+                    if resp.cookies:
+                        self._cookie_jar.update(resp.cookies)
                     return resp
                 if resp:
                     last_response = resp
@@ -798,6 +920,8 @@ class BypassSession:
                 if resp and not resp.is_blocked and resp.status_code < 500:
                     if self.method == "auto":
                         self._successful_engine = engine
+                    if resp.cookies:
+                        self._cookie_jar.update(resp.cookies)
                     return resp
                 if resp:
                     last_response = resp
@@ -839,20 +963,20 @@ class BypassSession:
         """Dispatch a single synchronous engine attempt (no asyncio)."""
         if engine == "curl_cffi":
             return _try_curl_cffi_sync(
-                url, params, headers, self.cookies, self.proxy_url,
+                url, params, headers, self._merged_cookies, self.proxy_url,
                 timeout, self._cffi_sync_sessions,
             )
         elif engine == "cloudscraper":
             return _try_cloudscraper_sync(
-                url, params, headers, self.cookies, self.proxy_url, timeout,
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
             )
         elif engine == "requests":
             return _try_requests_sync(
-                url, params, headers, self.cookies, self.proxy_url, timeout,
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
             )
         elif engine == "urllib":
             return _try_urllib_sync(
-                url, params, headers, self.cookies, self.proxy_url, timeout,
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
             )
         return None
 

@@ -5,26 +5,41 @@ import logging
 import threading
 from pathlib import Path
 
-_SETTINGS_DIR = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser"
-_DB_FILE = _SETTINGS_DIR / "bookmarks.db"
+from ui.settings_view.manager import BASE_DIR
+_DB_FILE = BASE_DIR / "bookmarks.db"
+# Legacy path — only used for one-time migration
+_LEGACY_DB = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "bookmarks.db"
 
 class BookmarksDB:
     def __init__(self):
         self.db_path = _DB_FILE
         self._conn = None
         self._lock = threading.Lock()
+        self._migrate_legacy_db()
         self._init_db()
         self._migrate_legacy_json()
 
+    def _migrate_legacy_db(self):
+        """One-time: copy bookmarks.db from %APPDATA% to the app folder."""
+        if not self.db_path.exists() and _LEGACY_DB.exists():
+            try:
+                import shutil
+                self.db_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(_LEGACY_DB, self.db_path)
+                _LEGACY_DB.unlink(missing_ok=True)
+                logging.info("[bookmarks] Migrated bookmarks.db from %%APPDATA%%")
+            except Exception as e:
+                logging.warning("[bookmarks] Could not migrate legacy bookmarks.db: %s", e)
+
     def _get_conn(self):
         if self._conn is None:
-            _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._conn.execute("PRAGMA journal_mode=WAL")
         return self._conn
 
     def _migrate_legacy_json(self):
-        legacy_file = _SETTINGS_DIR / "bookmarks.json"
+        legacy_file = _DB_FILE.parent / "bookmarks.json"
         if not legacy_file.exists():
             return
         

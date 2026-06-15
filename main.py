@@ -30,6 +30,7 @@ def _setup_logging():
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=handlers,
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     def handle_exception(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):

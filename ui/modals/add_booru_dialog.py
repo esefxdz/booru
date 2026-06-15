@@ -329,38 +329,45 @@ class AddBooruDialog(QDialog):
             self._set_status("Name and URL are required.", "red")
             return
 
-        # If the name is taken, try name_2, name_3, ... until free
+        # If the name is taken, try name_2, name_3, ... until free.
+        # Built-in boorus (e.g. "gelbooru") live in REGISTRY from startup —
+        # adding one with the same URL but a different name is fine, but we
+        # must never silently shadow an existing entry.
         orig_name = name
         counter = 2
         while name in boorus.REGISTRY:
             name = f"{orig_name}_{counter}"
             counter += 1
 
-        booru_file = settings.BASE_DIR / "boorus" / f"{name}.py"
         try:
-            with open(booru_file, "w", encoding="utf-8") as f:
-                f.write(f'NAME     = "{name}"\n')
-                f.write(f'URL      = "{url}"\n')
-                f.write(f'API_PATH = "{api_path}"\n')
-                f.write(f'POST_KEY = None\n')
-                f.write(f'API_TYPE = "{api_type}"\n')
+            # Invalidate any stale importlib cache from a previously-deleted
+            # booru with the same name so the new file is imported fresh.
+            boorus.invalidate_cache(name)
 
+            # Register in memory first so write_booru_file() can read it.
             boorus.REGISTRY[name] = {
                 "url":      url,
                 "api_path": api_path,
                 "post_key": None,
                 "api_type": api_type,
             }
+
+            # Use the centralised helper — it writes a clean template from
+            # REGISTRY data and fsync()s it, the same path used by _save_engine.
+            if not boorus.write_booru_file(name):
+                boorus.REGISTRY.pop(name, None)
+                self._set_status("Could not write booru file — check folder permissions.", "red")
+                return
+
             # Add to the persistent sidebar order and save immediately.
-            # Without this, the booru appears this session but vanishes on
-            # next launch because booru_order in settings.json was never updated.
             if name not in settings.manager.booru_order:
                 settings.manager.booru_order.append(name)
                 settings.manager.save()
             self.parent_gui.server_bar.rebuild_list()
             self.accept()
         except Exception as e:
-            self._set_status(f"Error creating file: {e}", "red")
+            boorus.REGISTRY.pop(name, None)
+            self._set_status(f"Error creating booru: {e}", "red")
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _set_status  — helper to update the status label text and      │

@@ -2,7 +2,8 @@
 settings/manager.py — Unified configuration and settings management.
 
 SettingsManager singleton + static constants.
-User preferences persisted to %APPDATA%/BooruBrowser.
+User preferences persisted to settings.json in the app root directory
+so the application is 100 % portable (“unzip and run”).
 Credentials stored securely using system keyring.
 """
 import logging
@@ -23,13 +24,19 @@ DEFAULT_HEADERS = {
 }
 
 # --- INTERNAL STATE ---
-# Config location: %APPDATA% on Windows, XDG_CONFIG_HOME (or ~/.config) elsewhere.
-_SETTINGS_DIR  = Path(
+# Portable: settings live next to the .exe / main.py so the whole folder
+# can be copied to a USB stick or another machine and retain all config.
+_SETTINGS_DIR  = BASE_DIR
+_SETTINGS_FILE = _SETTINGS_DIR / "settings.json"
+
+# Legacy path used before the portability refactor — checked on startup
+# so existing users don’t lose their settings.
+_LEGACY_SETTINGS_DIR = Path(
     os.environ.get("APPDATA")
     or os.environ.get("XDG_CONFIG_HOME")
     or (Path.home() / ".config")
 ) / "BooruBrowser"
-_SETTINGS_FILE = _SETTINGS_DIR / "settings.json"
+_LEGACY_SETTINGS_FILE = _LEGACY_SETTINGS_DIR / "settings.json"
 
 
 class SettingsManager:
@@ -77,6 +84,17 @@ class SettingsManager:
         if self._initialized: return
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        # One-time migration from legacy %APPDATA% location
+        if not _SETTINGS_FILE.exists() and _LEGACY_SETTINGS_FILE.exists():
+            import shutil
+            try:
+                shutil.copy2(_LEGACY_SETTINGS_FILE, _SETTINGS_FILE)
+                logging.info(
+                    "[settings] Migrated settings from %s → %s",
+                    _LEGACY_SETTINGS_FILE, _SETTINGS_FILE,
+                )
+            except Exception as e:
+                logging.warning("[settings] Could not migrate legacy settings: %s", e)
         self.load()
         self._initialized = True
 
@@ -85,7 +103,7 @@ class SettingsManager:
         if not _SETTINGS_FILE.exists():
             return
         try:
-            with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
+            with open(_SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
         except Exception as e:
             logging.info(f"[settings] Could not read settings file, using defaults: {e}")
