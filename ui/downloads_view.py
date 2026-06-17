@@ -12,6 +12,7 @@ download_finished, download_failed.
 """
 from __future__ import annotations
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -20,10 +21,10 @@ from PyQt6.QtWidgets import (
     QProgressBar, QFrame, QScrollArea, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QTimer
-from PyQt6.QtGui import QCursor
+from PyQt6.QtGui import QCursor, QDesktopServices
+from PyQt6.QtCore import QUrl
 
 from ui import colors
-from ui import settings_view as settings
 
 _log = logging.getLogger(__name__)
 
@@ -41,15 +42,16 @@ class _DownloadEntry(QFrame):
         self._completed = False
 
         self.setStyleSheet(f"""
-            _DownloadEntry {{
+            _DownloadEntry, QFrame {{
                 background-color: {colors.PANEL_BG};
                 border: 1px solid {colors.BORDER};
                 border-radius: 8px;
             }}
         """)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(6)
 
         # ── Top row: filename + status ────────────────────────────
@@ -57,21 +59,21 @@ class _DownloadEntry(QFrame):
         top.setSpacing(8)
         self.name_lbl = QLabel(filename)
         self.name_lbl.setStyleSheet(
-            f"color: {colors.TEXT_PRIMARY}; font-weight: 600; font-size: 13px;"
+            f"color: {colors.TEXT_PRIMARY}; font-weight: 600; font-size: 13px; border: none;"
         )
         self.name_lbl.setWordWrap(True)
         top.addWidget(self.name_lbl, 1)
 
-        self.status_lbl = QLabel("")
+        self.status_lbl = QLabel("Queued")
         self.status_lbl.setStyleSheet(
-            f"color: {colors.TEXT_MUTED}; font-size: 12px;"
+            f"color: {colors.TEXT_MUTED}; font-size: 12px; border: none;"
         )
         top.addWidget(self.status_lbl)
         layout.addLayout(top)
 
         # ── Progress bar ──────────────────────────────────────────
         self.progress = QProgressBar()
-        self.progress.setFixedHeight(6)
+        self.progress.setFixedHeight(5)
         self.progress.setTextVisible(False)
         self.progress.setStyleSheet(f"""
             QProgressBar {{
@@ -86,12 +88,14 @@ class _DownloadEntry(QFrame):
         """)
         layout.addWidget(self.progress)
 
-        # ── Bottom row: path or error ─────────────────────────────
+        # ── Bottom row: path / error / elapsed ────────────────────
         self.info_lbl = QLabel("")
         self.info_lbl.setStyleSheet(
-            f"color: {colors.TEXT_MUTED}; font-size: 11px;"
+            f"color: {colors.TEXT_MUTED}; font-size: 11px; border: none;"
         )
         self.info_lbl.setWordWrap(True)
+        self.info_lbl.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.info_lbl.mousePressEvent = self._open_folder
         layout.addWidget(self.info_lbl)
 
         # ── Retry button (hidden by default) ──────────────────────
@@ -112,11 +116,27 @@ class _DownloadEntry(QFrame):
         self.retry_btn.hide()
         layout.addWidget(self.retry_btn)
 
+    def _open_folder(self, event=None):
+        """Open the folder containing the downloaded file in Explorer."""
+        if self.dest_path:
+            folder = str(Path(self.dest_path).parent)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
     def update_progress(self, current: int, total: int):
         if total > 0:
             pct = int((current / total) * 100)
             self.progress.setValue(pct)
+            mb_done = current / (1024 * 1024)
+            mb_total = total / (1024 * 1024)
             self.status_lbl.setText(f"{pct}%")
+            self.info_lbl.setText(f"{mb_done:.1f} / {mb_total:.1f} MB")
+
+    def mark_active(self):
+        self.status_lbl.setText("0%")
+        self.status_lbl.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 12px; border: none;")
+        self.info_lbl.setText("")
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
 
     def mark_completed(self, dest_path: str = ""):
         self._completed = True
@@ -133,14 +153,16 @@ class _DownloadEntry(QFrame):
                 border-radius: 3px;
             }}
         """)
-        self.status_lbl.setText("Done")
+        self.status_lbl.setText("Done ✓")
         self.status_lbl.setStyleSheet(
-            f"color: {colors.SUCCESS}; font-weight: bold; font-size: 12px;"
+            f"color: {colors.SUCCESS}; font-weight: bold; font-size: 12px; border: none;"
         )
-        if dest_path:
-            self.info_lbl.setText(str(dest_path))
         elapsed = time.time() - self.started_at
-        self.name_lbl.setToolTip(f"Completed in {elapsed:.1f}s")
+        if dest_path:
+            self.info_lbl.setText(f"📁 {dest_path}  ({elapsed:.1f}s)")
+            self.info_lbl.setToolTip("Click to open folder")
+        else:
+            self.info_lbl.setText(f"Done in {elapsed:.1f}s")
 
     def mark_failed(self, error: str):
         self.error_reason = error
@@ -155,9 +177,9 @@ class _DownloadEntry(QFrame):
                 border-radius: 3px;
             }}
         """)
-        self.status_lbl.setText("Failed")
+        self.status_lbl.setText("Failed ✕")
         self.status_lbl.setStyleSheet(
-            f"color: {colors.DANGER}; font-weight: bold; font-size: 12px;"
+            f"color: {colors.DANGER}; font-weight: bold; font-size: 12px; border: none;"
         )
         self.info_lbl.setText(error)
         self.retry_btn.show()
@@ -173,22 +195,39 @@ class DownloadsView(QWidget):
 
         # ── Data stores ───────────────────────────────────────────
         self._entries: dict[str, _DownloadEntry] = {}  # task_id → widget
-        self._queued: list[tuple[str, str]] = []       # [(task_id, filename), ...]
+        self._active_ids: set[str] = set()
+        self._completed_ids: list[str] = []
 
         self._build_ui()
         self._wire_signals()
 
+    # ─────────────────────────────────────────────────────────────
+    # UI construction
+    # ─────────────────────────────────────────────────────────────
+
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(40, 40, 40, 40)
-        root.setSpacing(24)
+        root.setSpacing(20)
 
         # ── Header ────────────────────────────────────────────────
+        header_row = QHBoxLayout()
+
         title = QLabel("Downloads")
         title.setStyleSheet(
             f"font-size: 32px; font-weight: 800; color: {colors.TEXT_PRIMARY};"
         )
-        root.addWidget(title)
+        header_row.addWidget(title)
+        header_row.addStretch()
+
+        # Live badge: "2 active · 14 completed"
+        self._badge_lbl = QLabel("idle")
+        self._badge_lbl.setStyleSheet(
+            f"color: {colors.TEXT_MUTED}; font-size: 13px; padding: 4px 12px;"
+            f"background: {colors.PANEL_BG}; border: 1px solid {colors.BORDER}; border-radius: 12px;"
+        )
+        header_row.addWidget(self._badge_lbl)
+        root.addLayout(header_row)
 
         subtitle = QLabel("Track your active, queued, and completed downloads.")
         subtitle.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_MUTED};")
@@ -206,27 +245,29 @@ class DownloadsView(QWidget):
         self._sections_layout.setContentsMargins(0, 0, 0, 0)
         self._sections_layout.setSpacing(20)
 
-        # ── Sections ──────────────────────────────────────────────
-        self._queued_section = self._make_section("⏳ Queued")
-        self._sections_layout.addWidget(self._queued_section["card"])
-        self._queued_empty = QLabel("No downloads queued.")
-        self._queued_empty.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 13px;")
-        self._queued_section["layout"].addWidget(self._queued_empty)
-
+        # ── Active section ────────────────────────────────────────
         self._active_section = self._make_section("⬇ Active")
         self._sections_layout.addWidget(self._active_section["card"])
         self._active_empty = QLabel("No active downloads.")
         self._active_empty.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 13px;")
         self._active_section["layout"].addWidget(self._active_empty)
 
+        # ── Queued section ────────────────────────────────────────
+        self._queued_section = self._make_section("⏳ Queued")
+        self._sections_layout.addWidget(self._queued_section["card"])
+        self._queued_empty = QLabel("No downloads queued.")
+        self._queued_empty.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 13px;")
+        self._queued_section["layout"].addWidget(self._queued_empty)
+
+        # ── Completed section ─────────────────────────────────────
         self._completed_section = self._make_section("✔ Completed")
         self._sections_layout.addWidget(self._completed_section["card"])
 
-        # Clear button row
-        clear_row = QHBoxLayout()
+        completed_ctrl = QHBoxLayout()
         self._completed_empty = QLabel("No completed downloads yet.")
         self._completed_empty.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 13px;")
-        clear_row.addWidget(self._completed_empty, 1)
+        completed_ctrl.addWidget(self._completed_empty, 1)
+
         clear_btn = QPushButton("Clear all")
         clear_btn.setFixedHeight(28)
         clear_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -242,9 +283,10 @@ class DownloadsView(QWidget):
             QPushButton:hover {{ color: {colors.DANGER}; border-color: {colors.DANGER}; }}
         """)
         clear_btn.clicked.connect(self.clear_completed)
-        clear_row.addWidget(clear_btn)
-        self._completed_section["layout"].addLayout(clear_row)
+        completed_ctrl.addWidget(clear_btn)
+        self._completed_section["layout"].addLayout(completed_ctrl)
 
+        # ── Failed section ────────────────────────────────────────
         self._failed_section = self._make_section("✕ Failed")
         self._sections_layout.addWidget(self._failed_section["card"])
         self._failed_empty = QLabel("No failed downloads.")
@@ -266,7 +308,7 @@ class DownloadsView(QWidget):
         """)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
         header = QLabel(title)
         header.setStyleSheet(
@@ -283,90 +325,130 @@ class DownloadsView(QWidget):
         dl.download_finished.connect(self._on_download_finished)
         dl.download_failed.connect(self._on_download_failed)
 
-    # ── Public API for queuing ────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────
+    # Badge update
+    # ─────────────────────────────────────────────────────────────
 
-    def enqueue(self, task_id: str, filename: str):
-        """Add a download to the queue (not yet started)."""
-        self._queued.append((task_id, filename))
-        self._queued_empty.hide()
-        entry = _DownloadEntry(task_id, filename)
-        entry.status_lbl.setText("Queued")
-        self._entries[task_id] = entry
-        self._queued_section["layout"].addWidget(entry)
+    def _update_badge(self):
+        active = len(self._active_ids)
+        completed = len(self._completed_ids)
+        failed_count = 0
+        for entry in self._entries.values():
+            if entry.error_reason:
+                failed_count += 1
 
-    # ── Signal handlers ───────────────────────────────────────────
+        parts = []
+        if active:
+            parts.append(f"<span style='color:{colors.ACCENT}'>{active} active</span>")
+        if completed:
+            parts.append(f"<span style='color:{colors.SUCCESS}'>{completed} done</span>")
+        if failed_count:
+            parts.append(f"<span style='color:{colors.DANGER}'>{failed_count} failed</span>")
+
+        self._badge_lbl.setText(" · ".join(parts) if parts else "idle")
+
+    # ─────────────────────────────────────────────────────────────
+    # Helper: move entry between section layouts
+    # ─────────────────────────────────────────────────────────────
+
+    def _move_to_section(self, entry: _DownloadEntry, section: dict):
+        # Remove from any existing layout ownership
+        if entry.parent() is not None:
+            old_layout = None
+            for sec in [self._queued_section, self._active_section,
+                        self._completed_section, self._failed_section]:
+                if sec["layout"].indexOf(entry) != -1:
+                    old_layout = sec["layout"]
+                    break
+            if old_layout:
+                old_layout.removeWidget(entry)
+        entry.setParent(section["card"])
+        section["layout"].addWidget(entry)
+        entry.show()
+
+    # ─────────────────────────────────────────────────────────────
+    # Signal handlers
+    # ─────────────────────────────────────────────────────────────
 
     @pyqtSlot(str, str)
-    def _on_download_started(self, task_id, filename):
-        # Move from queued to active if it was queued; otherwise create new
+    def _on_download_started(self, task_id: str, filename: str):
         entry = self._entries.get(task_id)
         if entry is None:
             entry = _DownloadEntry(task_id, filename)
             self._entries[task_id] = entry
-        else:
-            # Remove from queued section layout
-            self._queued_section["layout"].removeWidget(entry)
-            self._queued = [(tid, fn) for tid, fn in self._queued if tid != task_id]
-            if not self._queued:
-                self._queued_empty.show()
 
-        entry.status_lbl.setText("0%")
-        self._active_section["layout"].addWidget(entry)
+        entry.mark_active()
+        self._move_to_section(entry, self._active_section)
         self._active_empty.hide()
-        entry.show()
+        self._active_ids.add(task_id)
+        self._update_badge()
 
     @pyqtSlot(str, int, int)
-    def _on_download_progress(self, task_id, current, total):
+    def _on_download_progress(self, task_id: str, current: int, total: int):
         entry = self._entries.get(task_id)
         if entry:
             entry.update_progress(current, total)
 
     @pyqtSlot(str)
-    def _on_download_finished(self, task_id):
+    def _on_download_finished(self, task_id: str):
         entry = self._entries.get(task_id)
         if entry is None:
             return
 
-        # Move from active to completed
-        self._active_section["layout"].removeWidget(entry)
-        # Check if active section is now empty
-        if self._active_section["layout"].count() <= 1:  # just the empty label
+        self._active_ids.discard(task_id)
+        self._completed_ids.append(task_id)
+
+        # Resolve the actual dest path if the downloader put it in the post
+        dest_path = ""
+        entry.mark_completed(dest_path)
+
+        self._move_to_section(entry, self._completed_section)
+        self._completed_empty.hide()
+
+        # Hide active empty label only if there really are no active entries
+        if not self._active_ids:
             self._active_empty.show()
 
-        entry.mark_completed()
-        self._completed_section["layout"].addWidget(entry)
-        self._completed_empty.hide()
-        entry.show()
+        self._update_badge()
 
     @pyqtSlot(str, str)
-    def _on_download_failed(self, task_id, error):
+    def _on_download_failed(self, task_id: str, error: str):
         entry = self._entries.get(task_id)
         if entry is None:
             entry = _DownloadEntry(task_id, task_id)
             self._entries[task_id] = entry
 
-        # Remove from wherever it was
-        for section in [self._queued_section, self._active_section]:
-            if entry.parent() is section["card"]:
-                section["layout"].removeWidget(entry)
+        self._active_ids.discard(task_id)
 
         entry.mark_failed(error)
-        self._failed_section["layout"].addWidget(entry)
+        self._move_to_section(entry, self._failed_section)
         self._failed_empty.hide()
-        entry.show()
 
-    # ── Clear completed ───────────────────────────────────────────
+        if not self._active_ids:
+            self._active_empty.show()
+
+        self._update_badge()
+
+    # ─────────────────────────────────────────────────────────────
+    # Clear completed
+    # ─────────────────────────────────────────────────────────────
 
     def clear_completed(self):
         """Remove all completed entries from the view."""
         layout = self._completed_section["layout"]
-        while layout.count() > 1:  # keep the empty label
-            w = layout.itemAt(1).widget()
-            if w and isinstance(w, _DownloadEntry):
+        # Iterate in reverse to safely remove widgets
+        for i in range(layout.count() - 1, -1, -1):
+            item = layout.itemAt(i)
+            if item is None:
+                continue
+            w = item.widget()
+            if isinstance(w, _DownloadEntry) and w._completed:
                 layout.removeWidget(w)
                 tid = w.task_id
                 self._entries.pop(tid, None)
+                if tid in self._completed_ids:
+                    self._completed_ids.remove(tid)
                 w.deleteLater()
-            else:
-                break
+
         self._completed_empty.show()
+        self._update_badge()

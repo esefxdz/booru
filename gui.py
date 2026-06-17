@@ -153,6 +153,24 @@ class BooruGui(QMainWindow):
         search_v.addWidget(self.search_bar)
         top_h.addWidget(search_wrap, 1)
 
+        self.bulk_dl_btn = QPushButton("Bulk Download")
+        self.bulk_dl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.bulk_dl_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {colors.TEXT_PRIMARY};
+                border: 1px solid {colors.BORDER};
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{ background-color: {colors.BUTTON_BG}; }}
+        """)
+        self.bulk_dl_btn.clicked.connect(self._on_bulk_dl)
+        top_h.addWidget(self.bulk_dl_btn)
+
+
         content_v.addWidget(self.topbar)
 
         #   3c. Main Stack (Gallery vs Blacklist vs etc)
@@ -224,13 +242,18 @@ class BooruGui(QMainWindow):
             self._reposition_download_overlay()
 
     def _reposition_download_overlay(self):
-        """Keep the floating download widget anchored to the bottom-right."""
+        """Keep the floating download widget anchored to the bottom-left of the main content area."""
         overlay = self.download_overlay
         margin = 16
-        w = overlay.width() or 232
         h = overlay.height() or overlay.sizeHint().height()
-        x = self.width() - w - margin
+        
+        # Position it at the bottom left of the main content area (right of the sidebars)
+        sidebar_w = self.sidebar.width() if self.sidebar.isVisible() else 0
+        server_bar_w = self.server_bar.width() if self.server_bar.isVisible() else 0
+        
+        x = server_bar_w + sidebar_w + margin
         y = self.height() - h - margin
+        
         overlay.move(x, y)
         overlay.raise_()
 
@@ -460,14 +483,15 @@ class BooruGui(QMainWindow):
     # ─────────────────────────────────────────────────────────
     # Floating download overlay
     # ─────────────────────────────────────────────────────────
-    def _on_download_failed_overlay(self, task_id, error):
-        """Show a brief error in the download widget, then remove it."""
-        dw = self.sidebar.download_window
+    def _on_download_failed_overlay(self, task_id: str, error: str):
+        """Show a brief failed state in the floating download widget, then remove it."""
+        dw = self.download_overlay
         if task_id in dw.bars:
             bar = dw.bars[task_id]
             bar.pct_lbl.setText("Failed")
             bar.pct_lbl.setStyleSheet(f"color: {colors.DANGER}; font-size: 11px;")
             QTimer.singleShot(3000, lambda: dw.remove_download(task_id))
+
 
     # ─────────────────────────────────────────────────────────
     # Window close
