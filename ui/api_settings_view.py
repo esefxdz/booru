@@ -33,12 +33,12 @@ import boorus
 from ui import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: APISettingsDialog                                           ║
+# ║  CLASS: APISettingsView                                             ║
 # ║  The full settings panel for a single booru. Dynamically builds    ║
 # ║  the credential fields based on which engine the booru uses, and   ║
 # ║  only shows the Session Login tab for engines that support it.     ║
 # ╚══════════════════════════════════════════════════════════════════════╝
-class APISettingsDialog(QDialog):
+class APISettingsView(QWidget):
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  __init__  — looks up the booru's api_type from the registry,   │
@@ -55,12 +55,10 @@ class APISettingsDialog(QDialog):
         self._supports_session = supports_session_login(self.api_type)
         self._session_cookie_names = get_session_cookie_names(self.api_type)
 
-        self.setWindowTitle(f"⚙  {name}  Settings")
-        self.setMinimumWidth(400)
-        self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setStyleSheet(f"background-color: {colors.PANEL_BG}; color: {colors.TEXT_SECONDARY};")
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(40, 40, 40, 40)
         layout.setSpacing(10)
 
         # Bold booru name + dimmed engine type in the title row
@@ -275,23 +273,19 @@ class APISettingsDialog(QDialog):
 
         tabs.addTab(info_tab, "ℹ Info / Delete")
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton("Close Settings")
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(f"background:{colors.BUTTON_BG}; color:{colors.TEXT_SECONDARY}; padding:8px; border-radius:4px;")
-        close_btn.clicked.connect(self.reject)
+        close_btn.clicked.connect(self.parent_gui.show_gallery)
         layout.addWidget(close_btn)
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  showEvent  — plays a slide-up entrance animation each time the │
-    # │  dialog opens                                                   │
+    # │  view is shown                                                  │
     # └──────────────────────────────────────────────────────────────────┘
     def showEvent(self, event):
         super().showEvent(event)
         anims.animate_slide_up_fade(self, duration=300, offset=15)
-
-    def closeEvent(self, event):
-        self._closed = True
-        super().closeEvent(event)
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _save_api  — reads credential fields (which differ per engine) │
@@ -451,7 +445,7 @@ class APISettingsDialog(QDialog):
     def _clear_session(self):
         settings.manager.session_keys.pop(self.name, None)
         settings.manager.save()
-        self.accept()
+        self.parent_gui.show_gallery()
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _run_cf_bypass  — opens the in-app Chromium browser pointed at │
@@ -477,7 +471,7 @@ class APISettingsDialog(QDialog):
     # └──────────────────────────────────────────────────────────────────┘
     def _clear_cf(self):
         invalidate_session(self.name)
-        self.accept()
+        self.parent_gui.show_gallery()
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _delete_booru  — delegates to the main GUI's remove_booru      │
@@ -485,11 +479,4 @@ class APISettingsDialog(QDialog):
     # └──────────────────────────────────────────────────────────────────┘
     def _delete_booru(self):
         self.parent_gui.remove_booru(self.name)
-        self.accept()
-
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  show_dialog  — convenience static wrapper                      │
-    # └──────────────────────────────────────────────────────────────────┘
-    @staticmethod
-    def show_dialog(parent_gui, name: str):
-        APISettingsDialog(parent_gui, name).exec()
+        self.parent_gui.show_gallery()

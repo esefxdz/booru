@@ -1,27 +1,25 @@
 from PyQt6.QtWidgets import QPushButton
-from PyQt6.QtCore import Qt, QSize, QMimeData
-from PyQt6.QtGui import QCursor, QDrag, QIcon
+from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QCursor, QIcon
 from ui import settings_view as settings
 from ui.icons import Icons
 from ui.server_bar.favicon_fetcher import FaviconFetcher
 
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║                   CLASS: DraggableBooruButton                       ║
-# ║  A QPushButton that also acts as a drag source and drop target,     ║
-# ║  letting the user reorder boorus by dragging them in the sidebar.   ║
+# ║                   CLASS: BooruButton                                 ║
+# ║  A QPushButton that represents a booru site in the sidebar.          ║
 from ui import colors
 import ui.animations as anims
 from cloudflare_bypasser import store as cf_store
 
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║                   CLASS: DraggableBooruButton                       ║
-# ║  A QPushButton that also acts as a drag source and drop target,     ║
-# ║  letting the user reorder boorus by dragging them in the sidebar.   ║
+# ║                   CLASS: BooruButton                                 ║
+# ║  A QPushButton that represents a booru site in the sidebar.          ║
 # ╚══════════════════════════════════════════════════════════════════════╝
-class DraggableBooruButton(QPushButton):
+class BooruButton(QPushButton):
 
     # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — creates the button and enables drag-and-drop       │
+    # │  __init__  — creates the button                                  │
     # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, booru_name, data, server_bar):
         super().__init__()
@@ -41,21 +39,17 @@ class DraggableBooruButton(QPushButton):
             lambda pos: self.server_bar._on_context_menu(self.booru_name)
         )
         self.clicked.connect(self._on_clicked)
-        
-        # Accept drops so other booru buttons can be reordered onto this one
-        self.setAcceptDrops(True)
-        self.setMouseTracking(True)
 
     # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_clicked  — plays a quick press animation and switches the  │
-    # │  active booru to this one in the main window                    │
+    # │  _on_clicked  — plays a quick press animation and switches the   │
+    # │  active booru to this one in the main window                     │
     def _on_clicked(self):
         anims.animate_button_press(self)
         self.server_bar.main_gui.select_booru(self.booru_name)
 
     # ┌──────────────────────────────────────────────────────────────────┐
-    # │  update_style  — refreshes the button's icon and border color   │
-    # │  Called whenever the active booru changes or icons load.        │
+    # │  update_style  — refreshes the button's icon and border color    │
+    # │  Called whenever the active booru changes or icons load.         │
     # │  Active booru gets a solid square; others get a rounded          │
     # │  ghost style that morphs on hover (Discord-style).               │
     # └──────────────────────────────────────────────────────────────────┘
@@ -75,6 +69,7 @@ class DraggableBooruButton(QPushButton):
             if self.booru_name not in self.server_bar.fetchers and self.data.get("url"):
                 fetcher = FaviconFetcher(self.booru_name, self.data["url"])
                 fetcher.finished.connect(self.server_bar._on_icon_ready)
+                fetcher.finished.connect(fetcher.deleteLater)
                 self.server_bar.fetchers[self.booru_name] = fetcher
                 fetcher.start()
 
@@ -115,57 +110,3 @@ class DraggableBooruButton(QPushButton):
             f"{self.booru_name}\n"
             f"{'✓ Cloudflare bypass active' if cf_ok else '⚠ Cloudflare bypass needed — right-click to solve CAPTCHA'}"
         )
-
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  mousePressEvent  — records where the drag started so we can    │
-    # │  detect if the user is actually dragging vs just clicking        │
-    # └──────────────────────────────────────────────────────────────────┘
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.drag_start_pos = event.pos()
-        super().mousePressEvent(event)
-
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  mouseMoveEvent  — starts a drag operation once the mouse moves  │
-    # │  far enough from where it was pressed (10px threshold)           │
-    # └──────────────────────────────────────────────────────────────────┘
-    def mouseMoveEvent(self, event):
-        if hasattr(self, 'drag_start_pos') and (event.pos() - self.drag_start_pos).manhattanLength() > 10:
-            # Encode this button's booru name as the drag payload
-            drag = QDrag(self)
-            mime_data = QMimeData()
-            mime_data.setText(self.booru_name)
-            drag.setMimeData(mime_data)
-            drag.exec(Qt.DropAction.MoveAction)
-            return  # Don't call super() — it would interfere with the drag
-        super().mouseMoveEvent(event)
-
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  dragEnterEvent  — accepts the drag so we can receive the drop  │
-    # └──────────────────────────────────────────────────────────────────┘
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
-
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  dropEvent  — reorders the booru list when another button is    │
-    # │  dropped here. Moves the dragged booru to just before this one   │
-    # │  in BOORU_ORDER, then rebuilds the sidebar list to reflect it.  │
-    # └──────────────────────────────────────────────────────────────────┘
-    def dropEvent(self, event):
-        source_booru = event.mimeData().text()
-        target_booru = self.booru_name
-        
-        if source_booru != target_booru:
-            if source_booru in settings.manager.booru_order and target_booru in settings.manager.booru_order:
-                # Make a clean copy of the list to mutate safely
-                order = settings.manager.booru_order[:]
-                order.remove(source_booru)
-                # Insert the dragged booru immediately before the drop target
-                target_index = order.index(target_booru)
-                order.insert(target_index, source_booru)
-                settings.manager.booru_order = order
-                settings.manager.save()
-                self.server_bar.rebuild_list()
-        
-        event.acceptProposedAction()

@@ -45,8 +45,10 @@ _DECODE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 )
 
 # Max simultaneous HTTP requests to a single CDN host per search.
-# Keeps us well below booru rate-limit thresholds.
-_MAX_CONCURRENT = 8
+# 4 is the sweet spot: below Cloudflare's per-IP rate-limit threshold while
+# still saturating a typical home connection for thumbnail fetching.
+# (Was 8, which caused cascading 403s on safebooru/gelbooru CDNs.)
+_MAX_CONCURRENT = 4
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

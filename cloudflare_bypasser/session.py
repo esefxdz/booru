@@ -92,13 +92,11 @@ _NAVIGATION_HEADERS = {
 }
 
 # curl-cffi impersonation targets — try latest Chrome first, then fall back.
-# chrome131 is the most recent stable; older versions are fallbacks for sites
-# that fingerprint-check against a narrower window.  edge101 and safari17_0
-# provide alternative TLS fingerprints that some CF configs accept.
+# Kept to 4 entries: walking a long list sequentially on every 403 was the
+# main source of UI hangs.  The session tracks which target last succeeded
+# (_cffi_winner) and tries it first so the common path costs one attempt.
 _IMPERSONATE_TARGETS = [
-    "chrome131", "chrome124", "chrome120", "chrome110",
-    "chrome107", "chrome104", "chrome101", "chrome100",
-    "edge101", "edge99", "safari17_0", "safari15_6",
+    "chrome131", "chrome124", "chrome120", "edge101",
 ]
 
 _DEFAULT_TIMEOUT = 30
@@ -283,6 +281,7 @@ async def _try_curl_cffi(
     proxy_url: str,
     timeout: int,
     session_cache: dict | None = None,
+    winner_hint: str | None = None,
 ) -> Optional[BypassResponse]:
     """Attempt a request using curl_cffi with Chrome TLS impersonation."""
     if not _HAS_CURL_CFFI:
@@ -291,7 +290,14 @@ async def _try_curl_cffi(
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
     last_err = None
 
-    for target in _IMPERSONATE_TARGETS:
+    # Try the last successful target first — avoids walking the full list on
+    # every request when one target reliably works for this session.
+    targets = list(_IMPERSONATE_TARGETS)
+    if winner_hint and winner_hint in targets and targets[0] != winner_hint:
+        targets.remove(winner_hint)
+        targets.insert(0, winner_hint)
+
+    for target in targets:
         try:
             if session_cache is not None:
                 if target not in session_cache:
@@ -361,6 +367,7 @@ def _try_curl_cffi_sync(
     proxy_url: str,
     timeout: int,
     session_cache: dict | None = None,
+    winner_hint: str | None = None,
 ) -> Optional[BypassResponse]:
     """Synchronous curl_cffi engine — uses persistent sync Sessions so
     get_sync() callers get connection reuse without touching an event loop."""
@@ -370,7 +377,12 @@ def _try_curl_cffi_sync(
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
     last_err = None
 
-    for target in _IMPERSONATE_TARGETS:
+    targets = list(_IMPERSONATE_TARGETS)
+    if winner_hint and winner_hint in targets and targets[0] != winner_hint:
+        targets.remove(winner_hint)
+        targets.insert(0, winner_hint)
+
+    for target in targets:
         try:
             if session_cache is not None:
                 if target not in session_cache:
@@ -667,6 +679,7 @@ class BypassSession:
         self._last_request_time = 0.0
         self._rate_limit_lock = None  # asyncio.Lock, created lazily per event loop
         self._cookie_jar = {}         # accumulated cookies from responses (warmup + API calls)
+        self._cffi_winner: str | None = None  # last curl_cffi target that worked; tried first next time
         
     def _check_loop(self):
         """Invalidate cached clients if the event loop has changed.
@@ -755,7 +768,8 @@ class BypassSession:
 
         if engine == "curl_cffi":
             return await _try_curl_cffi(
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout, self._cffi_sessions
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
+                self._cffi_sessions, winner_hint=self._cffi_winner,
             )
         elif engine == "cloudscraper":
             return await loop.run_in_executor(
@@ -856,6 +870,9 @@ class BypassSession:
                 if resp and not resp.is_blocked and resp.status_code < 500:
                     if self.method == "auto":
                         self._successful_engine = engine
+                    # Remember which curl_cffi target worked so next call skips the fallback loop
+                    if engine == "curl_cffi" and resp.engine_used and "/" in resp.engine_used:
+                        self._cffi_winner = resp.engine_used.split("/", 1)[1]
                     if resp.cookies:
                         self._cookie_jar.update(resp.cookies)
                     return resp
@@ -920,6 +937,8 @@ class BypassSession:
                 if resp and not resp.is_blocked and resp.status_code < 500:
                     if self.method == "auto":
                         self._successful_engine = engine
+                    if engine == "curl_cffi" and resp.engine_used and "/" in resp.engine_used:
+                        self._cffi_winner = resp.engine_used.split("/", 1)[1]
                     if resp.cookies:
                         self._cookie_jar.update(resp.cookies)
                     return resp
@@ -964,7 +983,7 @@ class BypassSession:
         if engine == "curl_cffi":
             return _try_curl_cffi_sync(
                 url, params, headers, self._merged_cookies, self.proxy_url,
-                timeout, self._cffi_sync_sessions,
+                timeout, self._cffi_sync_sessions, winner_hint=self._cffi_winner,
             )
         elif engine == "cloudscraper":
             return _try_cloudscraper_sync(

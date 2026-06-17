@@ -4,8 +4,8 @@ from PyQt6.QtGui import QAction, QCursor
 from ui import settings_view as settings
 import boorus
 from ui.icons import Icons
-from ui.server_bar.draggable_booru_button import DraggableBooruButton
-from ui.modals import AddBooruDialog, APISettingsDialog
+from ui.server_bar.booru_button import BooruButton
+from ui.modals import AddBooruDialog
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                         CLASS: ServerBar                            ║
@@ -73,7 +73,7 @@ class ServerBar(QWidget):
         # of supported sites; only boorus the user has added (booru_order) show.
         for name in settings.manager.booru_order:
             if name in boorus.REGISTRY:
-                btn = DraggableBooruButton(name, boorus.REGISTRY[name], self)
+                btn = BooruButton(name, boorus.REGISTRY[name], self)
                 self._main_layout.addWidget(btn)
 
         # ── ADD BOORU BUTTON (Pinned to bottom) ───────────────────────
@@ -110,7 +110,7 @@ class ServerBar(QWidget):
     def update_active(self):
         for i in range(self._main_layout.count()):
             w = self._main_layout.itemAt(i).widget()
-            if isinstance(w, DraggableBooruButton):
+            if isinstance(w, BooruButton):
                 w.update_style()
         self.update_bookmark_style()
 
@@ -146,6 +146,7 @@ class ServerBar(QWidget):
     # └──────────────────────────────────────────────────────────────────┘
     def _on_icon_ready(self, name, path):
         self.icon_cache[name] = path
+        self.fetchers.pop(name, None)
         self.update_active()
 
     # ┌──────────────────────────────────────────────────────────────────┐
@@ -161,8 +162,7 @@ class ServerBar(QWidget):
             QMenu::item:selected {{ background-color: {colors.ACCENT}; color: {colors.TEXT_PRIMARY}; }}
         """)
         
-        act = QAction(f"⚙ Settings for {name}", self)
-        act.triggered.connect(lambda: APISettingsDialog.show_dialog(self.main_gui, name))
-        menu.addAction(act)
+        act = menu.addAction(f"⚙ Settings for {name}")
+        act.triggered.connect(lambda: self.main_gui.show_api_settings(name))
         
         menu.exec(QCursor.pos())
