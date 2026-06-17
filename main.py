@@ -71,7 +71,7 @@ _setup_logging()
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtCore import Qt
 
 # 4.1 High-DPI & Scaling Support
@@ -98,6 +98,13 @@ from ui import colors
 
 
 def main():
+    import ctypes
+    # Tell Windows this is a distinct app so the taskbar groups it correctly and uses our icon
+    try:
+        myappid = 'esef.boorubrowser.app.1'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
 
     settings.manager.initialize()
 
@@ -105,6 +112,10 @@ def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
+    
+    icon_path = os.path.join(os.path.dirname(__file__), "appico.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     
     qss_path = Path(__file__).parent / "ui" / "assets" / "theme.qss"
     with open(qss_path, "r", encoding="utf-8") as f:

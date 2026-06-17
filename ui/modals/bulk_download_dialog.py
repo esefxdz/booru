@@ -26,11 +26,11 @@ class BulkDownloadDialog(QDialog):
         self.parent_gui = parent_gui
         self.current_tags = current_tags
         self.setWindowTitle("Bulk Download")
-        self.setFixedSize(300, 180)
+        self.setFixedSize(340, 210)
         self.setStyleSheet(f"background-color: {colors.PANEL_BG}; color: {colors.TEXT_SECONDARY};")
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(15)
+        layout.setSpacing(12)
         layout.setContentsMargins(20, 20, 20, 20)
 
         title = QLabel("Download limit:")
@@ -50,6 +50,12 @@ class BulkDownloadDialog(QDialog):
             }}
         """)
         layout.addWidget(self.e)
+
+        # Hint — sets expectations for the user
+        hint = QLabel("⬇ Progress will appear in the Downloads tab.")
+        hint.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 11px;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
 
         run_btn = QPushButton("🚀 START DOWNLOAD")
         run_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -73,10 +79,14 @@ class BulkDownloadDialog(QDialog):
     def run_bulk(self):
         try:
             limit = int(self.e.text())
-            self.parent_gui.controller.bulk_download(self.current_tags, limit)
-            self.accept()
         except ValueError:
             QMessageBox.warning(self, "Invalid Input", "Limit must be a number.")
+            return
+
+        self.parent_gui.controller.bulk_download(self.current_tags, limit)
+        # Navigate to the Downloads page so user sees live progress immediately
+        self.parent_gui.show_downloads()
+        self.accept()
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  show_dialog  — convenience static wrapper so callers don't     │

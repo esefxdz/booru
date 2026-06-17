@@ -81,8 +81,8 @@ class FetchThread(QThread):
             loop.close()
 
 class BulkThread(QThread):
-    progress = pyqtSignal(str)
-    finished = pyqtSignal(int)
+    progress = pyqtSignal(str)       # status label text
+    bulk_done = pyqtSignal(int, int)  # success_count, total_count
     error = pyqtSignal(str)
 
     def __init__(self, downloader, tags, limit):
@@ -92,27 +92,39 @@ class BulkThread(QThread):
         self.limit = limit
 
     def run(self):
+        import uuid
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            self.progress.emit("Fetching metadata...")
-            posts = loop.run_until_complete(self.downloader.get_image_urls(self.tags, self.limit, 0))
+            self.progress.emit("Fetching metadata…")
+            posts = loop.run_until_complete(
+                self.downloader.get_image_urls(self.tags, self.limit, 0)
+            )
             if not posts:
-                self.finished.emit(0)
+                self.bulk_done.emit(0, 0)
                 return
 
-            self.progress.emit(f"Downloading {len(posts)} items...")
-
-            from download_images import download_post, get_bulk_folder
+            from download_images import get_bulk_folder
             folder = get_bulk_folder(self.tags)
+
+            total = len(posts)
+            self.progress.emit(f"Queuing {total} downloads…")
 
             success = 0
             for i, post in enumerate(posts):
-                self.progress.emit(f"Downloading {i+1}/{len(posts)}...")
-                if download_post(post, folder, self.downloader):
+                # Each call to download_file() emits download_started /
+                # download_progress / download_finished|failed — so every
+                # single item shows up in the Downloads view live.
+                task_id = f"bulk-{uuid.uuid4().hex[:8]}"
+                post["_bulk_task_id"] = task_id
+                try:
+                    self.downloader.download_file(task_id, post, folder)
                     success += 1
+                except Exception:
+                    import logging
+                    logging.exception("BulkThread: download_file failed for post %s", post.get("id"))
 
-            self.finished.emit(success)
+            self.bulk_done.emit(success, total)
         except Exception as e:
             import logging
             logging.exception("BulkThread crashed")
@@ -236,7 +248,17 @@ class AppController(QObject):
 
     def bulk_download(self, tags, limit):
         self.bulk_thread = BulkThread(self.downloader, tags, limit)
-        self.bulk_thread.progress.connect(lambda msg: self.status_updated.emit(msg, "yellow"))
-        self.bulk_thread.finished.connect(lambda count: self.status_updated.emit(f"Bulk downloaded {count} items!" if count > 0 else "No posts found.", "green" if count > 0 else "orange"))
-        self.bulk_thread.error.connect(lambda _: self.status_updated.emit("Bulk Error!", "red"))
+        self.bulk_thread.progress.connect(
+            lambda msg: self.status_updated.emit(msg, "yellow")
+        )
+        self.bulk_thread.bulk_done.connect(
+            lambda ok, total: self.status_updated.emit(
+                f"✅ Bulk done — {ok}/{total} downloaded!" if total > 0 else "No posts found.",
+                "green" if ok > 0 else "orange"
+            )
+        )
+        self.bulk_thread.error.connect(
+            lambda e: self.status_updated.emit(f"❌ Bulk error: {e}", "red")
+        )
         self.bulk_thread.start()
+
