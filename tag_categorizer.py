@@ -184,7 +184,6 @@ class TagCategorizer:
         blocked = False
 
         for i in range(0, len(tags), chunk_size):
-            # If the first chunk confirmed we're blocked, stop immediately
             if blocked:
                 break
             chunk = tags[i:i + chunk_size]
@@ -193,12 +192,21 @@ class TagCategorizer:
             names = urllib.parse.quote(",".join(chunk_query))
             url = f"https://danbooru.donmai.us/tags.json?search[name_comma]={names}"
             try:
-                with self._fetch_lock:
+                # Non-blocking lock: if another thread is already fetching from
+                # Danbooru, skip — the cache will be populated when it finishes.
+                # Holding this lock for the full HTTP call was causing threads to
+                # queue up and stall the tag panel for several seconds.
+                if not self._fetch_lock.acquire(blocking=False):
+                    break
+                try:
                     r = httpx.get(
                         url,
                         headers={"User-Agent": "BooruBrowser/1.0"},
                         timeout=8.0,
                     )
+                finally:
+                    self._fetch_lock.release()
+
                 if r.status_code == 200:
                     data = r.json() if callable(getattr(r, 'json', None)) else []
                     with self._lock:

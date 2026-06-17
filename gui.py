@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QPushButton, QFrame, QListWidget, QListWidgetItem, QLabel,
     QStackedWidget,
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, QThread, pyqtSlot, pyqtSignal, QPoint
+from PyQt6.QtCore import Qt, QSize, QTimer, QThread, pyqtSlot, pyqtSignal, QPoint, QSettings
 from PyQt6.QtGui import QFont, QColor, QIcon
 
 from ui import settings_view as settings
@@ -59,6 +59,13 @@ class BooruGui(QMainWindow):
             
         # Apply Windows Dark Title Bar
         self._apply_dark_title_bar()
+
+        # Restore window geometry
+        self.qsettings = QSettings("BooruBrowser", "BooruBrowser")
+        if self.qsettings.value("geometry"):
+            self.restoreGeometry(self.qsettings.value("geometry"))
+        if self.qsettings.value("windowState"):
+            self.restoreState(self.qsettings.value("windowState"))
 
         self.downloader = BooruDownloader()
         self.controller = AppController(self.downloader)
@@ -348,6 +355,18 @@ class BooruGui(QMainWindow):
         self.stack.setCurrentWidget(self.settings_view)
         self.topbar.hide()
 
+    def show_api_settings(self, name: str):
+        self._close_overlay_if_open()
+        if hasattr(self, 'api_settings_view'):
+            self.stack.removeWidget(self.api_settings_view)
+            self.api_settings_view.deleteLater()
+        
+        from ui.api_settings_view import APISettingsView
+        self.api_settings_view = APISettingsView(self, name)
+        self.stack.addWidget(self.api_settings_view)
+        self.stack.setCurrentWidget(self.api_settings_view)
+        self.topbar.hide()
+
     def show_downloads(self):
         self._close_overlay_if_open()
         self.stack.setCurrentWidget(self.downloads_view)
@@ -454,6 +473,8 @@ class BooruGui(QMainWindow):
     # Window close
     # ─────────────────────────────────────────────────────────
     def closeEvent(self, event):
+        self.qsettings.setValue("geometry", self.saveGeometry())
+        self.qsettings.setValue("windowState", self.saveState())
         tmp = settings.manager.get_download_dir() / "temp_media"
         if tmp.exists():
             try:

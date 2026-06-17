@@ -651,6 +651,10 @@ class Gallery(QWidget):
         per post, which caused Qt layout thrash and RAM growth under
         infinite scroll.
         """
+        # Batch query bookmark status for all incoming posts to avoid N SQLite round-trips
+        incoming_ids = [str(p.get("id")) for p in posts if p.get("id")]
+        bookmarked_set = db.are_posts_bookmarked(incoming_ids)
+
         for post in posts:
             post_id = post.get('id')
             if post_id in self._post_id_set:
@@ -661,7 +665,7 @@ class Gallery(QWidget):
             self._posts.append(post)
             self._post_id_to_idx[post_id] = idx
             self._rects.append(QRect())
-            self._post_bookmarked[idx] = db.is_post_bookmarked(post_id)
+            self._post_bookmarked[idx] = str(post_id) in bookmarked_set
             # Pre-compute aspect ratio for masonry layout
             if idx not in self._aspect_ratios:
                 self._aspect_ratios[idx] = self._get_aspect_ratio(post)

@@ -66,14 +66,30 @@ class BookmarksDB:
                     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            conn.commit()
-
     def is_post_bookmarked(self, post_id: str) -> bool:
         pid = str(post_id)
         with self._lock:
             conn = self._get_conn()
             cursor = conn.execute("SELECT 1 FROM bookmarks WHERE id = ?", (pid,))
             return cursor.fetchone() is not None
+
+    def are_posts_bookmarked(self, post_ids: list[str]) -> set[str]:
+        if not post_ids:
+            return set()
+        
+        # SQLite maximum bound parameters is typically 999, so we chunk it just in case
+        chunk_size = 900
+        bookmarked = set()
+        
+        with self._lock:
+            conn = self._get_conn()
+            for i in range(0, len(post_ids), chunk_size):
+                chunk = [str(pid) for pid in post_ids[i:i + chunk_size]]
+                placeholders = ",".join("?" * len(chunk))
+                cursor = conn.execute(f"SELECT id FROM bookmarks WHERE id IN ({placeholders})", chunk)
+                bookmarked.update(row[0] for row in cursor.fetchall())
+                
+        return bookmarked
 
     def add_bookmark(self, post: dict):
         raw_id = post.get("id")
