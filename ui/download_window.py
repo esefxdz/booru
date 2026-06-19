@@ -30,7 +30,7 @@ class DownloadProgressBar(QWidget):
             QProgressBar {{
                 background-color: {colors.MAIN_BG};
                 border: 1px solid {colors.BORDER};
-                border-radius: 4px;
+                border-radius: 50px;
             }}
             QProgressBar::chunk {{
                 background-color: {colors.ACCENT};
@@ -66,6 +66,8 @@ class DownloadWindow(QWidget):
         """)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMaximumWidth(216)
+        self.setMinimumWidth(216)  # add this
+        self.setMinimumHeight(120)  # and this
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(10, 10, 10, 10)
