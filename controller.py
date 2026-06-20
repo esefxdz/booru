@@ -90,6 +90,7 @@ class BulkThread(QThread):
         self.downloader = downloader
         self.tags = tags
         self.limit = limit
+        self.cancel_event = threading.Event()
 
     def run(self):
         import uuid
@@ -112,6 +113,9 @@ class BulkThread(QThread):
 
             success = 0
             for i, post in enumerate(posts):
+                if self.cancel_event.is_set():
+                    break
+                
                 # Each call to download_file() emits download_started /
                 # download_progress / download_finished|failed — so every
                 # single item shows up in the Downloads view live.
@@ -155,16 +159,30 @@ class AppController(QObject):
         return self._is_loading
 
     def _cancel_active_thread(self):
-        """Signal the current FetchThread to stop and wait up to 2 s for it.
+        """Signal the current FetchThread to stop and wait up to 5 s for it.
 
         Must be called while holding ``_thread_lock`` or from the Qt main
-        thread before a new thread is started.  The 2-second timeout prevents
+        thread before a new thread is started.  The 5-second timeout prevents
         the UI from hanging if a CDN request is slow to cancel.
         """
         if self.thread is not None and self.thread.isRunning():
             self.thread.cancel_event.set()
             self.thread.quit()
-            self.thread.wait(2000)  # ms
+            self.thread.wait(5000)  # ms — thumbnail fetches can take a moment to abort
+
+    def shutdown(self):
+        """Cleanly cancel all running threads before app exit."""
+        with self._thread_lock:
+            self._cancel_active_thread()
+        if self.thread is not None and self.thread.isRunning():
+            self.thread.terminate()  # last resort after 2 s wait in _cancel_active_thread
+            self.thread.wait(1000)
+        if hasattr(self, 'bulk_thread') and self.bulk_thread is not None and self.bulk_thread.isRunning():
+            self.bulk_thread.cancel_event.set()
+            self.bulk_thread.quit()
+            if not self.bulk_thread.wait(5000):
+                self.bulk_thread.terminate()
+                self.bulk_thread.wait(1000)
 
     def _wire_thread(self, thread):
         """Connect a FetchThread's signals, guarded by a generation counter.

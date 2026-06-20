@@ -171,11 +171,15 @@ class BooruDownloader(QObject):
     async def fetch_previews(self, posts, callback, cancel_event=None, session_manager=None):
         """Fetch and decode thumbnails for a list of posts."""
         from download_images.thumbnails import fetch_previews
-        
+        from download_images.thumb_client import thumb_fetch
+
         async def bound_fetch(url, params=None, timeout=None, booru=None):
             return await self._fetch(url, params=params, timeout=timeout, booru=booru, session_manager=session_manager)
-            
-        await fetch_previews(posts, self._adapter(), bound_fetch, callback, cancel_event)
+
+        async def bound_thumb_fetch(url, timeout=None, booru=None):
+            return await thumb_fetch(url, booru=booru or settings.manager.active_booru, timeout=timeout or 10.0)
+
+        await fetch_previews(posts, self._adapter(), bound_fetch, callback, cancel_event, thumb_fetch_fn=bound_thumb_fetch)
 
     # ──────────────────────────────────────────────────────────────
     #  Credentials
@@ -227,5 +231,6 @@ class BooruDownloader(QObject):
     # ──────────────────────────────────────────────────────────────
 
     async def close(self):
-        """Placeholder for future cleanup (connection pools, etc)."""
-        pass
+        """Close any long-lived connection pools held by this downloader."""
+        from download_images import thumb_client
+        await thumb_client.close_all()
