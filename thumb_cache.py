@@ -64,8 +64,8 @@ from ui import settings_view as settings
 # Constants & Defaults
 # ─────────────────────────────────────────────────────────────────
 
-_L1_MAX_BYTES: int = 64 * 1024 * 1024     # 64 MB in-memory budget
-_L2_MAX_BYTES: int = 500 * 1024 * 1024    # 500 MB on-disk budget
+_L1_MAX_BYTES: int = 128 * 1024 * 1024    # 128 MB in-memory budget (~6 400 thumbs)
+_L2_MAX_BYTES: int = 1024 * 1024 * 1024  # 1 GB on-disk budget  (~50 000 thumbs)
 _L2_EVICT_RATIO: float = 0.10             # evict oldest 10 % when over limit
 
 

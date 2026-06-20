@@ -505,6 +505,8 @@ class BooruGui(QMainWindow):
                 shutil.rmtree(tmp)
             except Exception:
                 pass
+        # Cleanly stop background fetch/download threads before exit
+        self.controller.shutdown()
         event.accept()
 
     # ─────────────────────────────────────────────────────────

@@ -160,13 +160,16 @@ def _download_httpx(url: str, dest: Path, headers: dict,
 
     def _attempt(verify: bool) -> bool:
         global _httpx_client_verify_true, _httpx_client_verify_false
+        from ui import settings_view as settings
+        use_h2 = getattr(settings.manager, "use_http2", False)
+        
         if verify:
             if _httpx_client_verify_true is None:
-                _httpx_client_verify_true = httpx.Client(verify=True, timeout=60, follow_redirects=True)
+                _httpx_client_verify_true = httpx.Client(verify=True, timeout=60, follow_redirects=True, http2=use_h2)
             client = _httpx_client_verify_true
         else:
             if _httpx_client_verify_false is None:
-                _httpx_client_verify_false = httpx.Client(verify=False, timeout=60, follow_redirects=True)
+                _httpx_client_verify_false = httpx.Client(verify=False, timeout=60, follow_redirects=True, http2=use_h2)
             client = _httpx_client_verify_false
 
         with client.stream("GET", url, headers=headers) as r:

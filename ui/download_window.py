@@ -66,8 +66,8 @@ class DownloadWindow(QWidget):
         """)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMaximumWidth(216)
-        self.setMinimumWidth(216)  # add this
-        self.setMinimumHeight(120)  # and this
+        self.setMinimumWidth(216) 
+        self.setMinimumHeight(120)  
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(10, 10, 10, 10)

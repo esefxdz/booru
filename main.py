@@ -7,6 +7,7 @@ from pathlib import Path
 import traceback
 import thumb_cache
 import download_images.engines as engines
+import download_images.thumb_client as thumb_client
 
 def _setup_logging():
     """Wire up rotating file logs so crashes are diagnosable in packaged builds."""
@@ -136,6 +137,16 @@ def main():
 
     thumb_cache.shutdown()
     engines.shutdown()
+
+    # Close the persistent thumbnail httpx connection pool.
+    # These clients were created on background-thread event loops that
+    # are already dead, so we use a fresh loop and suppress any cross-loop
+    # warnings from httpx.  asyncio.run() handles the lifecycle cleanly.
+    import asyncio
+    try:
+        asyncio.run(thumb_client.close_all())
+    except Exception:
+        pass
 
     sys.exit(exit_code)
 

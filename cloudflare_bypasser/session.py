@@ -779,8 +779,10 @@ class BypassSession:
             )
         elif engine == "httpx":
             if self._httpx_client is None and _HAS_HTTPX:
+                from ui import settings_view as settings
+                use_h2 = getattr(settings.manager, "use_http2", False)
                 self._httpx_client = httpx.AsyncClient(
-                    http2=True,
+                    http2=use_h2,
                     follow_redirects=True,
                     timeout=timeout,
                     cookies=self._merged_cookies or None,
@@ -863,10 +865,25 @@ class BypassSession:
             engines.insert(0, self._successful_engine)
 
         for attempt in range(1, _MAX_RETRIES + 1):
+            got_429 = False
+            retry_after: float = 0
             for engine in engines:
                 resp = await self._run_async_engine(
                     engine, url, params, merged_headers, timeout,
                 )
+                if resp and not resp.is_blocked and resp.status_code == 429:
+                    # Rate-limited — honour Retry-After if present, otherwise backoff
+                    got_429 = True
+                    last_response = resp
+                    try:
+                        retry_after = float(resp.headers.get("retry-after", 0))
+                    except (ValueError, AttributeError):
+                        retry_after = 0
+                    log.warning(
+                        "[session] HTTP 429 from %s via %s (attempt %d/%d)",
+                        url, engine, attempt, _MAX_RETRIES,
+                    )
+                    break  # no point trying other engines — the server is rate-limiting us
                 if resp and not resp.is_blocked and resp.status_code < 500:
                     if self.method == "auto":
                         self._successful_engine = engine
@@ -885,7 +902,13 @@ class BypassSession:
 
             # --- Backoff before retry ---
             if attempt < _MAX_RETRIES:
-                wait = _RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                if got_429 and retry_after > 0:
+                    wait = min(retry_after, 60.0)  # cap at 60 s
+                    log.info("[session] Retry-After: %.0fs for %s", wait, url)
+                elif got_429:
+                    wait = _RETRY_BACKOFF_BASE * (2 ** attempt)  # longer backoff for 429
+                else:
+                    wait = _RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
                 log.info(
                     "Attempt %d/%d failed for %s, retrying in %.1fs",
                     attempt, _MAX_RETRIES, url, wait,
