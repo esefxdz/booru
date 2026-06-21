@@ -176,8 +176,28 @@ class BooruDownloader(QObject):
         async def bound_fetch(url, params=None, timeout=None, booru=None):
             return await self._fetch(url, params=params, timeout=timeout, booru=booru, session_manager=session_manager)
 
+        # Pre-compute session cookies once per booru, not per thumbnail.
+        # _merged_cookies merges stored + accumulated cookies — doing it
+        # inside the closure would create a new dict for every thumbnail.
+        _extra_cookies = {}
+        def _get_extra(booru_name: str) -> dict:
+            if booru_name not in _extra_cookies:
+                extra = {}
+                if session_manager:
+                    try:
+                        s = session_manager(booru_name)
+                        extra = getattr(s, "_merged_cookies", {}) or {}
+                    except Exception:
+                        pass
+                _extra_cookies[booru_name] = extra
+            return _extra_cookies[booru_name]
+
         async def bound_thumb_fetch(url, timeout=None, booru=None):
-            return await thumb_fetch(url, booru=booru or settings.manager.active_booru, timeout=timeout or 10.0)
+            booru_name = booru or settings.manager.active_booru
+            return await thumb_fetch(
+                url, booru=booru_name, timeout=timeout or 10.0,
+                extra_cookies=_get_extra(booru_name),
+            )
 
         await fetch_previews(posts, self._adapter(), bound_fetch, callback, cancel_event, thumb_fetch_fn=bound_thumb_fetch)
 
