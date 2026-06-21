@@ -7,21 +7,26 @@ a callback for each decoded thumbnail so the gallery can update.
 
 Concurrency model
 -----------------
-The network semaphore throttles the combined network+decode pipeline.
-Each coroutine holds its semaphore slot across the HTTP fetch *and* the
-PIL decode, so the total number of in-flight images (bytes in RAM +
-thread-pool work) stays bounded.
+The network semaphore throttles ONLY the HTTP fetch.  As soon as
+bytes arrive the semaphore slot is released so the next download can
+start immediately.  PIL decoding runs in the thread pool *outside*
+the semaphore, overlapping network I/O with CPU work.
+
+This makes the effective pipeline:
+
+    download_1 → release_sem → download_2 → release_sem → ...
+                       ↓                        ↓
+                   decode_1                 decode_2
+                       ↓                        ↓
+                  result_1                  result_2
 
 When the user disables the semaphore in settings we still enforce a
 fallback cap of 24 concurrent fetches — enough for buttery-smooth
-loading without looking like a DDoS to Cloudflare (Chrome's own
-per-host limit is also 24).
+loading without looking like a DDoS to Cloudflare.
 
-All callbacks are collected during the gather and flushed in one burst
-afterwards so Qt receives every signal before painting → thumbnails
-appear in a single frame rather than cascading in waves.  If the gather
-itself crashes (e.g. CDN connection reset on Windows) we still flush
-whatever thumbnails made it through so the gallery is never empty.
+Each thumbnail fires its callback the instant its decode finishes —
+no batching, no waiting for stragglers.  The semaphore only gates network
+requests; decode runs outside so the network never idles.
 
 Cancellation
 ------------
@@ -144,13 +149,12 @@ async def fetch_previews(
     if use_sem:
         sem = asyncio.Semaphore(max_conn)
     else:
-        # Even with the user-facing semaphore OFF we MUST cap in-flight
-        # HTTP requests.  Without any throttle 50+ connections hit the
-        # CDN simultaneously, which looks like a DDoS to Cloudflare —
-        # they RST connections and asyncio on Windows/Python 3.13
-        # chokes on WinError 995.  24 is Chrome's per-host limit.
-        _FALLBACK_LIMIT = 24
-        sem = asyncio.Semaphore(_FALLBACK_LIMIT)
+        # Truly disabled — the httpx per-host connection limit (up to 32)
+        # is enough to prevent accidental DDoS without extra throttling.
+        class _NoSem:
+            async def __aenter__(self): pass
+            async def __aexit__(self, *_): pass
+        sem = _NoSem()
 
     def _cancelled() -> bool:
         return cancel_event is not None and cancel_event.is_set()
@@ -183,33 +187,7 @@ async def fetch_previews(
 
         return None
 
-    # ── Two-phase result collector ─────────────────────────────
-    #  Coroutines append results here.  We flush in two waves:
-    #    1. A timer fires after ~100 ms and flushes whatever is
-    #       ready → instant first paint (feels "snappy").
-    #    2. After gather finishes we flush the remainder → final
-    #       paint completes the gallery.
-    #  Both flushes happen in tight loops so Qt receives signals
-    #  in bursty batches rather than a one-by-one cascade.
-    results: list = []
-    _wave1_done = False
-
-    async def _flush_wave1():
-        """Fire callbacks for whatever thumbnails are ready after a short window."""
-        nonlocal _wave1_done
-        await asyncio.sleep(0.10)  # 100 ms — long enough to batch, short enough to feel instant
-        if _wave1_done or _cancelled() or not results:
-            return
-        _wave1_done = True
-        wave = results[:]
-        results.clear()
-        for img_bytes, post, index in wave:
-            try:
-                callback(img_bytes, post, index)
-            except Exception:
-                log.exception("[thumbnails] wave-1 callback error for post %s", post.get("id"))
-
-    # ── Per-post coroutine ─────────────────────────────────────────
+    # ── Per-post coroutine — fires callback the instant it's ready ──
     async def fetch_one(post, index):
         if _cancelled():
             return
@@ -218,10 +196,11 @@ async def fetch_previews(
         booru     = post.get("_booru", "unknown")
         cache_key = f"{booru}:{post_id}"
 
-        # 1. Cache check (instant on L1 hit, single SQLite row on L2 hit)
+        # 1. Cache check
         cached = thumb_cache.get(cache_key)
         if cached is not None:
-            results.append((cached, post, index))
+            if not _cancelled():
+                callback(cached, post, index)
             return
 
         # 2. Resolve preview URL
@@ -231,69 +210,44 @@ async def fetch_previews(
         if url.startswith("//"):
             url = "https:" + url
 
-        # 3. Process with concurrency limit (network + CPU combined)
-        # Wrapping both in the semaphore ensures we don't fetch 50 images
-        # instantly and then hold them all in memory while 4 CPU cores
-        # slowly decode them.
+        # 3. Network fetch (semaphore limits concurrent connections)
+        #    Slot released immediately after bytes arrive → decode
+        #    runs outside, overlapping network I/O with CPU work.
         async with sem:
             if _cancelled():
                 return
-            
-            # --- NETWORK ---
             try:
                 raw = await _fetch_raw(url, booru)
             except Exception as exc:
                 log.error("[thumbnails] fetch error for post %s: %s", post_id, exc)
                 return
 
-            if raw is None or _cancelled():
-                return
+        if raw is None or _cancelled():
+            return
 
-            # --- CPU DECODE + CACHE (all off the event loop) ---
-            def _decode_and_cache() -> bytes:
-                img = Image.open(BytesIO(raw))
-                img.thumbnail(
-                    (settings.manager.thumbnail_size, settings.manager.thumbnail_size),
-                    Image.LANCZOS,
-                )
-                if img.mode in ("RGBA", "LA", "P"):
-                    img = img.convert("RGB")
-                buf = BytesIO()
-                img.save(buf, format="JPEG", quality=85)
-                img_bytes = buf.getvalue()
-                # SQLite write happens on the worker thread — never blocks the event loop
-                thumb_cache.put(cache_key, img_bytes)
-                return img_bytes
+        # 4. CPU decode + cache (outside semaphore — network keeps running)
+        def _decode_and_cache() -> bytes:
+            img = Image.open(BytesIO(raw))
+            img.thumbnail(
+                (settings.manager.thumbnail_size, settings.manager.thumbnail_size),
+                Image.LANCZOS,
+            )
+            if img.mode in ("RGBA", "LA", "P"):
+                img = img.convert("RGB")
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=85)
+            img_bytes = buf.getvalue()
+            thumb_cache.put(cache_key, img_bytes)
+            return img_bytes
 
-            try:
-                img_bytes = await loop.run_in_executor(_DECODE_EXECUTOR, _decode_and_cache)
-            except Exception as exc:
-                log.error("[thumbnails] decode error for post %s: %s", post_id, exc)
-                return
-
-            results.append((img_bytes, post, index))
-
-    # ── Launch the wave-1 timer alongside the gather ────────────
-    wave1_task = asyncio.ensure_future(_flush_wave1())
-
-    try:
-        await asyncio.gather(*(fetch_one(post, i) for i, post in enumerate(posts)))
-    except Exception:
-        # If the event loop hit a low-level error (e.g. WinError 995
-        # from a CDN connection reset), we still flush whatever
-        # thumbnails made it through so the gallery isn't empty.
-        log.exception("[thumbnails] gather crashed — flushing partial results")
-    finally:
-        wave1_task.cancel()
         try:
-            await wave1_task
-        except (asyncio.CancelledError, Exception):
-            pass
+            img_bytes = await loop.run_in_executor(_DECODE_EXECUTOR, _decode_and_cache)
+        except Exception as exc:
+            log.error("[thumbnails] decode error for post %s: %s", post_id, exc)
+            return
 
-    # ── Wave 2: flush any thumbnails that arrived after wave 1 ──
-    if not _cancelled() and results:
-        for img_bytes, post, index in results:
-            try:
-                callback(img_bytes, post, index)
-            except Exception:
-                log.exception("[thumbnails] wave-2 callback error for post %s", post.get("id"))
+        # 5. Fire immediately — no batching, no waiting for stragglers
+        if not _cancelled():
+            callback(img_bytes, post, index)
+
+    await asyncio.gather(*(fetch_one(post, i) for i, post in enumerate(posts)))
