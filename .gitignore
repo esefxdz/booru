@@ -42,6 +42,7 @@ ui/files/
 *.db-journal
 *.db-wal
 *.db-shm
+*.db
 
 # Packaging
 build/

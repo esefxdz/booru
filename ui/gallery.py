@@ -1,168 +1,99 @@
-from PyQt6.QtWidgets import QWidget, QScrollArea, QVBoxLayout, QPushButton, QLabel
-from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSlot, pyqtSignal, QRect
+"""
+ui/gallery.py — Virtualised, widget-pooled thumbnail gallery.
+
+Posts are stored as pure data dicts.  A fixed pool of recycled
+(tile, star) QPushButton pairs is maintained by ``TilePool``.
+On each scroll event only posts in the ±2 viewport buffer zone
+are assigned a slot.  Posts that leave the zone release their slot.
+
+Sub-systems extracted:
+  - Pixmap LRU cache    → ui/pixmap_cache.py
+  - Widget tile pool    → ui/tile_pool.py
+  - Layout + Y-index    → ui/gallery_layout.py
+  - Bookmark toggling   → signal emitted; handled by gui.py
+"""
+
+from __future__ import annotations
+
+import logging
+from PyQt6.QtWidgets import (
+    QWidget, QScrollArea, QVBoxLayout, QPushButton, QLabel,
+)
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal, QRect
 from PyQt6.QtGui import QPixmap, QIcon, QPainter, QPainterPath
 
 from ui import settings_view as settings
-from collections import OrderedDict
 from ui import colors
-import bisect
-import logging
+from ui.pixmap_cache import PixmapLRU, DEFAULT_MAX_BYTES as PX_CACHE_DEFAULT
+from ui.tile_pool import TilePool
+from ui.gallery_layout import GalleryLayout
 import thumb_cache
-from ui.bookmarks_main.bookmarks_db import db
 import ui.animations as anims
 
-
-# ── QPixmap LRU (byte-bounded) ─────────────────────────────────
-#
-#   Holds decoded QPixmap objects ready for immediate display.
-#   Unlike the old 500-entry cap, this tracks actual pixel memory
-#   (width * height * 4 bytes/pixel) and evicts LRU entries when
-#   the total exceeds _PX_CACHE_MAX_BYTES (48 MB default).
-#
-#   This is separate from thumb_cache (which stores raw JPEG bytes
-#   in memory + SQLite).  The flow is:
-#     thumb_cache.get(key) → raw JPEG bytes
-#     _PixmapLRU.get(key)  → decoded QPixmap (display-ready)
-# ────────────────────────────────────────────────────────────────
-_PX_CACHE_MAX_BYTES = 48 * 1024 * 1024  # 48 MB
-
-
-class _PixmapLRU:
-    """Byte-bounded LRU cache for decoded QPixmap thumbnails."""
-
-    __slots__ = ("_data", "_sizes", "_total", "_max")
-
-    def __init__(self, max_bytes: int = _PX_CACHE_MAX_BYTES):
-        self._data: OrderedDict[str, QPixmap] = OrderedDict()
-        self._sizes: dict[str, int] = {}   # key → estimated byte size
-        self._total: int = 0
-        self._max: int = max_bytes
-
-    @staticmethod
-    def _estimate(pm: QPixmap) -> int:
-        """Estimate the memory footprint of a QPixmap (ARGB32 = 4 bpp)."""
-        return max(pm.width() * pm.height() * 4, 1)
-
-    def get(self, key) -> QPixmap | None:
-        key = str(key)
-        if key in self._data:
-            self._data.move_to_end(key)
-            return self._data[key]
-        return None
-
-    def put(self, key, pixmap: QPixmap) -> None:
-        key = str(key)
-        size = self._estimate(pixmap)
-
-        # Update existing
-        if key in self._data:
-            self._total -= self._sizes[key]
-            self._data.move_to_end(key)
-        self._data[key] = pixmap
-        self._sizes[key] = size
-        self._total += size
-
-        # Evict LRU until under budget
-        while self._total > self._max and self._data:
-            oldest_key, _ = self._data.popitem(last=False)
-            self._total -= self._sizes.pop(oldest_key, 0)
-
-    def clear(self) -> None:
-        self._data.clear()
-        self._sizes.clear()
-        self._total = 0
+log = logging.getLogger(__name__)
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                         CLASS: Gallery                              ║
-# ║                                                                     ║
-# ║  True widget-pool virtualization.                                   ║
-# ║                                                                     ║
-# ║  Posts are stored as pure data dicts in self._posts. No QPushButton ║
-# ║  is created per post. Instead, a fixed pool of recycled tile        ║
-# ║  widgets is maintained. On each scroll event, only the posts in     ║
-# ║  the ±2 viewport buffer zone are mapped to pool slots. Posts that   ║
-# ║  leave the zone are unmapped (slot returned to the free list).      ║
-# ║                                                                     ║
-# ║  Pool size is dynamic: (cols × rows × 3), clamped to [60, 150].    ║
-# ║  The pool grows when the viewport expands but never shrinks.        ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 class Gallery(QWidget):
+    """Scrollable, virtualised thumbnail gallery with widget-pool recycling."""
+
     load_more_requested = pyqtSignal()
+    bookmark_toggled = pyqtSignal(dict, bool)  # post, is_now_bookmarked
 
     # ── Virtualization tunables ────────────────────────────────
-    _BUFFER_ZONE_PAGES = 2   # ±2 viewport heights: render zone
-    _EVICT_ZONE_PAGES  = 4   # ±4 viewport heights: JPEG byte eviction
-    _POOL_MIN          = 60  # minimum pool size regardless of viewport
-    _POOL_MAX          = 150 # maximum pool size to cap memory usage
+    _BUFFER_ZONE_PAGES = 2
+    _EVICT_ZONE_PAGES = 4
+    _POOL_MIN = 60
+    _POOL_MAX = 150
 
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
 
         # ── Layout tunables ────────────────────────────────────
-        self._col_count   = 4
-        self._col_width   = 250
-        self._spacing     = 16
+        self._col_count = 4
+        self._col_width = 250
+        self._spacing = 16
         self._scroll_guard = False
 
-        # ── QPixmap LRU — byte-bounded decoded pixmap cache ───
-        self._px_cache = _PixmapLRU(_PX_CACHE_MAX_BYTES)
+        # ── Pixmap cache ───────────────────────────────────────
+        self._px_cache = PixmapLRU(PX_CACHE_DEFAULT)
 
-        # ── Post data storage (no widgets here) ───────────────
-        #
-        # _posts[i]         — the raw post dict
-        # _post_id_set      — O(1) deduplication on insert
-        # _post_id_to_idx   — O(1) reverse lookup: post_id → index
-        # _rects[i]         — pre-calculated layout QRect
-        # _post_bytes[i]    — JPEG thumbnail bytes (absent = not loaded yet)
-        # _post_bookmarked  — cached bookmark state to avoid DB round-trips
-        # _post_animated    — tracks which posts have had their fade-in played
-        #
-        self._posts: list[dict]     = []
-        self._post_id_set: set      = set()
-        self._post_id_to_idx: dict  = {}
-        self._rects: list[QRect]    = []
-        self._post_bytes: dict      = {}   # post_idx → bytes
-        self._post_bookmarked: dict = {}   # post_idx → bool
-        self._post_animated: set    = set()
-
-        # ── Widget pool ───────────────────────────────────────
-        #
-        # _pool[slot_idx]   — (tile_QPushButton, star_QPushButton) pair
-        # _free_slots       — pool indices not currently mapped to any post
-        # _slot_to_post     — slot_idx → post_idx (currently mapped)
-        # _post_to_slot     — post_idx → slot_idx (reverse, for fast lookup)
-        #
-        self._pool: list[tuple]    = []
-        self._free_slots: list[int] = []
-        self._slot_to_post: dict   = {}
-        self._post_to_slot: dict   = {}
-
-        # ── Y-sorted index for O(log n) viewport intersection ─
-        self._y_index: list[tuple[int, int]] = []
-
-        # ── Aspect ratio cache (masonry layout) ─────────────
-        # post_idx → width/height ratio.  Populated from post
-        # metadata (sample_width/height or width/height).
+        # ── Post data (no widgets — pure data) ─────────────────
+        self._posts: list[dict] = []
+        self._post_id_set: set = set()
+        self._post_id_to_idx: dict = {}
+        self._rects: list[QRect] = []
+        self._post_bytes: dict = {}       # post_idx → JPEG bytes
+        self._post_bookmarked: dict = {}  # post_idx → bool
+        self._post_animated: set = set()
         self._aspect_ratios: dict[int, float] = {}
 
-        # ── Timers ────────────────────────────────────────────
+        # ── Y-index for O(log n) viewport queries ──────────────
+        self._y_index: list[tuple[int, int]] = []
+
+        # ── Build widget tree ──────────────────────────────────
+        self._build_ui()
+
+        # ── Tile pool (recycled widget pairs) ──────────────────
+        self._tiles = TilePool(self.container, self._POOL_MIN, self._POOL_MAX)
+
+        # ── Scroll ─────────────────────────────────────────────
+        self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
+
+        # ── Deferred refresh timer (coalesces rapid relayouts) ─
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(50)
         self._refresh_timer.timeout.connect(self._do_refresh)
 
-        # Eviction timer — runs after scroll settles to free JPEG bytes
-        # from posts far outside the eviction zone.
-        self._evict_timer = QTimer(self)
-        self._evict_timer.setSingleShot(True)
-        self._evict_timer.setInterval(300)
-        self._evict_timer.timeout.connect(self._evict_offscreen_bytes)
+    # ══════════════════════════════════════════════════════════════
+    #  UI Construction
+    # ══════════════════════════════════════════════════════════════
 
-        self.setup_ui()
-        QTimer.singleShot(100, self.refresh_layout)
-
-    def setup_ui(self):
+    def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -171,492 +102,194 @@ class Gallery(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll.setStyleSheet(
-            f"QScrollArea {{ border: none; background-color: {colors.MAIN_BG}; }}"
+            f"QScrollArea {{ border: none; background: {colors.MAIN_BG}; }}"
         )
-        self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
         self.container = QWidget()
-        self.container.setStyleSheet("background-color: transparent;")
-        self.container.setMinimumHeight(0)
-
+        self.container.setStyleSheet(f"background: {colors.MAIN_BG};")
         self.scroll.setWidget(self.container)
-        layout.addWidget(self.scroll)
 
-        # ── Empty-state label (shown when no posts are loaded) ─────
-        self._empty_lbl = QLabel("No results")
+        self._empty_lbl = QLabel("No results", self.container)
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_lbl.setStyleSheet(
-            f"color: {colors.TEXT_MUTED}; font-size: 18px; font-weight: 600;"
+            f"color: {colors.TEXT_SECONDARY}; font-size: 18px;"
         )
+        self._empty_lbl.setGeometry(0, 80, 400, 40)
         self._empty_lbl.hide()
-        layout.addWidget(self._empty_lbl)
+
+        layout.addWidget(self.scroll)
 
     # ══════════════════════════════════════════════════════════════
-    #  POOL MANAGEMENT
-    # ══════════════════════════════════════════════════════════════
-
-    def _compute_pool_size(self) -> int:
-        """Calculate the ideal pool size based on current viewport dimensions.
-
-        Formula: (columns × visible_rows × (1 + 2 * _BUFFER_ZONE_PAGES)).
-        Uses the minimum tile height (col_width // 2) for masonry so the
-        pool is large enough even when tiles are shorter than square.
-        """
-        vp_w = self.scroll.viewport().width()
-        vp_h = self.scroll.viewport().height()
-        if vp_w <= 0 or vp_h <= 0 or self._col_width <= 0:
-            return self._POOL_MIN
-        cols = max(1, vp_w // self._col_width)
-        # Masonry tiles can be as short as col_width // 2 — use that for
-        # a conservative row count so the pool is never too small.
-        tile_h = self._col_width // 2 if settings.manager.masonry_mode else self._col_width
-        rows = max(1, vp_h // max(tile_h, 1)) + 1
-        target = cols * rows * (1 + 2 * self._BUFFER_ZONE_PAGES)
-        return max(self._POOL_MIN, min(target, self._POOL_MAX))
-
-    def _grow_pool_if_needed(self, target_size: int):
-        """Allocate new pool slots until pool reaches target_size.
-
-        Slots are created as hidden QPushButton pairs (tile + star child).
-        Signals are NOT connected here — they are connected in _assign_slot()
-        each time a slot is recycled to a new post.
-        """
-        while len(self._pool) < target_size:
-            slot_idx = len(self._pool)
-
-            btn = QPushButton(self.container)
-            btn.setFlat(True)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.hide()
-
-            star = QPushButton(btn)
-            star.setText("★")
-            star.setCursor(Qt.CursorShape.PointingHandCursor)
-            star.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-
-            self._pool.append((btn, star))
-            self._free_slots.append(slot_idx)
-
-    def _assign_slot(self, post_idx: int, slot_idx: int):
-        """Configure pool slot *slot_idx* to display post at *post_idx*.
-
-        Disconnects any stale signals from the previous assignment, repositions
-        the widget to the post's rect, connects fresh click handlers, and sets
-        the thumbnail icon (or skeleton background if not yet loaded).
-        """
-        post = self._posts[post_idx]
-        rect = self._rects[post_idx]
-        btn, star = self._pool[slot_idx]
-
-        # ── Disconnect stale signals from previous post ────────
-        try:
-            btn.clicked.disconnect()
-        except Exception:
-            pass
-        try:
-            star.clicked.disconnect()
-        except Exception:
-            pass
-
-        # ── Position and size ──────────────────────────────────
-        btn.setGeometry(rect)
-        btn.setIconSize(rect.size())
-        star_sz = max(24, rect.width() // 8)
-        star.setFixedSize(star_sz, star_sz)
-        star.move(rect.width() - star_sz - 8, 8)
-
-        # ── Connect to the new post ────────────────────────────
-        btn.clicked.connect(lambda checked, p=post, b=btn: self._on_btn_clicked(p, b))
-        star.clicked.connect(
-            lambda checked, p=post, s=star: self._toggle_bookmark_direct(p, s)
-        )
-
-        # ── Load thumbnail ─────────────────────────────────────
-        safe_bytes = self._post_bytes.get(post_idx)
-        if safe_bytes is None:
-            # Try to reload from the two-tier thumbnail cache (L1 memory / L2 disk)
-            reloaded = self._reload_from_cache(post.get('id'))
-            if reloaded is not None:
-                self._post_bytes[post_idx] = reloaded
-                safe_bytes = reloaded
-
-        if safe_bytes:
-            pixmap = self._get_l1_pixmap(post.get('id'), safe_bytes)
-            btn.setIcon(QIcon(pixmap))
-            is_bm = self._post_bookmarked.get(post_idx, False)
-            if is_bm:
-                btn.setStyleSheet(
-                    f"border: 2px solid {colors.FAVORITE}; "
-                    f"background: transparent; padding: 0; border-radius: 12px;"
-                )
-            else:
-                btn.setStyleSheet("border: none; background: transparent; padding: 0;")
-            if post_idx not in self._post_animated:
-                anims.animate_fade_in(btn, duration=500)
-                self._post_animated.add(post_idx)
-        else:
-            # Skeleton state: grey placeholder while thumbnail is downloading
-            btn.setIcon(QIcon())
-            btn.setStyleSheet(
-                f"border: none; background-color: {colors.BUTTON_BG}; "
-                f"border-radius: 12px; padding: 0;"
-            )
-
-        self._style_star(star, self._post_bookmarked.get(post_idx, False), 16)
-        btn.show()
-
-        # ── Update mappings ────────────────────────────────────
-        self._slot_to_post[slot_idx] = post_idx
-        self._post_to_slot[post_idx] = slot_idx
-
-    def _release_slot(self, slot_idx: int):
-        """Return pool slot *slot_idx* to the free list.
-
-        Hides the widget, clears its icon, disconnects signals, and removes
-        the slot↔post mappings so the slot is safe to reassign.
-        """
-        btn, star = self._pool[slot_idx]
-        btn.setIcon(QIcon())
-        btn.hide()
-        try:
-            btn.clicked.disconnect()
-        except Exception:
-            pass
-        try:
-            star.clicked.disconnect()
-        except Exception:
-            pass
-
-        post_idx = self._slot_to_post.pop(slot_idx, None)
-        if post_idx is not None:
-            self._post_to_slot.pop(post_idx, None)
-        self._free_slots.append(slot_idx)
-
-    # ══════════════════════════════════════════════════════════════
-    #  SCROLL / INFINITE SCROLL
+    #  Scroll + viewport virtualization
     # ══════════════════════════════════════════════════════════════
 
     def _on_scroll(self, value: int):
         self._update_viewport()
-        self._evict_timer.start()
+        self._evict_offscreen_bytes()
+        self._maybe_request_more()
 
-        if not settings.manager.infinite_scroll or self._scroll_guard:
+    def _maybe_request_more(self):
+        """Emit load_more_requested when the user scrolls near the bottom."""
+        if self._scroll_guard:
             return
-        sb = self.scroll.verticalScrollBar()
-        if value >= sb.maximum() - 400:
+        vp = self.scroll.verticalScrollBar()
+        if vp.maximum() - vp.value() < 600:
             self._scroll_guard = True
             self.load_more_requested.emit()
-            QTimer.singleShot(1500, lambda: setattr(self, "_scroll_guard", False))
 
     def check_infinite_scroll_fill(self):
-        if not settings.manager.infinite_scroll or self._scroll_guard:
+        """If the viewport isn't full after a fetch, request more posts."""
+        self._scroll_guard = False
+        if not self._posts:
             return
-        QTimer.singleShot(100, self._check_bounds)
+        QTimer.singleShot(1500, self._check_fill)
 
-    def _check_bounds(self):
-        if not settings.manager.infinite_scroll or self._scroll_guard:
-            return
-        sb = self.scroll.verticalScrollBar()
-        if sb.maximum() <= 10 and len(self._posts) > 0:
-            self._scroll_guard = True
+    def _check_fill(self):
+        if self.scroll.verticalScrollBar().maximum() <= 0:
+            self._scroll_guard = False
             self.load_more_requested.emit()
-            QTimer.singleShot(1500, lambda: setattr(self, "_scroll_guard", False))
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.refresh_layout()
-        self.check_infinite_scroll_fill()
-
-    def refresh_layout(self):
-        self._refresh_timer.start(50)
+    # ══════════════════════════════════════════════════════════════
+    #  Layout refresh
+    # ══════════════════════════════════════════════════════════════
 
     def _do_refresh(self):
-        w = self.scroll.viewport().width()
-        if w < 100:
-            w = self.width()
+        """Recalculate layout, then update which slots are visible."""
+        self._col_count = max(1, self.scroll.viewport().width() // self._col_width)
+        tile_sz = max(50, self._col_width)
 
-        target_sz = settings.manager.thumbnail_size
-        if target_sz <= 0:
-            target_sz = 250
+        use_masonry = getattr(settings.manager, "masonry_mode", False)
+        if use_masonry:
+            GalleryLayout.apply_masonry(
+                self._rects, len(self._posts),
+                self._aspect_ratios,
+                self._col_count, self._col_width, self._spacing,
+            )
+        else:
+            h = GalleryLayout.apply_grid(
+                self._rects, len(self._posts),
+                self._col_count, self._spacing, tile_sz,
+            )
+            self.container.setMinimumHeight(max(h, 0))
 
-        cols = max(1, w // target_sz)
-        self._col_count = cols
+        self._empty_lbl.setVisible(len(self._posts) == 0)
+        self._y_index = GalleryLayout.rebuild_y_index(self._rects)
 
-        total_spacing = (cols + 1) * self._spacing
-        self._col_width = (w - total_spacing) // cols
-        if self._col_width < 50:
-            self._col_width = 50
+        # Grow pool if needed
+        wanted = self._tiles.compute_pool_size(
+            self.scroll.viewport().width(),
+            self.scroll.viewport().height(),
+            self._col_width,
+            self._BUFFER_ZONE_PAGES,
+            use_masonry,
+        )
+        self._tiles.grow_if_needed(wanted)
 
-        self._recalculate_layout()
-        self._rebuild_y_index()
         self._update_viewport()
 
-    # ══════════════════════════════════════════════════════════════
-    #  LAYOUT — uniform grid or masonry waterfall
-    # ══════════════════════════════════════════════════════════════
-
-    def _get_aspect_ratio(self, post: dict) -> float:
-        """Extract the width/height ratio from post metadata.
-
-        Returns 0.0 when dimensions are unknown (callers fall back to
-        a square tile).
-        """
-        # Sample / preview dimensions are preferred because thumbnails
-        # are usually generated at sample aspect ratio.
-        sw = post.get('sample_width') or post.get('preview_width') or post.get('image_width')
-        sh = post.get('sample_height') or post.get('preview_height') or post.get('image_height')
-        if sw and sh:
-            try:
-                return float(sw) / float(sh)
-            except (ValueError, ZeroDivisionError):
-                pass
-        # Fallback: raw image dimensions
-        w = post.get('width')
-        h = post.get('height')
-        if w and h:
-            try:
-                return float(w) / float(h)
-            except (ValueError, ZeroDivisionError):
-                pass
-        return 0.0
-
-    def _recalculate_layout(self):
-        # Build aspect ratio cache for all posts
-        for idx, post in enumerate(self._posts):
-            if idx not in self._aspect_ratios:
-                self._aspect_ratios[idx] = self._get_aspect_ratio(post)
-
-        if settings.manager.masonry_mode:
-            self._apply_masonry()
-        else:
-            self._apply_grid()
-
-    def _apply_grid(self):
-        """Place every post into a uniform grid and record its rect."""
-        sz = self._col_width
-        n  = len(self._posts)
-
-        # Resize _rects to match current post count
-        while len(self._rects) < n:
-            self._rects.append(QRect())
-
-        for idx in range(n):
-            row = idx // self._col_count
-            col = idx % self._col_count
-            x = self._spacing + col * (sz + self._spacing)
-            y = self._spacing + row * (sz + self._spacing)
-            self._rects[idx] = QRect(x, y, sz, sz)
-
-        rows  = (n + self._col_count - 1) // self._col_count if n else 0
-        max_h = rows * (sz + self._spacing) + self._spacing
-        self.container.setMinimumHeight(max(max_h, 0))
-        self._empty_lbl.setVisible(n == 0)
-
-    def _apply_masonry(self):
-        """Place every post using waterfall / masonry layout.
-
-        Each post is placed in the shortest column so that tiles pack
-        tightly regardless of their intrinsic aspect ratios.
-        """
-        n = len(self._posts)
-        # Resize _rects to match current post count
-        while len(self._rects) < n:
-            self._rects.append(QRect())
-
-        if n == 0:
-            self.container.setMinimumHeight(0)
-            self._empty_lbl.setVisible(True)
-            return
-
-        col_count = max(1, self._col_count)
-        col_width = max(50, self._col_width)
-        spacing   = self._spacing
-
-        # Track the bottom y-coordinate of each column
-        col_bottoms = [spacing] * col_count
-
-        # Clamp tile heights to a sane range (0.5× – 3× column width)
-        min_h = col_width // 2
-        max_h = col_width * 3
-
-        for idx in range(n):
-            ar = self._aspect_ratios.get(idx, 0.0)
-            if ar > 0.01:
-                h = max(min_h, min(int(col_width / ar), max_h))
-            else:
-                h = col_width  # square fallback for unknown aspect ratios
-
-            # Place in the shortest column
-            col = min(range(col_count), key=lambda c: col_bottoms[c])
-            x = spacing + col * (col_width + spacing)
-            y = col_bottoms[col]
-
-            self._rects[idx] = QRect(x, y, col_width, h)
-            col_bottoms[col] = y + h + spacing
-
-        max_h = max(col_bottoms) + spacing
-        self.container.setMinimumHeight(max(max_h, 0))
-        self._empty_lbl.setVisible(False)
-
-    # ══════════════════════════════════════════════════════════════
-    #  Y-INDEX — O(log n) viewport intersection via binary search
-    # ══════════════════════════════════════════════════════════════
-
-    def _rebuild_y_index(self):
-        """Rebuild the sorted Y-index from current rect positions.
-
-        Each entry is (y_top, post_index), sorted by y_top so binary search
-        can quickly find which posts overlap any given vertical range.
-        """
-        self._y_index = sorted(
-            (self._rects[i].y(), i)
-            for i in range(len(self._rects))
-            if not self._rects[i].isNull()
-        )
-
-    def _find_visible_indices(self, y_start: int, y_end: int) -> list[int]:
-        """Return post indices whose rects overlap [y_start, y_end].
-
-        O(log n + k) where k is the number of matching posts.
-        """
-        if not self._y_index:
-            return []
-
-        # Items can start above y_start and still overlap — search back
-        # by the maximum possible item height.  Masonry tiles can be up to
-        # 3× column width, grid tiles are exactly column width.
-        max_item_height = self._col_width * 3 if settings.manager.masonry_mode else self._col_width
-        search_start    = y_start - max_item_height
-
-        lo = bisect.bisect_left(self._y_index, (search_start,))
-
-        result = []
-        for i in range(lo, len(self._y_index)):
-            y_top, idx = self._y_index[i]
-            if y_top > y_end:
-                break  # everything past here is below the viewport
-            rect = self._rects[idx]
-            if rect.y() + rect.height() >= y_start:
-                result.append(idx)
-        return result
-
-    # ══════════════════════════════════════════════════════════════
-    #  VIRTUALIZATION — pool-based viewport update
-    # ══════════════════════════════════════════════════════════════
-
     def _update_viewport(self):
-        """Map/unmap pool slots based on the current scroll position.
-
-        Posts in the buffer zone (±2 viewport heights) are assigned a pool
-        slot and displayed.  Posts outside that zone are unmapped — their
-        slot is returned to the free list and can be reused for other posts.
-        """
-        vp_y = self.scroll.verticalScrollBar().value()
-        vp_h = self.scroll.viewport().height()
+        """Map/unmap pool slots based on current scroll position."""
+        vp = self.scroll.verticalScrollBar()
+        vp_y, vp_h = vp.value(), self.scroll.viewport().height()
         buffer_margin = vp_h * self._BUFFER_ZONE_PAGES
-        vis_top    = vp_y - buffer_margin
-        vis_bottom = vp_y + vp_h + buffer_margin
 
-        # Grow pool if the viewport has become larger since last check
-        if self._y_index:
-            wanted = set(self._find_visible_indices(vis_top, vis_bottom))
-        else:
-            wanted = set()
+        wanted = set(
+            GalleryLayout.find_visible(
+                self._y_index,
+                vp_y - buffer_margin,
+                vp_y + vp_h + buffer_margin,
+            )
+        ) if self._y_index else set()
 
-        target_pool = max(self._compute_pool_size(), len(wanted))
-        self._grow_pool_if_needed(target_pool)
+        target_pool = max(
+            self._tiles.compute_pool_size(
+                self.scroll.viewport().width(), vp_h, self._col_width,
+                self._BUFFER_ZONE_PAGES,
+                getattr(settings.manager, "masonry_mode", False),
+            ),
+            len(wanted),
+        )
+        self._tiles.grow_if_needed(target_pool)
 
-        currently_mapped = set(self._post_to_slot.keys())
+        currently_mapped = set(self._tiles.post_to_slot.keys())
 
-        # ── Release slots for posts that scrolled out ──────────
+        # Release scrolled-out posts
         for post_idx in (currently_mapped - wanted):
-            slot_idx = self._post_to_slot.get(post_idx)
+            slot_idx = self._tiles.post_to_slot.get(post_idx)
             if slot_idx is not None:
-                self._release_slot(slot_idx)
+                self._tiles.release(slot_idx)
 
-        # ── Update geometry for already-mapped posts ───────────
-        # (needed when the window is resized or column count changes)
+        # Update geometry for already-mapped posts (resize / column change)
         for post_idx in (wanted & currently_mapped):
-            slot_idx = self._post_to_slot.get(post_idx)
-            if slot_idx is None:
+            slot_idx = self._tiles.post_to_slot.get(post_idx)
+            if slot_idx is None or post_idx >= len(self._rects):
                 continue
-            btn, star = self._pool[slot_idx]
-            if post_idx >= len(self._rects):
-                continue
+            btn, star = self._tiles[slot_idx]
             rect = self._rects[post_idx]
             btn.setGeometry(rect)
             btn.setIconSize(rect.size())
 
-        # ── Assign free slots to newly visible posts ───────────
-        # Sort by distance from viewport center, so items actually on screen get slots first
-        vp_center = vp_y + vp_h / 2
-        def dist_to_center(pidx):
-            rect = self._rects[pidx]
-            item_center = rect.y() + rect.height() / 2
-            return abs(item_center - vp_center)
+        # Assign free slots to newly-visible posts (closest to centre first)
+        vp_centre = vp_y + vp_h / 2
+        def _dist_to_centre(pidx: int) -> float:
+            r = self._rects[pidx]
+            return abs(r.y() + r.height() / 2 - vp_centre)
 
-        for post_idx in sorted(wanted - currently_mapped, key=dist_to_center):
+        for post_idx in sorted(wanted - currently_mapped, key=_dist_to_centre):
             if post_idx >= len(self._rects):
                 continue
-            if not self._free_slots:
-                logging.warning(
+            if not self._tiles.free_slots:
+                log.warning(
                     "[gallery] Pool exhausted (%d slots, %d wanted).",
-                    len(self._pool), len(wanted),
+                    len(self._tiles), len(wanted),
                 )
                 break
-            slot_idx = self._free_slots.pop()
-            self._assign_slot(post_idx, slot_idx)
+            slot_idx = self._tiles.free_slots.pop()
+
+            pixmap = self._get_or_make_pixmap(post_idx)
+            self._tiles.assign(
+                slot_idx, post_idx, self._rects[post_idx],
+                pixmap,
+                self._post_bookmarked.get(post_idx, False),
+                post_idx in self._post_animated,
+                lambda checked, p=self._posts[post_idx], b=self._tiles[slot_idx][0]: self._on_btn_clicked(p, b),
+                lambda checked, p=self._posts[post_idx], s=self._tiles[slot_idx][1]: self._on_star_clicked(p, s),
+            )
+            if pixmap is not None:
+                self._post_animated.add(post_idx)
 
     def _evict_offscreen_bytes(self):
-        """Free JPEG bytes from posts far outside the eviction zone.
-
-        Posts beyond ±4 viewport heights have their raw bytes removed from
-        _post_bytes. They remain registered in _posts (their metadata and
-        rect are preserved). If the user scrolls back, the thumbnail is
-        reloaded from thumb_cache (L1 memory or L2 SQLite disk).
-        """
-        vp_y = self.scroll.verticalScrollBar().value()
-        vp_h = self.scroll.viewport().height()
+        """Free JPEG bytes from posts far outside the viewport buffer."""
+        vp = self.scroll.verticalScrollBar()
+        vp_y, vp_h = vp.value(), self.scroll.viewport().height()
         if vp_h <= 0:
             return
-
-        evict_margin = vp_h * self._EVICT_ZONE_PAGES
-        evict_top    = vp_y - evict_margin
-        evict_bottom = vp_y + vp_h + evict_margin
+        margin = vp_h * self._EVICT_ZONE_PAGES
+        evict_top = vp_y - margin
+        evict_bottom = vp_y + vp_h + margin
 
         for idx in list(self._post_bytes.keys()):
             if idx >= len(self._rects):
                 continue
-            rect = self._rects[idx]
-            if rect.isNull():
+            r = self._rects[idx]
+            if r.isNull():
                 continue
-            if rect.y() + rect.height() < evict_top or rect.y() > evict_bottom:
+            if r.y() + r.height() < evict_top or r.y() > evict_bottom:
                 del self._post_bytes[idx]
                 self._post_animated.discard(idx)
 
-    def _reload_from_cache(self, post_id):
-        """Reload thumbnail bytes from the two-tier cache (L1 memory / L2 disk)."""
-        return thumb_cache.get(post_id)
-
     # ══════════════════════════════════════════════════════════════
-    #  PUBLIC API
+    #  Public API
     # ══════════════════════════════════════════════════════════════
 
     def prepare_skeletons(self, posts):
-        """Register posts as pure data. No widgets are created here.
-
-        Widgets are only ever allocated from the pool when a post scrolls
-        into the ±2 viewport buffer zone, and returned when it leaves.
-        This replaces the old approach of creating a permanent QPushButton
-        per post, which caused Qt layout thrash and RAM growth under
-        infinite scroll.
-        """
-        # Batch query bookmark status for all incoming posts to avoid N SQLite round-trips
+        """Register posts as pure data. No widgets are created here."""
+        from ui.bookmarks_main.bookmarks_db import db
         incoming_ids = [str(p.get("id")) for p in posts if p.get("id")]
         bookmarked_set = db.are_posts_bookmarked(incoming_ids)
 
         for post in posts:
-            post_id = post.get('id')
+            post_id = post.get("id")
             if post_id in self._post_id_set:
                 continue
             self._post_id_set.add(post_id)
@@ -666,7 +299,6 @@ class Gallery(QWidget):
             self._post_id_to_idx[post_id] = idx
             self._rects.append(QRect())
             self._post_bookmarked[idx] = str(post_id) in bookmarked_set
-            # Pre-compute aspect ratio for masonry layout
             if idx not in self._aspect_ratios:
                 self._aspect_ratios[idx] = self._get_aspect_ratio(post)
 
@@ -674,22 +306,31 @@ class Gallery(QWidget):
 
     @pyqtSlot(bytes, dict, int)
     def add_item(self, safe_bytes: bytes, post: dict, idx: int):
-        """Called by the download thread when a thumbnail finishes downloading."""
+        """Called when a thumbnail finishes downloading."""
         post_id = post.get("id")
 
-        # Pre-decode and cache the pixmap for instant display
-        self._px_cache.put(post_id, self._decode_and_round(safe_bytes))
+        # Pre-decode and cache the pixmap
+        pixmap = self._decode_pixmap(safe_bytes)
+        self._px_cache.put(post_id, pixmap)
 
         post_idx = self._post_id_to_idx.get(post_id)
         if post_idx is not None:
             self._post_bytes[post_idx] = safe_bytes
-            # If this post is currently in a pool slot, refresh it immediately
-            slot_idx = self._post_to_slot.get(post_idx)
+            slot_idx = self._tiles.post_to_slot.get(post_idx)
             if slot_idx is not None:
-                self._assign_slot(post_idx, slot_idx)
+                # Refresh the tile in-place
+                rect = self._rects[post_idx] if post_idx < len(self._rects) else QRect()
+                self._tiles.assign(
+                    slot_idx, post_idx, rect, pixmap,
+                    self._post_bookmarked.get(post_idx, False),
+                    post_idx in self._post_animated,
+                    lambda checked, p=post, b=self._tiles[slot_idx][0]: self._on_btn_clicked(p, b),
+                    lambda checked, p=post, s=self._tiles[slot_idx][1]: self._on_star_clicked(p, s),
+                )
+                self._post_animated.add(post_idx)
             return
 
-        # Fallback: post was not pre-registered (e.g. skeleton was skipped)
+        # Fallback: post wasn't pre-registered
         self.prepare_skeletons([post])
         post_idx = self._post_id_to_idx.get(post_id)
         if post_idx is not None:
@@ -697,16 +338,10 @@ class Gallery(QWidget):
         self._update_viewport()
 
     def clear(self):
-        """Release all pool slots and clear post data. Pool widgets stay alive.
+        """Release all slots and wipe post data. Pool widgets survive."""
+        for slot_idx in list(self._tiles.slot_to_post.keys()):
+            self._tiles.release(slot_idx)
 
-        Keeping the pool alive avoids the allocation cost on the next search.
-        All post data, rects, bytes, and bookmark states are wiped.
-        """
-        # Release all active slots back to the free list
-        for slot_idx in list(self._slot_to_post.keys()):
-            self._release_slot(slot_idx)
-
-        # Clear all post data
         self._posts.clear()
         self._post_id_set.clear()
         self._post_id_to_idx.clear()
@@ -717,64 +352,79 @@ class Gallery(QWidget):
         self._post_animated.clear()
         self._y_index.clear()
         self.container.setMinimumHeight(0)
-
-        # Release decoded QPixmap memory immediately
         self._px_cache.clear()
 
     def open_preview(self, post):
         self.main_app.open_preview(post)
 
     # ══════════════════════════════════════════════════════════════
-    #  HELPERS
+    #  Helpers
     # ══════════════════════════════════════════════════════════════
 
     def _on_btn_clicked(self, post, btn):
         anims.animate_button_press(btn)
         self.open_preview(post)
 
-    def _get_l1_pixmap(self, post_id, safe_bytes):
-        """Return a decoded QPixmap from the LRU cache, decoding if necessary."""
+    def _on_star_clicked(self, post, star_btn):
+        """Emit signal so gui.py handles the DB write."""
+        pid = post.get("id")
+        # Toggle: figure out new state
+        post_idx = self._post_id_to_idx.get(pid)
+        is_now_bookmarked = not self._post_bookmarked.get(post_idx, False)
+        if post_idx is not None:
+            self._post_bookmarked[post_idx] = is_now_bookmarked
+        self._style_star(star_btn, is_now_bookmarked, 16)
+        self.bookmark_toggled.emit(post, is_now_bookmarked)
+
+    def _get_or_make_pixmap(self, post_idx: int) -> QPixmap | None:
+        """Return the decoded QPixmap for a post, or None if not loaded."""
+        post_id = self._posts[post_idx].get("id") if post_idx < len(self._posts) else None
+        if post_id is None:
+            return None
+
+        # Try L1 cache first
         cached = self._px_cache.get(post_id)
         if cached is not None:
             return cached
 
+        # Try raw bytes
+        safe_bytes = self._post_bytes.get(post_idx)
+        if safe_bytes is None:
+            # Try reloading from thumb_cache (L1 memory / L2 disk)
+            safe_bytes = thumb_cache.get(str(post_id))
+            if safe_bytes is not None:
+                self._post_bytes[post_idx] = safe_bytes
+
+        if safe_bytes is not None:
+            pixmap = self._decode_pixmap(safe_bytes)
+            self._px_cache.put(post_id, pixmap)
+            return pixmap
+
+        return None
+
+    def _decode_pixmap(self, safe_bytes: bytes) -> QPixmap:
+        """Decode JPEG bytes → scaled, rounded QPixmap (single code path)."""
         pixmap = QPixmap()
         pixmap.loadFromData(safe_bytes)
         max_w = max(400, settings.manager.thumbnail_size * 2)
         if pixmap.width() > max_w:
             pixmap = pixmap.scaledToWidth(max_w, Qt.TransformationMode.SmoothTransformation)
-        rounded = self._round_pixmap(pixmap)
-        self._px_cache.put(post_id, rounded)
-        return rounded
+        return _round_pixmap(pixmap)
 
-    def _decode_and_round(self, safe_bytes: bytes) -> QPixmap:
-        """Decode JPEG bytes → scaled, rounded QPixmap for display."""
-        pixmap = QPixmap()
-        pixmap.loadFromData(safe_bytes)
-        max_w = max(400, settings.manager.thumbnail_size * 2)
-        if pixmap.width() > max_w:
-            pixmap = pixmap.scaledToWidth(max_w, Qt.TransformationMode.SmoothTransformation)
-        return self._round_pixmap(pixmap)
-
-    def _round_pixmap(self, pixmap, radius=12):
-        target = QPixmap(pixmap.size())
-        target.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(target)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, pixmap.width(), pixmap.height(), radius, radius)
-        painter.setClipPath(path)
-        painter.drawPixmap(0, 0, pixmap)
-        painter.end()
-        return target
+    def _get_aspect_ratio(self, post: dict) -> float:
+        """Extract aspect ratio from post metadata (width/height)."""
+        w = post.get("image_width") or post.get("width") or 0
+        h = post.get("image_height") or post.get("height") or 0
+        if w > 0 and h > 0:
+            return w / h
+        return 0.0
 
     def _style_star(self, star_btn, is_bookmarked, font_sz):
-        color   = colors.FAVORITE if is_bookmarked else colors.TEXT_PRIMARY
+        color_val = colors.FAVORITE if is_bookmarked else colors.TEXT_PRIMARY
         opacity = 0.7 if is_bookmarked else 0.4
         star_btn.setStyleSheet(f"""
             QPushButton {{
-                color: {color};
+                color: {color_val};
                 font-size: {font_sz}px;
                 background-color: rgba(0, 0, 0, {opacity});
                 border-radius: {font_sz}px;
@@ -787,18 +437,17 @@ class Gallery(QWidget):
             }}
         """)
 
-    def _toggle_bookmark_direct(self, post, star_btn):
-        pid = post.get("id")
-        is_now_bookmarked = not db.is_post_bookmarked(pid)
-        if is_now_bookmarked:
-            db.add_bookmark(post)
-        else:
-            db.remove_bookmark(pid)
-        # Update cached state via O(1) index
-        post_idx = self._post_id_to_idx.get(pid)
-        if post_idx is not None:
-            self._post_bookmarked[post_idx] = is_now_bookmarked
-        self._style_star(star_btn, is_now_bookmarked, 16)
-        # Refresh the sidebar bookmark count
-        if hasattr(self.main_app, 'sidebar'):
-            self.main_app.sidebar.refresh_bookmark_count()
+
+def _round_pixmap(pixmap: QPixmap, radius: int = 12) -> QPixmap:
+    """Return a copy of *pixmap* with rounded corners."""
+    target = QPixmap(pixmap.size())
+    target.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(target)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, pixmap.width(), pixmap.height(), radius, radius)
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.end()
+    return target

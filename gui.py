@@ -1,17 +1,36 @@
+"""
+gui.py — BooruBrowser main window.
+
+Responsibilities (and ONLY these):
+  - Build the widget tree (sidebar, gallery, tag panel, overlay, stack)
+  - Wire component signals together
+  - Own application-level state (current page, bookmarks mode)
+  - Thin slot methods that delegate to the controller or navigation manager
+
+Everything else has been extracted:
+  - Page routing             → ui/navigation.py
+  - Keyboard shortcuts       → ui/hotkeys.py
+  - Dark title bar           → ui/windows_utils.py
+  - Booru removal            → boorus/__init__.py
+  - Download overlay anchor  → ui/download_window.py (DownloadWindow.reposition)
+"""
+
 import logging
 import os
 import ctypes
-from ui import colors
+import shutil
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QLineEdit, QPushButton, QFrame, QListWidget, QListWidgetItem, QLabel,
-    QStackedWidget,
+    QLineEdit, QPushButton, QStackedWidget,
 )
-from PyQt6.QtCore import Qt, QSize, QTimer, QThread, pyqtSlot, pyqtSignal, QPoint, QSettings
+from PyQt6.QtCore import Qt, QPoint, QSettings
 from PyQt6.QtGui import QFont, QColor, QIcon
 
+from ui import colors
 from ui import settings_view as settings
 import boorus
+import boorus as boorus_mod
 from download_images import BooruDownloader
 from controller import AppController
 from displayers.overlay import MediaOverlay
@@ -20,97 +39,92 @@ from ui.gallery import Gallery
 from ui.tag_panel import TagPanel
 from ui.search_bar import BooruSearchBar
 from ui.server_bar import ServerBar
-from ui.icons import Icons
 from ui.blacklist_view import BlacklistView
 from ui.favorites_view import FavoritesView
 from ui.download_window import DownloadWindow
 from ui.downloads_view import DownloadsView
+from ui.settings_view import SettingsView
+from ui.cheat_sheet import CheatSheetView
+from ui.navigation import NavigationManager
+from ui.hotkeys import HotkeyManager
+from ui.windows_utils import apply_dark_title_bar
 from ui.bookmarks_main.bookmarks_db import db
 from ui.browser_dialog import CloudflareBrowserDialog
 from ui.modals import AddBooruDialog, BulkDownloadDialog
-from PyQt6.QtGui import QKeySequence, QShortcut
 from cloudflare_bypasser import store as cf_store
-import boorus as boorus_mod
-import shutil
-import os
+from validation import validate_search_term
 try:
     from displayers.legacy_window import UniversalViewer
 except ImportError:
-    pass
-from ui.settings_view import SettingsView
-from ui.cheat_sheet import CheatSheetView
-from validation import validate_search_term
+    UniversalViewer = None  # type: ignore
 
 
-
+log = logging.getLogger(__name__)
 
 
 class BooruGui(QMainWindow):
+    """Thin main window — assembles components and routes signals."""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"Booru Browser v{settings.VERSION}")
 
         self.resize(1400, 900)
-        
-        # Set App Icon
+
+        # App icon
         icon_path = os.path.join(os.path.dirname(__file__), "appico.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
-            
-        # Apply Windows Dark Title Bar
-        self._apply_dark_title_bar()
 
-        # Restore window geometry
+        apply_dark_title_bar(int(self.winId()))
+
+        # Window geometry persistence
         self.qsettings = QSettings("BooruBrowser", "BooruBrowser")
         if self.qsettings.value("geometry"):
             self.restoreGeometry(self.qsettings.value("geometry"))
         if self.qsettings.value("windowState"):
             self.restoreState(self.qsettings.value("windowState"))
 
+        # ── Core components ──────────────────────────────────────
         self.downloader = BooruDownloader()
         self.controller = AppController(self.downloader)
 
+        # ── Application state ────────────────────────────────────
         self.current_page = 1
         self.is_bookmarks_mode = False
         self.bookmark_filter = None
 
+        # ── Build UI ─────────────────────────────────────────────
         self._build_ui()
 
+        # ── Wire controller signals ──────────────────────────────
         self.controller.status_updated.connect(self._on_status_updated)
         self.controller.loading_started.connect(self._on_loading_started)
         self.controller.loading_finished.connect(self._on_loading_finished)
         self.controller.preview_ready.connect(self.gallery.add_item)
         self.controller.posts_fetched.connect(self._on_posts_fetched)
         self.controller.cf_blocked.connect(self._on_cf_blocked)
-        self.gallery.load_more_requested.connect(self._load_more)
 
-        # ── Floating download progress overlay (bottom-right corner) ──
+        # ── Wire gallery → infinite scroll ───────────────────────
+        self.gallery.load_more_requested.connect(self._load_more)
+        self.gallery.bookmark_toggled.connect(self._on_bookmark_toggled)
+
+        # ── Download overlay ─────────────────────────────────────
         self.download_overlay = DownloadWindow(self.centralWidget())
         self.download_overlay.hide()
-        self._reposition_download_overlay()
-
         self.downloader.download_started.connect(self.download_overlay.add_download)
         self.downloader.download_progress.connect(self.download_overlay.update_download)
         self.downloader.download_finished.connect(self.download_overlay.remove_download)
         self.downloader.download_failed.connect(self._on_download_failed_overlay)
 
+        # ── Finalise ─────────────────────────────────────────────
         self.server_bar.rebuild_list()
         self.trigger_fetch(new=True)
 
-    def open_preview(self, post):
-        self.tag_panel.update_tags(post)
-        if settings.manager.use_legacy_viewer:
-            try:
-                UniversalViewer(self, post)
-            except NameError:
-                logging.info("Legacy viewer not found, using overlay.")
-                self.overlay.show_post(post)
-        else:
-            self.overlay.show_post(post)
+    # ══════════════════════════════════════════════════════════════
+    #  UI Construction
+    # ══════════════════════════════════════════════════════════════
 
-    # ─────────────────────────────────────────────────────────
-    # UI construction
-    # ─────────────────────────────────────────────────────────
     def _build_ui(self):
         root = QWidget()
         root.setStyleSheet(f"background-color: {colors.MAIN_BG};")
@@ -120,21 +134,21 @@ class BooruGui(QMainWindow):
         main_h.setContentsMargins(0, 0, 0, 0)
         main_h.setSpacing(0)
 
-        # 1. Server Bar (Far Left)
+        # 1. Server Bar (far left)
         self.server_bar = ServerBar(self)
         main_h.addWidget(self.server_bar)
 
-        # 2. Sidebar (Middle Left)
+        # 2. Sidebar
         self.sidebar = Sidebar(self)
         main_h.addWidget(self.sidebar)
 
-        # 3. Main Content (Right)
+        # 3. Main content area
         content_v = QVBoxLayout()
         content_v.setContentsMargins(0, 0, 0, 0)
         content_v.setSpacing(0)
         main_h.addLayout(content_v, 1)
 
-        #   3a. Top Bar (Search)
+        #   3a. Top bar (search)
         self.topbar = QWidget()
         self.topbar.setFixedHeight(64)
         self.topbar.setStyleSheet("background-color: transparent;")
@@ -142,16 +156,9 @@ class BooruGui(QMainWindow):
         top_h.setContentsMargins(24, 16, 24, 0)
         top_h.setSpacing(12)
 
-        search_wrap = QWidget()
-        search_wrap.setStyleSheet("background: transparent;")
-        search_v = QVBoxLayout(search_wrap)
-        search_v.setContentsMargins(0, 0, 0, 0)
-        search_v.setSpacing(0)
-
         self.search_bar = BooruSearchBar(self)
         self.search_bar.searchTriggered.connect(lambda: self.trigger_fetch(new=True))
-        search_v.addWidget(self.search_bar)
-        top_h.addWidget(search_wrap, 1)
+        top_h.addWidget(self.search_bar, 1)
 
         self.bulk_dl_btn = QPushButton("Bulk Download")
         self.bulk_dl_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -170,98 +177,85 @@ class BooruGui(QMainWindow):
         self.bulk_dl_btn.clicked.connect(self._on_bulk_dl)
         top_h.addWidget(self.bulk_dl_btn)
 
-
         content_v.addWidget(self.topbar)
 
-        #   3c. Main Stack (Gallery vs Blacklist vs etc)
+        #   3b. Stacked pages
         self.stack = QStackedWidget()
-        
-        # Gallery Page
+
         self.gallery_page = QWidget()
         gallery_layout = QHBoxLayout(self.gallery_page)
         gallery_layout.setContentsMargins(0, 0, 0, 0)
         gallery_layout.setSpacing(0)
-        
+
         self.gallery = Gallery(self)
         gallery_layout.addWidget(self.gallery, 1)
-        
+
         self.tag_panel = TagPanel(self)
         gallery_layout.addWidget(self.tag_panel)
-        
-        self.stack.addWidget(self.gallery_page)
-        
-        # Blacklist Page
-        self.blacklist_view = BlacklistView(self)
-        self.stack.addWidget(self.blacklist_view)
-        
-        # Favorites Page
-        self.favorites_view = FavoritesView(self)
-        self.stack.addWidget(self.favorites_view)
-        
-        # Settings Page
-        self.settings_view = SettingsView(self)
-        self.stack.addWidget(self.settings_view)
-        
-        # Downloads Page
-        self.downloads_view = DownloadsView(self)
-        self.stack.addWidget(self.downloads_view)
 
-        # Cheat Sheet Page
+        self.stack.addWidget(self.gallery_page)       # 0
+        self.blacklist_view = BlacklistView(self)
+        self.stack.addWidget(self.blacklist_view)      # 1
+        self.favorites_view = FavoritesView(self)
+        self.stack.addWidget(self.favorites_view)      # 2
+        self.settings_view = SettingsView(self)
+        self.stack.addWidget(self.settings_view)       # 3
+        self.downloads_view = DownloadsView(self)
+        self.stack.addWidget(self.downloads_view)      # 4
         self.cheat_sheet_view = CheatSheetView(self)
-        self.stack.addWidget(self.cheat_sheet_view)
-        
+        self.stack.addWidget(self.cheat_sheet_view)    # 5
+
         content_v.addWidget(self.stack, 1)
 
-        # 4. Media Overlay (Top level)
+        # 4. Media overlay (top-level, above stack)
         self.overlay = MediaOverlay(self)
 
-        # 4.3 Full Keyboard Accessibility - Global Hotkeys
-        self._setup_hotkeys()
+        # 5. Navigation manager (page routing)
+        self.nav = NavigationManager(self.stack, self.overlay, self.topbar, self)
 
-    def _setup_hotkeys(self):
-        QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(self.search_bar.entry.setFocus)
-        QShortcut(QKeySequence("Right"), self).activated.connect(lambda: self.change_page(1))
-        QShortcut(QKeySequence("Left"), self).activated.connect(lambda: self.change_page(-1))
-        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._on_bulk_dl)
+        # 6. Hotkeys
+        self._hotkeys = HotkeyManager(self)
+        self._hotkeys.register("Ctrl+F", self.search_bar.entry.setFocus)
+        self._hotkeys.register("Right", lambda: self.change_page(1))
+        self._hotkeys.register("Left", lambda: self.change_page(-1))
+        self._hotkeys.register("Ctrl+S", self._on_bulk_dl)
 
-    # ─────────────────────────────────────────────────────────
-    # Public helpers
-    # ─────────────────────────────────────────────────────────
-    def mousePressEvent(self, event):
-        # Clear focus when clicking empty space
-        focused = self.focusWidget()
-        if isinstance(focused, QLineEdit):
-            focused.clearFocus()
-        super().mousePressEvent(event)
+    # ══════════════════════════════════════════════════════════════
+    #  Page navigation (thin proxies to NavigationManager)
+    # ══════════════════════════════════════════════════════════════
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self, 'overlay') and self.overlay.isVisible():
-            self.overlay.setGeometry(self.stack.rect())
-        if hasattr(self, 'download_overlay'):
-            self._reposition_download_overlay()
+    def show_gallery(self):
+        self.nav.go_gallery()
 
-    def _reposition_download_overlay(self):
-        """Keep the floating download widget anchored to the bottom-left of the main content area."""
-        overlay = self.download_overlay
-        margin = 16
-        h = overlay.height() or overlay.sizeHint().height()
-        
-        # Position it at the bottom left of the main content area (right of the sidebars)
-        sidebar_w = self.sidebar.width() if self.sidebar.isVisible() else 0
-        server_bar_w = self.server_bar.width() if self.server_bar.isVisible() else 0
-        
-        x = server_bar_w + sidebar_w + margin
-        y = self.height() - h - margin
-        
-        overlay.move(x, y)
-        overlay.raise_()
+    def show_blacklist(self):
+        self.blacklist_view.load_blacklist()
+        self.nav.go_blacklist()
+
+    def show_favorites(self):
+        self.favorites_view.load_favorites()
+        self.nav.go_favorites()
+
+    def show_settings(self):
+        self.settings_view.load_settings()
+        self.nav.go_settings()
+
+    def show_api_settings(self, name: str):
+        self.nav.go_api_settings(name, self)
+
+    def show_downloads(self):
+        self.nav.go_downloads()
+
+    def show_cheat_sheet(self):
+        self.nav.go_cheat_sheet()
+
+    # ══════════════════════════════════════════════════════════════
+    #  Search / pagination
+    # ══════════════════════════════════════════════════════════════
 
     def trigger_fetch(self, new: bool = False):
         if self.is_bookmarks_mode:
             db.load_bookmarks()
         tags = self.search_bar.text()
-        # Validate search terms
         try:
             tags = validate_search_term(tags)
         except Exception as e:
@@ -275,11 +269,9 @@ class BooruGui(QMainWindow):
         )
 
     def _load_more(self):
-        """Called by gallery when user scrolls near bottom (infinite scroll)."""
         if self.controller.is_loading:
             return
         tags = self.search_bar.text()
-        # Validate search terms
         try:
             tags = validate_search_term(tags)
         except Exception as e:
@@ -292,15 +284,7 @@ class BooruGui(QMainWindow):
             self.is_bookmarks_mode, self.bookmark_filter
         )
 
-    def _update_page_label(self):
-        if settings.manager.infinite_scroll:
-            self.sidebar.set_pagination_visible(False)
-        else:
-            self.sidebar.set_pagination_visible(True)
-            self.sidebar.page_lbl.setText(f"Pg {self.current_page}")
-
     def change_page(self, delta: int):
-        # Prevent next page fetch while still fetching
         if self.controller.is_loading:
             return
         self.current_page = max(1, self.current_page + delta)
@@ -313,25 +297,21 @@ class BooruGui(QMainWindow):
 
     def toggle_bookmarks_mode(self):
         self.is_bookmarks_mode = not self.is_bookmarks_mode
-        self.bookmark_filter = None # Bookmarks are universal
-        
+        self.bookmark_filter = None
         if self.is_bookmarks_mode:
-            self.search_bar.input.setPlaceholderText("Filter bookmarks by booru…")
+            self.search_bar.input.setPlaceholderText("Filter bookmarks by booru\u2026")
             self.tag_panel.set_results_count("Bookmarks")
         else:
             self.search_bar.input.setPlaceholderText("Search...")
             self.tag_panel.set_results_count("0 Results")
-            
-        self.server_bar.update_button_styles() # Refresh to show/hide selection
+        self.server_bar.update_button_styles()
         self.show_gallery()
         self.trigger_fetch(new=True)
 
     def select_booru(self, name: str):
-        # If in bookmarks mode, exit it and go to the selected booru
         if self.is_bookmarks_mode:
             self.is_bookmarks_mode = False
             self.sidebar.update_active_booru()
-        
         settings.manager.active_booru = name
         settings.manager.save()
         self.server_bar.update_button_styles()
@@ -343,159 +323,125 @@ class BooruGui(QMainWindow):
         self.search_bar.add_tag_chip(tag)
         self.trigger_fetch(new=True)
 
-    def show_gallery(self):
-        self.stack.setCurrentIndex(0)
-        self.topbar.show()
+    def _update_page_label(self):
+        if settings.manager.infinite_scroll:
+            self.sidebar.set_pagination_visible(False)
+        else:
+            self.sidebar.set_pagination_visible(True)
+            self.sidebar.page_lbl.setText(f"Pg {self.current_page}")
 
-    def _close_overlay_if_open(self):
-        """Dismiss the media overlay before switching to a full-screen page.
-
-        The overlay is a plain child widget of self.stack that is manually
-        raise_()-ed on top.  Switching the QStackedWidget page does NOT hide
-        it automatically, which causes it to float on top of whatever page
-        just became active.  Calling close_overlay() before every page
-        switch is the correct, surgical fix.
-        """
-        if hasattr(self, 'overlay') and self.overlay.isVisible():
-            self.overlay.close_overlay()
-
-    def show_blacklist(self):
-        self._close_overlay_if_open()
-        self.blacklist_view.load_blacklist()
-        self.stack.setCurrentWidget(self.blacklist_view)
-        # Hide search/header as they don't apply to blacklist editing
-        self.topbar.hide()
-
-    def show_favorites(self):
-        self._close_overlay_if_open()
-        self.favorites_view.load_favorites()
-        self.stack.setCurrentWidget(self.favorites_view)
-        self.topbar.hide()
-
-    def show_settings(self):
-        self._close_overlay_if_open()
-        self.settings_view.load_settings()
-        self.stack.setCurrentWidget(self.settings_view)
-        self.topbar.hide()
-
-    def show_api_settings(self, name: str):
-        self._close_overlay_if_open()
-        if hasattr(self, 'api_settings_view'):
-            self.stack.removeWidget(self.api_settings_view)
-            self.api_settings_view.deleteLater()
-        
-        from ui.api_settings_view import APISettingsView
-        self.api_settings_view = APISettingsView(self, name)
-        self.stack.addWidget(self.api_settings_view)
-        self.stack.setCurrentWidget(self.api_settings_view)
-        self.topbar.hide()
-
-    def show_downloads(self):
-        self._close_overlay_if_open()
-        self.stack.setCurrentWidget(self.downloads_view)
-        self.topbar.hide()
-
-    def show_cheat_sheet(self):
-        self._close_overlay_if_open()
-        self.stack.setCurrentWidget(self.cheat_sheet_view)
-        self.topbar.hide()
+    # ══════════════════════════════════════════════════════════════
+    #  Booru management
+    # ══════════════════════════════════════════════════════════════
 
     def remove_booru(self, name: str):
-        # Remove from in-memory registry
-        if name in boorus.REGISTRY:
-            del boorus.REGISTRY[name]
-        # Remove from sidebar order
+        # Remove from settings sidebar order
         if name in settings.manager.booru_order:
             settings.manager.booru_order.remove(name)
             settings.manager.save()
-        # Delete the .py file
-        booru_file = settings.BASE_DIR / "boorus" / f"{name}.py"
-        if os.path.exists(booru_file):
-            try:
-                os.remove(booru_file)
-            except Exception as e:
-                logging.error("[gui] Error deleting booru file: %s", e)
-        # Invalidate any stale importlib cache + .pyc so a later re-add
-        # with the same name picks up the fresh file.
-        boorus.invalidate_cache(name)
+
+        # Delegate the file/registry cleanup
+        fallback = boorus.remove_booru(name)
+
+        # UI updates
         self.server_bar.rebuild_list()
         if settings.manager.active_booru == name:
-            settings.manager.active_booru = (
-                list(boorus.REGISTRY.keys())[0] if boorus.REGISTRY else "danbooru"
-            )
+            settings.manager.active_booru = fallback or "danbooru"
             settings.manager.save()
             self.server_bar.update_button_styles()
             self.sidebar.update_active_booru()
             self.trigger_fetch(new=True)
 
-    # ─────────────────────────────────────────────────────────
-    # Slots
-    # ─────────────────────────────────────────────────────────
-    @pyqtSlot(str, str)
+    # ══════════════════════════════════════════════════════════════
+    #  Media
+    # ══════════════════════════════════════════════════════════════
+
+    def open_preview(self, post):
+        self.tag_panel.update_tags(post)
+        if settings.manager.use_legacy_viewer:
+            try:
+                UniversalViewer(self, post)
+            except (NameError, TypeError):
+                log.info("Legacy viewer not found, using overlay.")
+                self.overlay.show_post(post)
+        else:
+            self.overlay.show_post(post)
+
+    # ══════════════════════════════════════════════════════════════
+    #  Controller signal slots
+    # ══════════════════════════════════════════════════════════════
+
     def _on_status_updated(self, text: str, color: str):
         self.sidebar.status_lbl.setText(text)
         self.sidebar.status_lbl.setStyleSheet(
             f"color: {color}; font-size: 11px; font-weight: bold;"
         )
 
-    @pyqtSlot()
     def _on_loading_started(self):
         self.gallery.clear()
         self.tag_panel.clear_tags()
 
-    @pyqtSlot()
     def _on_loading_finished(self):
         self.gallery.check_infinite_scroll_fill()
 
-    @pyqtSlot(list)
     def _on_posts_fetched(self, posts):
         self.tag_panel.set_results_count(f"{len(posts)} Results")
         if posts:
             self.gallery.prepare_skeletons(posts)
 
-    @pyqtSlot(str, str)
     def _on_cf_blocked(self, booru_name: str, error_msg: str):
-        """Cloudflare blocked the current booru — offer to solve CAPTCHA."""
-        # Get the booru URL from the registry so we open the right site
         site = boorus_mod.REGISTRY.get(booru_name, {})
         url = site.get("url", "")
         if not url:
             return
-
-        # Open the embedded browser so the user can solve the CAPTCHA
         dlg = CloudflareBrowserDialog(url, booru_name, self)
         dlg.cookies_captured.connect(
             lambda cookies: self._on_cf_cookies_saved(booru_name)
         )
         dlg.exec()
 
-        # After dialog closes (regardless of success), retry the fetch
-        # so that if cookies were captured, the booru now works
-        QTimer.singleShot(500, lambda: self.trigger_fetch(new=True))
-
     def _on_cf_cookies_saved(self, booru_name: str):
-        """Called after cookies were captured and saved by the bypass dialog."""
-        self.sidebar.status_lbl.setText(f"✅ {booru_name} bypass active — retrying…")
-        self.sidebar.status_lbl.setStyleSheet("color: #4CAF50; font-size: 11px; font-weight: bold;")
-        # Refresh the booru buttons so the tooltip shows "bypass active"
         self.server_bar.rebuild_list()
+        self.trigger_fetch(new=True)
 
-    # ─────────────────────────────────────────────────────────
-    # Floating download overlay
-    # ─────────────────────────────────────────────────────────
-    def _on_download_failed_overlay(self, task_id: str, error: str):
-        """Show a brief failed state in the floating download widget, then remove it."""
-        dw = self.download_overlay
-        if task_id in dw.bars:
-            bar = dw.bars[task_id]
+    def _on_bookmark_toggled(self, post: dict, is_now_bookmarked: bool):
+        """Handle bookmark toggle — DB write + sidebar refresh."""
+        pid = post.get("id")
+        if is_now_bookmarked:
+            db.add_bookmark(post)
+        else:
+            db.remove_bookmark(pid)
+        if hasattr(self, "sidebar"):
+            self.sidebar.refresh_bookmark_count()
+
+    def _on_download_failed_overlay(self, task_id: str, error_msg: str):
+        # Show failure briefly in the overlay, then remove
+        if task_id in self.download_overlay.bars:
+            bar = self.download_overlay.bars[task_id]
             bar.pct_lbl.setText("Failed")
             bar.pct_lbl.setStyleSheet(f"color: {colors.DANGER}; font-size: 11px;")
-            QTimer.singleShot(3000, lambda: dw.remove_download(task_id))
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(3000, lambda: self.download_overlay.remove_download(task_id))
 
+    # ══════════════════════════════════════════════════════════════
+    #  Window events
+    # ══════════════════════════════════════════════════════════════
 
-    # ─────────────────────────────────────────────────────────
-    # Window close
-    # ─────────────────────────────────────────────────────────
+    def mousePressEvent(self, event):
+        focused = self.focusWidget()
+        if isinstance(focused, QLineEdit):
+            focused.clearFocus()
+        super().mousePressEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'overlay') and self.overlay.isVisible():
+            self.overlay.setGeometry(self.stack.rect())
+        if hasattr(self, 'download_overlay'):
+            sidebar_w = self.sidebar.width() if self.sidebar.isVisible() else 0
+            server_w = self.server_bar.width() if self.server_bar.isVisible() else 0
+            self.download_overlay.reposition(sidebar_w, server_w)
+
     def closeEvent(self, event):
         self.qsettings.setValue("geometry", self.saveGeometry())
         self.qsettings.setValue("windowState", self.saveState())
@@ -505,13 +451,13 @@ class BooruGui(QMainWindow):
                 shutil.rmtree(tmp)
             except Exception:
                 pass
-        # Cleanly stop background fetch/download threads before exit
         self.controller.shutdown()
         event.accept()
 
-    # ─────────────────────────────────────────────────────────
-    # Modals
-    # ─────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════
+    #  Modal launchers
+    # ══════════════════════════════════════════════════════════════
+
     def _on_add_booru(self):
         AddBooruDialog(self).exec()
 
@@ -521,20 +467,3 @@ class BooruGui(QMainWindow):
     def _on_bulk_dl(self):
         current_tags = self.search_bar.text().strip()
         BulkDownloadDialog(self, current_tags).exec()
-
-    def _apply_dark_title_bar(self):
-        """Applies Windows Immersive Dark Mode to the title bar."""
-        try:
-            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-            # Works on Windows 10 build 18985+ and Windows 11
-            hwnd = int(self.winId())
-            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
-            rendering_policy = ctypes.c_int(1) # 1 = Enable
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 
-                DWMWA_USE_IMMERSIVE_DARK_MODE, 
-                ctypes.byref(rendering_policy), 
-                ctypes.sizeof(rendering_policy)
-            )
-        except Exception as e:
-            logging.error(f"[gui] Failed to set dark title bar: {e}")
