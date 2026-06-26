@@ -24,6 +24,7 @@ auth_tokens.json
 displayers.ini
 tag_cache.db
 tag_cache.json
+bookmarks.db*
 bookmarks.db
 bookmarks.json
 .env.*
