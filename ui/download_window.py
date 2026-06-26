@@ -92,7 +92,23 @@ class DownloadWindow(QWidget):
             bar = self.bars.pop(task_id)
             self._main_layout.removeWidget(bar)
             bar.deleteLater()
-        
+
         # Hide if no downloads are active
         if not self.bars:
             self.hide()
+
+    def reposition(self, sidebar_width: int = 0, server_bar_width: int = 0) -> None:
+        """Anchor to the bottom-left of the main content area.
+
+        Call from the parent's ``resizeEvent`` or whenever the sidebars
+        are shown/hidden.
+        """
+        parent = self.parent()
+        if parent is None:
+            return
+        margin = 16
+        h = self.height() or self.sizeHint().height()
+        x = server_bar_width + sidebar_width + margin
+        y = parent.height() - h - margin
+        self.move(x, y)
+        self.raise_()

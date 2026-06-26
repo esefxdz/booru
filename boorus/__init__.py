@@ -24,6 +24,33 @@ API_TYPE = "{api_type}"
 """
 
 
+def remove_booru(name: str) -> str | None:
+    """Delete a booru from the registry and its .py file from disk.
+
+    Returns the name of a fallback booru (or None if the registry is
+    now empty) so the caller can switch the active booru.
+    """
+    import os as _os
+
+    # 1. Remove from in-memory registry
+    REGISTRY.pop(name, None)
+
+    # 2. Delete the .py file
+    booru_dir = Path(__file__).resolve().parent
+    booru_file = booru_dir / f"{name}.py"
+    if _os.path.exists(booru_file):
+        try:
+            _os.remove(booru_file)
+        except OSError:
+            logging.exception("[boorus] Error deleting %s", booru_file)
+
+    # 3. Purge importlib cache + .pyc files
+    invalidate_cache(name)
+
+    # 4. Return a fallback booru name (or None if nothing left)
+    return next(iter(REGISTRY.keys()), None) if REGISTRY else None
+
+
 def _discover():
     """Import every .py file in this directory and register its metadata."""
     booru_dir = Path(__file__).resolve().parent
