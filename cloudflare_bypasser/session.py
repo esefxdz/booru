@@ -1,7 +1,9 @@
 """
-cloudflare_bypasser/session.py
+cloudflare_bypasser/session.py — Multi-engine HTTP session orchestrator.
 
-Bulletproof HTTP engine with multi-layer bypass strategy.
+``BypassSession`` wires together browser identity (fingerprint.py) and
+engine implementations (engines.py) into a single call with automatic
+failover and retry.
 
 Priority chain in ``auto`` mode (each request tries in order until one succeeds):
   1. curl_cffi     — Chrome TLS impersonation (beats JA3 fingerprinting)
@@ -17,630 +19,53 @@ Users can lock to a specific engine via ``settings.manager.cf_bypass_method``.
 """
 
 from __future__ import annotations
+
 import asyncio
 import logging
 import time
 from typing import Optional
 
-log = logging.getLogger("cloudflare_bypasser")
-
-# ---------------------------------------------------------------------------
-# Try to import optional engines at module level — never crash on import
-# ---------------------------------------------------------------------------
-_HAS_CURL_CFFI = False
-try:
-    from curl_cffi import requests as cffi_requests
-    _HAS_CURL_CFFI = True
-except ImportError:
-    cffi_requests = None  # type: ignore
-
-_HAS_CLOUDSCRAPER = False
-try:
-    import cloudscraper as _cloudscraper
-    _HAS_CLOUDSCRAPER = True
-except ImportError:
-    _cloudscraper = None  # type: ignore
-
-_HAS_HTTPX = False
-try:
-    import httpx
-    _HAS_HTTPX = True
-except ImportError:
-    httpx = None  # type: ignore
-
-_HAS_REQUESTS = False
-try:
-    import requests as _requests_lib
-    _HAS_REQUESTS = True
-except ImportError:
-    _requests_lib = None  # type: ignore
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-_DEFAULT_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/136.0.0.0 Safari/537.36"
+from cloudflare_bypasser.fingerprint import (
+    _DEFAULT_UA,
+    _BROWSER_HEADERS,
+    _NAVIGATION_HEADERS,
+    BYPASS_METHODS,
+    _DEFAULT_TIMEOUT,
+    _MAX_RETRIES,
+    _RETRY_BACKOFF_BASE,
+    ENGINE_ORDER,
+    _HAS_HTTPX,
+    get_available_engines,
+    httpx,
+)
+from cloudflare_bypasser.engines import (
+    BypassResponse,
+    _try_curl_cffi,
+    _try_curl_cffi_sync,
+    _try_cloudscraper_sync,
+    _try_httpx,
+    _try_requests_sync,
+    _try_urllib_sync,
 )
 
-# Realistic browser headers that Cloudflare expects to see on every request.
-# Missing any of these causes CF to bump the bot-score significantly.
-_BROWSER_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
-              "image/avif,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Cache-Control": "max-age=0",
-    "DNT": "1",
-    "Sec-CH-UA": '"Chromium";v="136", "Google Chrome";v="136", "Not-A.Brand";v="99"',
-    "Sec-CH-UA-Mobile": "?0",
-    "Sec-CH-UA-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-origin",
-}
+log = logging.getLogger("cloudflare_bypasser")
 
-# Separate header set for navigation requests (page loads, not API calls)
-_NAVIGATION_HEADERS = {
-    **_BROWSER_HEADERS,
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-}
 
-# curl-cffi impersonation targets — try latest Chrome first, then fall back.
-# Kept to 4 entries: walking a long list sequentially on every 403 was the
-# main source of UI hangs.  The session tracks which target last succeeded
-# (_cffi_winner) and tries it first so the common path costs one attempt.
-_IMPERSONATE_TARGETS = [
-    "chrome131", "chrome124", "chrome120", "edge101",
-]
+# ╔══════════════════════════════════════════════════════════════════════╗
+# ║                        BypassSession                                ║
+# ╚══════════════════════════════════════════════════════════════════════╝
 
-_DEFAULT_TIMEOUT = 30
-_MAX_RETRIES = 3
-_RETRY_BACKOFF_BASE = 0.5  # seconds, doubles each retry
+# Re-export public symbols from the sub-modules so existing importers
+# (e.g. __init__.py, section_network.py) don't break.
+from cloudflare_bypasser.fingerprint import (  # noqa: E402, F401
+    BYPASS_METHODS,
+    BYPASS_METHOD_LABELS,
+    ENGINE_ORDER,
+    get_available_engines,
+)
+from cloudflare_bypasser.engines import BypassResponse, _Response  # noqa: E402, F401
 
-# All known engine identifiers (order = default priority)
-ENGINE_ORDER = ["curl_cffi", "cloudscraper", "httpx", "requests", "urllib"]
 
-# Valid method choices for the settings dropdown
-BYPASS_METHODS = ["auto"] + ENGINE_ORDER
-
-# Human-readable labels for the settings UI
-BYPASS_METHOD_LABELS = {
-    "auto":         "Auto (try all engines)",
-    "curl_cffi":    "curl_cffi — Chrome TLS fingerprint",
-    "cloudscraper": "cloudscraper — JS challenge solver",
-    "httpx":        "httpx — HTTP/2 modern client",
-    "requests":     "requests — Classic HTTP client",
-    "urllib":       "urllib — Stdlib fallback",
-}
-
-
-def get_available_engines() -> list[str]:
-    """Return a list of engine names that are actually importable."""
-    engines = []
-    if _HAS_CURL_CFFI:
-        engines.append("curl_cffi")
-    if _HAS_CLOUDSCRAPER:
-        engines.append("cloudscraper")
-    if _HAS_HTTPX:
-        engines.append("httpx")
-    if _HAS_REQUESTS:
-        engines.append("requests")
-    engines.append("urllib")  # always available
-    return engines
-
-
-# ---------------------------------------------------------------------------
-# Response
-# ---------------------------------------------------------------------------
-class BypassResponse:
-    """
-    Immutable response wrapper.  All data is captured eagerly so the caller
-    never holds a dangling reference to a closed socket/session.
-    """
-
-    __slots__ = ("content", "text", "status_code", "url", "_json_data", "engine_used", "cookies")
-
-    def __init__(
-        self,
-        content: bytes,
-        text: str,
-        status_code: int,
-        url: object,
-        json_data: object,
-        engine_used: str = "unknown",
-        cookies: dict | None = None,
-    ) -> None:
-        self.content = content
-        self.text = text
-        self.status_code = status_code
-        self.url = url
-        self._json_data = json_data
-        self.engine_used = engine_used
-        self.cookies = cookies or {}
-
-    def json(self) -> object:
-        if self._json_data is not None:
-            return self._json_data
-        import json as _json
-        return _json.loads(self.text)
-
-    @property
-    def is_blocked(self) -> bool:
-        """True when the response looks like a Cloudflare challenge page."""
-        if self.status_code not in (403, 503, 429):
-            return False
-
-        # Quick heuristic: 403 with tiny body is almost certainly a block
-        if self.status_code == 403 and len(self.content) < 200:
-            return True
-
-        # Check both decoded text and raw bytes (response may be brotli-compressed)
-        text_lower = self.text[:4000].lower() if self.text else ""
-        content_lower = self.content[:4000].lower() if self.content else b""
-
-        # Detect garbage / undecoded responses — some engines (cloudscraper)
-        # return raw compressed bytes as "text" when Content-Encoding
-        # (brotli/gzip) fails to decode.  A legitimate API response always
-        # starts with '[', '{', '<', or is empty.  Anything else at 403 is
-        # an undecoded CF challenge page.
-        if self.status_code == 403 and len(self.text) > 50:
-            first_char = self.text.strip()[0] if self.text.strip() else ''
-            if first_char not in '<{[{"':
-                return True
-
-        cf_markers_text = (
-            "cf-mitigated", "just a moment",
-            "challenge-platform", "challenges.cloudflare.com",
-            "checking your browser", "enable javascript",
-            "cf-chl-bypass", "cf-chl-out",
-            "turnstile", "cf_captcha",
-        )
-        cf_markers_bytes = (
-            b"cf-mitigated", b"just a moment",
-            b"challenge-platform", b"challenges.cloudflare.com",
-            b"checking your browser", b"enable javascript",
-            b"cf-chl-bypass", b"cf-chl-out",
-            b"turnstile", b"cf_captcha",
-        )
-
-        for marker in cf_markers_text:
-            if marker in text_lower:
-                return True
-        for marker in cf_markers_bytes:
-            if marker in content_lower:
-                return True
-
-        # Cloudflare-specific response headers in HTML
-        if "cf-ray" in text_lower and ("challenge" in text_lower or "captcha" in text_lower):
-            return True
-
-        # Detect CF block pages that return minimal body with 403
-        if self.status_code == 403 and len(self.content) < 500 and b"cloudflare" in content_lower:
-            return True
-
-        return False
-
-    def __repr__(self) -> str:
-        return f"<BypassResponse [{self.status_code}] engine={self.engine_used} {self.url}>"
-
-
-# Keep backward compat alias
-_Response = BypassResponse
-
-
-# ---------------------------------------------------------------------------
-# Internal: cookie extraction
-# ---------------------------------------------------------------------------
-
-def _extract_cookies(resp) -> dict:
-    """Extract a plain dict of cookies from any HTTP response object."""
-    try:
-        # curl_cffi, requests, cloudscraper, httpx all support .cookies
-        if hasattr(resp, "cookies"):
-            jar = resp.cookies
-            if hasattr(jar, "get_dict"):
-                return {k: v for k, v in jar.get_dict().items()}
-            if hasattr(jar, "items"):
-                return {str(k): str(v) for k, v in jar.items()}
-            if isinstance(jar, dict):
-                return {str(k): str(v) for k, v in jar.items()}
-        # urllib / stdlib — parse Set-Cookie header
-        if hasattr(resp, "headers"):
-            raw = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
-            if raw:
-                result = {}
-                for part in raw.split(";"):
-                    part = part.strip()
-                    if "=" in part and not any(
-                        kw in part.lower()
-                        for kw in ("path=", "domain=", "expires=", "max-age=", "secure", "httponly", "samesite")
-                    ):
-                        k, v = part.split("=", 1)
-                        result[k.strip()] = v.strip()
-                return result
-    except Exception:
-        pass
-    return {}
-
-
-# ---------------------------------------------------------------------------
-# Internal: engine-specific request implementations
-# ---------------------------------------------------------------------------
-
-async def _try_curl_cffi(
-    url: str,
-    params: dict | None,
-    headers: dict,
-    cookies: dict,
-    proxy_url: str,
-    timeout: int,
-    session_cache: dict | None = None,
-    winner_hint: str | None = None,
-) -> Optional[BypassResponse]:
-    """Attempt a request using curl_cffi with Chrome TLS impersonation."""
-    if not _HAS_CURL_CFFI:
-        return None
-
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-    last_err = None
-
-    # Try the last successful target first — avoids walking the full list on
-    # every request when one target reliably works for this session.
-    targets = list(_IMPERSONATE_TARGETS)
-    if winner_hint and winner_hint in targets and targets[0] != winner_hint:
-        targets.remove(winner_hint)
-        targets.insert(0, winner_hint)
-
-    for target in targets:
-        try:
-            if session_cache is not None:
-                if target not in session_cache:
-                    session_cache[target] = cffi_requests.AsyncSession(
-                        impersonate=target,
-                        proxies=proxies,
-                        verify=True,
-                    )
-                session = session_cache[target]
-                resp = await session.get(
-                    url,
-                    params=params,
-                    headers=headers,
-                    cookies=cookies,
-                    timeout=timeout,
-                    allow_redirects=True,
-                )
-            else:
-                async with cffi_requests.AsyncSession(
-                    impersonate=target,
-                    proxies=proxies,
-                    verify=True,
-                ) as session:
-                    resp = await session.get(
-                        url,
-                        params=params,
-                        headers=headers,
-                        cookies=cookies,
-                        timeout=timeout,
-                        allow_redirects=True,
-                    )
-            
-            # Eagerly capture everything outside the if/else blocks
-            content = resp.content
-            text = resp.text
-            status_code = resp.status_code
-            final_url = resp.url
-            try:
-                json_data = resp.json()
-            except Exception:
-                json_data = None
-
-            cookies = _extract_cookies(resp)
-            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}", cookies)
-
-            # If we got a real response (even 403), return it
-            if status_code != 403:
-                return result
-
-            # 403 — try next impersonation target
-            log.debug("curl_cffi/%s got 403 for %s, trying next target", target, url)
-            last_err = result
-
-        except Exception as e:
-            log.debug("curl_cffi/%s failed for %s: %s", target, url, e)
-            last_err = None
-            continue
-
-    return last_err  # return the 403 if all targets gave 403, else None
-
-
-def _try_curl_cffi_sync(
-    url: str,
-    params: dict | None,
-    headers: dict,
-    cookies: dict,
-    proxy_url: str,
-    timeout: int,
-    session_cache: dict | None = None,
-    winner_hint: str | None = None,
-) -> Optional[BypassResponse]:
-    """Synchronous curl_cffi engine — uses persistent sync Sessions so
-    get_sync() callers get connection reuse without touching an event loop."""
-    if not _HAS_CURL_CFFI:
-        return None
-
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-    last_err = None
-
-    targets = list(_IMPERSONATE_TARGETS)
-    if winner_hint and winner_hint in targets and targets[0] != winner_hint:
-        targets.remove(winner_hint)
-        targets.insert(0, winner_hint)
-
-    for target in targets:
-        try:
-            if session_cache is not None:
-                if target not in session_cache:
-                    session_cache[target] = cffi_requests.Session(
-                        impersonate=target,
-                        proxies=proxies,
-                        verify=True,
-                    )
-                session = session_cache[target]
-                resp = session.get(
-                    url,
-                    params=params,
-                    headers=headers,
-                    cookies=cookies,
-                    timeout=timeout,
-                    allow_redirects=True,
-                )
-            else:
-                with cffi_requests.Session(
-                    impersonate=target,
-                    proxies=proxies,
-                    verify=True,
-                ) as session:
-                    resp = session.get(
-                        url,
-                        params=params,
-                        headers=headers,
-                        cookies=cookies,
-                        timeout=timeout,
-                        allow_redirects=True,
-                    )
-
-            content = resp.content
-            text = resp.text
-            status_code = resp.status_code
-            final_url = resp.url
-            try:
-                json_data = resp.json()
-            except Exception:
-                json_data = None
-
-            cookies_resp = _extract_cookies(resp)
-            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}", cookies_resp)
-
-            if status_code != 403:
-                return result
-
-            log.debug("curl_cffi_sync/%s got 403 for %s, trying next target", target, url)
-            last_err = result
-
-        except Exception as e:
-            log.debug("curl_cffi_sync/%s failed for %s: %s", target, url, e)
-            last_err = None
-            continue
-
-    return last_err
-
-
-def _try_cloudscraper_sync(
-    url: str,
-    params: dict | None,
-    headers: dict,
-    cookies: dict,
-    proxy_url: str,
-    timeout: int,
-) -> Optional[BypassResponse]:
-    """Attempt a request using cloudscraper (JS challenge solver)."""
-    if not _HAS_CLOUDSCRAPER:
-        return None
-
-    try:
-        scraper = _cloudscraper.create_scraper(
-            browser={
-                "browser": "chrome",
-                "platform": "windows",
-                "desktop": True,
-            },
-            delay=5,
-        )
-        # Apply our headers on top (cloudscraper sets its own UA if we don't)
-        scraper.headers.update(headers)
-
-        if cookies:
-            scraper.cookies.update(cookies)
-
-        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-
-        resp = scraper.get(
-            url,
-            params=params,
-            timeout=timeout,
-            proxies=proxies,
-            allow_redirects=True,
-        )
-        content = resp.content
-        text = resp.text
-        status_code = resp.status_code
-        final_url = str(resp.url)
-        try:
-            json_data = resp.json()
-        except Exception:
-            json_data = None
-
-        cookies_resp = _extract_cookies(resp)
-        return BypassResponse(content, text, status_code, final_url, json_data, "cloudscraper", cookies_resp)
-    except Exception as e:
-        log.debug("cloudscraper failed for %s: %s", url, e)
-        return None
-
-
-async def _try_httpx(
-    url: str,
-    params: dict | None,
-    headers: dict,
-    cookies: dict,
-    proxy_url: str,
-    timeout: int,
-    client: httpx.AsyncClient | None = None,
-) -> Optional[BypassResponse]:
-    """Attempt a request using httpx with HTTP/2."""
-    if not _HAS_HTTPX:
-        return None
-
-    try:
-        if client is not None:
-            resp = await client.get(url, params=params, headers=headers)
-        else:
-            async with httpx.AsyncClient(
-                http2=True,
-                follow_redirects=True,
-                timeout=timeout,
-                cookies=cookies or None,
-                proxy=proxy_url or None,
-            ) as c:
-                resp = await c.get(url, params=params, headers=headers)
-        
-        content = resp.content
-        text = resp.text
-        status_code = resp.status_code
-        final_url = str(resp.url)
-        try:
-            json_data = resp.json()
-        except Exception:
-            json_data = None
-
-        cookies_resp = _extract_cookies(resp)
-        return BypassResponse(content, text, status_code, final_url, json_data, "httpx", cookies_resp)
-    except Exception as e:
-        log.debug("httpx failed for %s: %s", url, e)
-        return None
-
-
-def _try_requests_sync(
-    url: str,
-    params: dict | None,
-    headers: dict,
-    cookies: dict,
-    proxy_url: str,
-    timeout: int,
-) -> Optional[BypassResponse]:
-    """Attempt a request using the requests library."""
-    if not _HAS_REQUESTS:
-        return None
-
-    try:
-        session = _requests_lib.Session()
-        session.headers.update(headers)
-        if cookies:
-            session.cookies.update(cookies)
-
-        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-
-        resp = session.get(
-            url,
-            params=params,
-            timeout=timeout,
-            proxies=proxies,
-            allow_redirects=True,
-        )
-        content = resp.content
-        text = resp.text
-        status_code = resp.status_code
-        final_url = str(resp.url)
-        try:
-            json_data = resp.json()
-        except Exception:
-            json_data = None
-
-        cookies_resp = _extract_cookies(resp)
-        return BypassResponse(content, text, status_code, final_url, json_data, "requests", cookies_resp)
-    except Exception as e:
-        log.debug("requests failed for %s: %s", url, e)
-        return None
-
-
-def _try_urllib_sync(
-    url: str,
-    params: dict | None,
-    headers: dict,
-    cookies: dict,
-    proxy_url: str,
-    timeout: int,
-) -> Optional[BypassResponse]:
-    """Last resort — stdlib urllib with cookie and proxy support."""
-    import urllib.request
-    import urllib.parse
-    import urllib.error
-    import http.cookiejar
-
-    try:
-        if params:
-            url = url + "?" + urllib.parse.urlencode(params)
-
-        # Build opener with cookie and proxy support
-        cookie_jar = http.cookiejar.CookieJar()
-        handlers: list = [urllib.request.HTTPCookieProcessor(cookie_jar)]
-
-        if proxy_url:
-            proxy_handler = urllib.request.ProxyHandler({
-                "http": proxy_url,
-                "https": proxy_url,
-            })
-            handlers.append(proxy_handler)
-
-        opener = urllib.request.build_opener(*handlers)
-
-        req = urllib.request.Request(url, headers=headers)
-
-        # Inject cookies into the request header manually
-        # (cookie jar won't have them pre-loaded)
-        if cookies:
-            cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
-            req.add_header("Cookie", cookie_str)
-
-        with opener.open(req, timeout=timeout) as resp:
-            content = resp.read()
-            text = content.decode("utf-8", errors="replace")
-            status_code = resp.status
-            final_url = resp.url
-            try:
-                import json as _json
-                json_data = _json.loads(text)
-            except Exception:
-                json_data = None
-        cookies_resp = _extract_cookies(resp)
-        return BypassResponse(content, text, status_code, final_url, json_data, "urllib", cookies_resp)
-    except urllib.error.HTTPError as e:
-        content = e.read() if hasattr(e, "read") else b""
-        text = content.decode("utf-8", errors="replace")
-        return BypassResponse(content, text, e.code, url, None, "urllib", {})
-    except Exception as e:
-        log.debug("urllib failed for %s: %s", url, e)
-        return None
-
-
-# ---------------------------------------------------------------------------
-# BypassSession
-# ---------------------------------------------------------------------------
 class BypassSession:
     """
     Multi-engine HTTP session with automatic failover.
@@ -670,44 +95,39 @@ class BypassSession:
         self.cookies = cookies or {}
         self.proxy_url = proxy_url
         self.method = method if method in BYPASS_METHODS else "auto"
-        
+
         self._httpx_client = None
         self._cffi_sessions = {}
-        self._cffi_sync_sessions = {}  # sync Session cache for get_sync() — never loop-bound
+        self._cffi_sync_sessions = {}
         self._loop_id = None
         self._successful_engine = None
         self._last_request_time = 0.0
-        self._rate_limit_lock = None  # asyncio.Lock, created lazily per event loop
-        self._cookie_jar = {}         # accumulated cookies from responses (warmup + API calls)
-        self._cffi_winner: str | None = None  # last curl_cffi target that worked; tried first next time
-        
+        self._rate_limit_lock = None
+        self._cookie_jar = {}
+        self._cffi_winner: str | None = None
+
+    # ------------------------------------------------------------------
+    # Loop-aware client invalidation
+    # ------------------------------------------------------------------
+
     def _check_loop(self):
-        """Invalidate cached clients if the event loop has changed.
-        We hold a strong reference to the loop object to prevent memory address
-        reuse (which would make id() checks falsely return True for new loops).
-        """
+        """Invalidate cached clients if the event loop has changed."""
         try:
             current_loop = asyncio.get_running_loop()
             if getattr(self, "_loop_ref", None) is not current_loop:
                 self._httpx_client = None
                 self._cffi_sessions.clear()
-                self._rate_limit_lock = None  # force re-creation on new loop
+                self._rate_limit_lock = None
                 self._loop_ref = current_loop
         except RuntimeError:
             pass
 
+    # ------------------------------------------------------------------
+    # Warmup
+    # ------------------------------------------------------------------
+
     async def warmup(self, base_url: str, timeout: int = _DEFAULT_TIMEOUT) -> dict:
-        """Visit the site homepage to establish cookies and a Referer chain.
-
-        Cloudflare's ML scoring penalises requests that hit API endpoints
-        directly without ever loading the main site.  This method makes a
-        lightweight GET to *base_url* (e.g. ``https://danbooru.donmai.us``)
-        with browser-like navigation headers, captures any cookies the server
-        sets (``__cf_bm``, session cookies, etc.), and feeds them into
-        subsequent API calls.
-
-        Returns the accumulated cookie jar so callers can persist it.
-        """
+        """Visit the site homepage to establish cookies and a Referer chain."""
         nav_headers = {**self._build_headers(), **_NAVIGATION_HEADERS}
         resp = await self.get(base_url, headers=nav_headers, timeout=timeout, bypass_rate_limit=True)
         if resp.cookies:
@@ -728,14 +148,22 @@ class BypassSession:
             log.debug("warmup_sync captured %d cookies from %s", len(resp.cookies), base_url)
         return dict(self._cookie_jar)
 
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
     async def close(self):
-        """Close any persistent underlying clients. Must be called if reused across multiple requests."""
+        """Close any persistent underlying clients."""
         if self._httpx_client is not None:
             await self._httpx_client.aclose()
             self._httpx_client = None
         for s in self._cffi_sessions.values():
-            s.close() # curl_cffi AsyncSession close is sync
+            s.close()
         self._cffi_sessions.clear()
+
+    # ------------------------------------------------------------------
+    # Header construction
+    # ------------------------------------------------------------------
 
     def _build_headers(self, extra_headers: dict | None = None) -> dict:
         """Merge browser baseline headers with the session UA and any extras."""
@@ -789,7 +217,7 @@ class BypassSession:
                     proxy=self.proxy_url or None,
                 )
             return await _try_httpx(
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout, self._httpx_client
+                url, params, headers, self._merged_cookies, self.proxy_url, timeout, self._httpx_client,
             )
         elif engine == "requests":
             return await loop.run_in_executor(
@@ -856,38 +284,21 @@ class BypassSession:
 
         merged_headers = self._build_headers(headers)
         last_response: Optional[BypassResponse] = None
-        
+
         # In auto mode, try the previously successful engine first
         engines = self._get_engine_order()
         if self.method == "auto" and self._successful_engine and self._successful_engine in engines:
-            # Reorder so successful engine is first
             engines.remove(self._successful_engine)
             engines.insert(0, self._successful_engine)
 
         for attempt in range(1, _MAX_RETRIES + 1):
-            got_429 = False
-            retry_after: float = 0
             for engine in engines:
                 resp = await self._run_async_engine(
                     engine, url, params, merged_headers, timeout,
                 )
-                if resp and not resp.is_blocked and resp.status_code == 429:
-                    # Rate-limited — honour Retry-After if present, otherwise backoff
-                    got_429 = True
-                    last_response = resp
-                    try:
-                        retry_after = float(resp.headers.get("retry-after", 0))
-                    except (ValueError, AttributeError):
-                        retry_after = 0
-                    log.warning(
-                        "[session] HTTP 429 from %s via %s (attempt %d/%d)",
-                        url, engine, attempt, _MAX_RETRIES,
-                    )
-                    break  # no point trying other engines — the server is rate-limiting us
                 if resp and not resp.is_blocked and resp.status_code < 500:
                     if self.method == "auto":
                         self._successful_engine = engine
-                    # Remember which curl_cffi target worked so next call skips the fallback loop
                     if engine == "curl_cffi" and resp.engine_used and "/" in resp.engine_used:
                         self._cffi_winner = resp.engine_used.split("/", 1)[1]
                     if resp.cookies:
@@ -900,22 +311,14 @@ class BypassSession:
                         engine, resp.status_code, url, resp.is_blocked,
                     )
 
-            # --- Backoff before retry ---
             if attempt < _MAX_RETRIES:
-                if got_429 and retry_after > 0:
-                    wait = min(retry_after, 60.0)  # cap at 60 s
-                    log.info("[session] Retry-After: %.0fs for %s", wait, url)
-                elif got_429:
-                    wait = _RETRY_BACKOFF_BASE * (2 ** attempt)  # longer backoff for 429
-                else:
-                    wait = _RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
+                wait = _RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
                 log.info(
                     "Attempt %d/%d failed for %s, retrying in %.1fs",
                     attempt, _MAX_RETRIES, url, wait,
                 )
                 await asyncio.sleep(wait)
 
-        # If absolutely everything failed, return the best response we got
         if last_response:
             log.warning(
                 "All engines failed for %s, returning last response [%d]",
@@ -923,7 +326,6 @@ class BypassSession:
             )
             return last_response
 
-        # Fabricate an error response so callers never get None
         log.error("Total failure for %s — no engine could reach the server", url)
         return BypassResponse(b"", "", 0, url, None, "none")
 
@@ -947,13 +349,10 @@ class BypassSession:
         """
         merged_headers = self._build_headers(headers)
 
-        # ── Pick engine list ──────────────────────────────────────────
         engines = self._get_engine_order()
-        # Remove httpx from the sync-first pass (it has no sync session cache)
         sync_engines = [e for e in engines if e != "httpx"]
         last_response: Optional[BypassResponse] = None
 
-        # ── Try sync engines directly (no asyncio overhead) ───────────
         for attempt in range(1, _MAX_RETRIES + 1):
             for engine in sync_engines:
                 resp = self._try_sync_engine(engine, url, params, merged_headers, timeout)
@@ -971,7 +370,6 @@ class BypassSession:
                 wait = _RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
                 time.sleep(wait)
 
-        # ── Fallback: full async chain (needed for httpx or locked method) ──
         if last_response is None or "httpx" in engines:
             try:
                 loop = asyncio.get_running_loop()
@@ -993,7 +391,6 @@ class BypassSession:
             if async_resp and async_resp.status_code > 0:
                 return async_resp
 
-        # ── Total failure ─────────────────────────────────────────────
         if last_response:
             return last_response
         return BypassResponse(b"", "", 0, url, None, "none")

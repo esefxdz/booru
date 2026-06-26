@@ -21,6 +21,8 @@ from ui import colors
 from ui import settings_view as settings
 
 
+#creator note, i know this is some yandere dev bullshit here, but im gonna keep all these ifs cause and keep this boilerplated code cuz im lazy
+
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  CLASS: ClickableSlider                                             ║
 # ║  A QSlider that jumps directly to the clicked position instead of  ║
