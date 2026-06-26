@@ -120,33 +120,39 @@ class Gallery(QWidget):
         layout.addWidget(self.scroll)
 
     # ══════════════════════════════════════════════════════════════
+    #  Window resize — recalculate column count
+    # ══════════════════════════════════════════════════════════════
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_timer.start()  # coalesce rapid resizes into one relayout
+
+    # ══════════════════════════════════════════════════════════════
     #  Scroll + viewport virtualization
     # ══════════════════════════════════════════════════════════════
 
     def _on_scroll(self, value: int):
         self._update_viewport()
-        self._evict_offscreen_bytes()
-        self._maybe_request_more()
+        self._evict_timer.start()
 
-    def _maybe_request_more(self):
-        """Emit load_more_requested when the user scrolls near the bottom."""
-        if self._scroll_guard:
+        if not settings.manager.infinite_scroll or self._scroll_guard:
             return
-        vp = self.scroll.verticalScrollBar()
-        if vp.maximum() - vp.value() < 600:
+        sb = self.scroll.verticalScrollBar()
+        if value >= sb.maximum() - 400:
             self._scroll_guard = True
             self.load_more_requested.emit()
+            QTimer.singleShot(1500, lambda: setattr(self, "_scroll_guard", False))
 
     def check_infinite_scroll_fill(self):
         """If the viewport isn't full after a fetch, request more posts."""
-        self._scroll_guard = False
-        if not self._posts:
+        if not settings.manager.infinite_scroll or self._scroll_guard:
             return
-        QTimer.singleShot(1500, self._check_fill)
+        QTimer.singleShot(100, self._check_fill)
 
     def _check_fill(self):
-        if self.scroll.verticalScrollBar().maximum() <= 0:
-            self._scroll_guard = False
+        sb = self.scroll.verticalScrollBar()
+        if sb.maximum() <= 10 and len(self._posts) > 0:
+            self._scroll_guard = True
             self.load_more_requested.emit()
 
     # ══════════════════════════════════════════════════════════════
@@ -155,10 +161,12 @@ class Gallery(QWidget):
 
     def refresh_layout(self):
         """Public entry point — called by settings view when layout mode changes."""
-        self._do_refresh()
+        self._refresh_timer.start()  # coalesced relayout
 
     def _do_refresh(self):
         """Recalculate layout, then update which slots are visible."""
+        self._refresh_timer.stop()  # cancel any pending timer — we're doing it now
+        self._col_width = settings.manager.thumbnail_size
         self._col_count = max(1, self.scroll.viewport().width() // self._col_width)
         tile_sz = max(50, self._col_width)
 
