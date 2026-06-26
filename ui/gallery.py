@@ -153,6 +153,10 @@ class Gallery(QWidget):
     #  Layout refresh
     # ══════════════════════════════════════════════════════════════
 
+    def refresh_layout(self):
+        """Public entry point — called by settings view when layout mode changes."""
+        self._do_refresh()
+
     def _do_refresh(self):
         """Recalculate layout, then update which slots are visible."""
         self._col_count = max(1, self.scroll.viewport().width() // self._col_width)
