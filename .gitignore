@@ -48,6 +48,7 @@ ui/files/
 # Packaging
 build/
 dist/
+publish/
 *.egg-info/
 *.spec
 
