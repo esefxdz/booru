@@ -3,7 +3,7 @@ download_images/network.py — Network infrastructure for booru API requests.
 
 Contains:
   - CloudflareBlockError  — exception for CF challenge walls
-  - NetworkManager        — per-loop semaphore for throttling concurrency
+  - NetworkManager        — global semaphore for throttling concurrency
 """
 
 import asyncio
@@ -25,31 +25,26 @@ class BooruAPIError(Exception):
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
-# ║  NetworkManager — per-loop async semaphore                          ║
+# ║  NetworkManager — global async semaphore                            ║
 # ║                                                                     ║
 # ║  Limits how many concurrent HTTP requests can run at once.          ║
-# ║  Each event loop gets its own semaphore so QThreads don't clash.    ║
+# ║  All async work shares the global event loop from async_loop.py,    ║
+# ║  so a single semaphore is sufficient.                               ║
 # ║  The limit is read from settings.manager.concurrent_downloads.      ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
 class NetworkManager:
-    _semaphores = {}
+    _semaphore: asyncio.Semaphore | None = None
     _last_limit = 0
 
     @classmethod
     def get_semaphore(cls):
-        """Get or create a semaphore for the current event loop."""
-        loop = asyncio.get_running_loop()
-
-        # Reset all semaphores if the user changed the concurrency limit
-        if cls._last_limit != settings.manager.concurrent_downloads:
-            cls._semaphores.clear()
-            cls._last_limit = settings.manager.concurrent_downloads
-
-        if loop not in cls._semaphores:
-            cls._semaphores[loop] = asyncio.Semaphore(settings.manager.concurrent_downloads)
-
-        return cls._semaphores[loop]
+        """Get or create the global semaphore, recreated on limit changes."""
+        limit = settings.manager.concurrent_downloads
+        if cls._last_limit != limit or cls._semaphore is None:
+            cls._semaphore = asyncio.Semaphore(limit)
+            cls._last_limit = limit
+        return cls._semaphore
 
     @classmethod
     async def fetch(cls, session, url, params=None, headers=None, bypass_rate_limit=False):

@@ -107,6 +107,9 @@ def main():
     except Exception:
         pass
 
+    from async_loop import start as start_async_loop
+    start_async_loop()
+
     settings.manager.initialize()
 
     # Share contexts to prevent "virtualization" errors on some systems
@@ -138,15 +141,19 @@ def main():
     thumb_cache.shutdown()
     engines.shutdown()
 
-    # Close the persistent thumbnail httpx connection pool.
-    # These clients were created on background-thread event loops that
-    # are already dead, so we use a fresh loop and suppress any cross-loop
-    # warnings from httpx.  asyncio.run() handles the lifecycle cleanly.
-    import asyncio
+    # Close the persistent thumbnail httpx connection pool and cached
+    # CF bypass sessions.  All async work now runs on the shared global
+    # event loop, so everything is submitted to that same loop — no
+    # cross-loop errors.
+    from async_loop import run as async_run, stop as stop_async_loop
+    from cloudflare_bypasser import close_all_sessions
     try:
-        asyncio.run(thumb_client.close_all())
+        async_run(thumb_client.close_all())
+        async_run(close_all_sessions())
     except Exception:
         pass
+    finally:
+        stop_async_loop()
 
     sys.exit(exit_code)
 

@@ -1,4 +1,3 @@
-import asyncio
 import threading
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from ui import settings_view as settings
@@ -22,15 +21,8 @@ class FetchThread(QThread):
         self.cancel_event = threading.Event()
 
     def run(self):
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        sessions = {}
-        def get_cached_session(booru_name):
-            if booru_name not in sessions:
-                from cloudflare_bypasser import get_session
-                sessions[booru_name] = get_session(booru_name)
-            return sessions[booru_name]
+        from async_loop import run as async_run
+        from cloudflare_bypasser import get_session
 
         try:
             if self.is_bookmarks_mode:
@@ -47,7 +39,7 @@ class FetchThread(QThread):
                 end = start + settings.SEARCH_LIMIT
                 posts = all_bms[start:end]
             else:
-                posts = loop.run_until_complete(self.downloader.get_image_urls(self.tags, settings.SEARCH_LIMIT, self.current_page - 1, session_manager=get_cached_session))
+                posts = async_run(self.downloader.get_image_urls(self.tags, settings.SEARCH_LIMIT, self.current_page - 1, session_manager=get_session))
                 for p in posts: p["_booru"] = settings.manager.active_booru
 
             # Phase 1: Emit metadata immediately so the UI shows skeletons
@@ -58,8 +50,8 @@ class FetchThread(QThread):
                 def on_preview(pil_img, post, idx):
                     if not self.cancel_event.is_set():
                         self.preview_ready.emit(pil_img, post, idx)
-                loop.run_until_complete(
-                    self.downloader.fetch_previews(posts, on_preview, self.cancel_event, session_manager=get_cached_session)
+                async_run(
+                    self.downloader.fetch_previews(posts, on_preview, self.cancel_event, session_manager=get_session)
                 )
 
             self.finished.emit(posts, self.is_bookmarks_mode)
@@ -72,13 +64,6 @@ class FetchThread(QThread):
                 import logging
                 logging.exception("FetchThread crashed")
                 self.error.emit(str(e))
-        finally:
-            for s in sessions.values():
-                try:
-                    loop.run_until_complete(s.close())
-                except Exception:
-                    pass
-            loop.close()
 
 class BulkThread(QThread):
     progress = pyqtSignal(str)       # status label text
@@ -94,11 +79,10 @@ class BulkThread(QThread):
 
     def run(self):
         import uuid
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        from async_loop import run as async_run
         try:
             self.progress.emit("Fetching metadata…")
-            posts = loop.run_until_complete(
+            posts = async_run(
                 self.downloader.get_image_urls(self.tags, self.limit, 0)
             )
             if not posts:
@@ -133,8 +117,6 @@ class BulkThread(QThread):
             import logging
             logging.exception("BulkThread crashed")
             self.error.emit(str(e))
-        finally:
-            loop.close()
 
 
 class AppController(QObject):

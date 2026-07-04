@@ -74,15 +74,18 @@ class BooruDownloader(QObject):
 
         Used for API requests and thumbnail downloads.
         Full image downloads use download_images.engines instead.
+
+        When *session_manager* is provided (by FetchThread/BulkThread), it
+        is used to obtain a session.  Otherwise, the globally cached session
+        from :func:`cloudflare_bypasser.get_session` is used — sessions are
+        long-lived and must NOT be closed by callers.
         """
         booru_name = booru or settings.manager.active_booru
-        own_session = False
         if session_manager:
             session = session_manager(booru_name)
         else:
             from cloudflare_bypasser import get_session
             session = get_session(booru_name)
-            own_session = True
 
         headers = self.headers.copy()
 
@@ -111,14 +114,7 @@ class BooruDownloader(QObject):
             })
             bypass_rate_limit = True
 
-        try:
-            return await NetworkManager.fetch(session, url, params=params, headers=headers, bypass_rate_limit=bypass_rate_limit)
-        finally:
-            if own_session:
-                try:
-                    await session.close()
-                except Exception:
-                    pass
+        return await NetworkManager.fetch(session, url, params=params, headers=headers, bypass_rate_limit=bypass_rate_limit)
 
     # ──────────────────────────────────────────────────────────────
     #  Post field accessors (delegate to adapter)

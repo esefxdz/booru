@@ -13,7 +13,6 @@ Tabs:
 """
 import logging
 import os
-import asyncio
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QMessageBox, QTabWidget,
@@ -393,12 +392,11 @@ class APISettingsView(QWidget):
                 self._url, self._atype, self._user, self._pwd = url, atype, user, pwd
                 self._bypass = bypass_sess
             def run(self):
-                loop = asyncio.new_event_loop()
-                result = loop.run_until_complete(
+                from async_loop import run as async_run
+                result = async_run(
                     perform_login(self._url, self._atype, self._user, self._pwd,
                                   bypass_session=self._bypass)
                 )
-                loop.close()
                 self.done.emit(result)
 
         def on_done(cookies: dict):

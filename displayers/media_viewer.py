@@ -90,6 +90,7 @@ class MediaViewer(QWidget):
         self._viewing_original = False
         self._media_type = None
         self._video_widget = None  # lazily created
+        self._cancel_event = threading.Event()  # guards cross-thread signals
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
@@ -138,7 +139,14 @@ class MediaViewer(QWidget):
     # └──────────────────────────────────────────────────────────────────┘
     def load_post(self, post, original=False):
         self.stop()
-        
+
+        # Cancel any in-flight background threads from the previous post.
+        # Without this, rapidly clicking through posts could cause a
+        # late-arriving signal to overwrite the current post's media.
+        self._cancel_event.set()
+        self._cancel_event = threading.Event()
+        cancel = self._cancel_event
+
         # Clean up any previously viewed temp files to prevent disk leak
         from ui import settings_view as settings
         tmp = settings.manager.get_download_dir() / "temp_media"
@@ -231,11 +239,13 @@ class MediaViewer(QWidget):
     # └──────────────────────────────────────────────────────────────────┘
     def _load_image(self, optimized):
         url = self._get_image_url(optimized)
+        cancel = self._cancel_event
 
         def work():
             try:
                 data = _fetch_bytes(url, self.post.get('_booru'))
-                self.image_ready.emit(data)
+                if not cancel.is_set():
+                    self.image_ready.emit(data)
             except Exception as e:
                 logging.error(f"[media_viewer] Image load error: {e}")
 
@@ -288,6 +298,7 @@ class MediaViewer(QWidget):
         site_data = self._get_site_data()
         url = _resolve_url(self.file_url, site_data)
         self._gif_optimized = optimized
+        cancel = self._cancel_event
 
         # ── Clean up previous temp file to prevent unbounded disk growth ──
         self._cleanup_previous_temp()
@@ -295,6 +306,8 @@ class MediaViewer(QWidget):
         def work():
             try:
                 data = _fetch_bytes(url, self.post.get('_booru'))
+                if cancel.is_set():
+                    return
                 from ui import settings_view as settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
@@ -339,6 +352,7 @@ class MediaViewer(QWidget):
         site_data = self._get_site_data()
         url = _resolve_url(self.file_url, site_data)
         ext = url.rsplit("?", 1)[0].split(".")[-1] or "mp4"
+        cancel = self._cancel_event
 
         # ── Clean up previous temp file to prevent unbounded disk growth ──
         self._cleanup_previous_temp()
@@ -346,6 +360,8 @@ class MediaViewer(QWidget):
         def work():
             try:
                 data = _fetch_bytes(url, self.post.get('_booru'))
+                if cancel.is_set():
+                    return
                 from ui import settings_view as settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
