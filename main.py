@@ -117,11 +117,16 @@ def main():
 
     app = QApplication(sys.argv)
     
-    icon_path = os.path.join(os.path.dirname(__file__), "appico.png")
-    if os.path.exists(icon_path):
-        app.setWindowIcon(QIcon(icon_path))
-    
-    qss_path = Path(__file__).parent / "ui" / "assets" / "theme.qss"
+    # When frozen by PyInstaller, assets live in sys._MEIPASS (the temp
+    # extraction dir).  At runtime we look there first, then fall back to
+    # the source-tree location so running from source still works.
+    _asset_base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
+
+    icon_path = _asset_base / "appico.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
+    qss_path = _asset_base / "ui" / "assets" / "theme.qss"
     with open(qss_path, "r", encoding="utf-8") as f:
         theme = f.read()
         for k, v in colors.__dict__.items():

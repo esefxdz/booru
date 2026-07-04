@@ -62,7 +62,6 @@ from ui import settings_view as settings
 
 # ─────────────────────────────────────────────────────────────────
 # Constants & Defaults
-# ─────────────────────────────────────────────────────────────────
 
 _L1_MAX_BYTES: int = 128 * 1024 * 1024    # 128 MB in-memory budget (~6 400 thumbs)
 _L2_MAX_BYTES: int = 1024 * 1024 * 1024  # 1 GB on-disk budget  (~50 000 thumbs)
@@ -71,7 +70,6 @@ _L2_EVICT_RATIO: float = 0.10             # evict oldest 10 % when over limit
 
 # ─────────────────────────────────────────────────────────────────
 # L1 — In-Memory LRU Cache
-# ─────────────────────────────────────────────────────────────────
 #
 #   A bounded OrderedDict that tracks total byte usage.
 #   On every access the touched key is moved to the end (= most
@@ -82,7 +80,6 @@ _L2_EVICT_RATIO: float = 0.10             # evict oldest 10 % when over limit
 #     • byte-level (not entry-count) eviction
 #     • manual invalidation (clear / per-key delete)
 #     • introspection (stats)
-# ─────────────────────────────────────────────────────────────────
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  CLASS: _L1                                                         ║
@@ -151,7 +148,6 @@ class _L1:
 
 # ─────────────────────────────────────────────────────────────────
 # L2 — SQLite Persistent Cache
-# ─────────────────────────────────────────────────────────────────
 #
 #   Stores thumbnails as BLOBs keyed by a string like
 #   "safebooru:12345" or just a plain post_id.
@@ -379,7 +375,6 @@ class _L2:
 
 # ─────────────────────────────────────────────────────────────────
 # Module-Level Singleton & Public API
-# ─────────────────────────────────────────────────────────────────
 #
 #   The rest of the codebase should only ever call:
 #     thumb_cache.get(key)
@@ -389,7 +384,6 @@ class _L2:
 #
 #   Everything below wires L1 + L2 together behind these four
 #   functions, with a single lock protecting both tiers.
-# ─────────────────────────────────────────────────────────────────
 
 _l1_lock = threading.Lock()   # Fast: only guards the in-memory OrderedDict
 _l2_lock = threading.Lock()   # Slow: guards SQLite disk I/O
