@@ -377,6 +377,28 @@ class Gallery(QWidget):
     def open_preview(self, post):
         self.main_app.open_preview(post)
 
+    def get_adjacent_post(self, post_id, direction: str = "next"):
+        """Return the prev/next post dict, or None if at the boundary.
+
+        Used by the overlay for prev_post / next_post navigation so
+        external code never touches ``_posts`` or ``_post_id_to_idx``.
+        """
+        idx = self._post_id_to_idx.get(post_id)
+        if idx is None:
+            return None
+        target = idx - 1 if direction == "prev" else idx + 1
+        if 0 <= target < len(self._posts):
+            return self._posts[target]
+        return None
+
+    def refresh_visible_stars(self):
+        """Re-render bookmark stars for all currently assigned tiles.
+
+        Used after a bookmark toggle so the star icons update without
+        a full viewport rebuild.
+        """
+        self._update_viewport()
+
     # ══════════════════════════════════════════════════════════════
     #  Helpers
     # ══════════════════════════════════════════════════════════════

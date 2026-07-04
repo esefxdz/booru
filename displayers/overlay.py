@@ -96,19 +96,17 @@ class MediaOverlay(QWidget):
         if not self.isVisible() or not self.post:
             return
         gallery = self.parent_gui.gallery
-        idx = gallery._post_id_to_idx.get(self.post.get('id'))
-        if idx is not None and idx > 0:
-            self.show_post(gallery._posts[idx - 1])
+        post = gallery.get_adjacent_post(self.post.get("id"), "prev")
+        if post is not None:
+            self.show_post(post)
 
     def next_post(self):
         if not self.isVisible() or not self.post:
             return
         gallery = self.parent_gui.gallery
-        idx = gallery._post_id_to_idx.get(self.post.get('id'))
-        if idx is None:
-            return
-        if idx < len(gallery._posts) - 1:
-            self.show_post(gallery._posts[idx + 1])
+        post = gallery.get_adjacent_post(self.post.get("id"), "next")
+        if post is not None:
+            self.show_post(post)
         else:
             # Reached the last loaded post — ask gallery to load more
             gallery.load_more_requested.emit()

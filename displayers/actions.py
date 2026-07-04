@@ -143,7 +143,7 @@ class ActionButtons(QWidget):
             db.add_bookmark(self.post)
             self._is_bookmarked = True
         self._update_bm_style()
-        self.sidebar.overlay.parent_gui.gallery._update_viewport()
+        self.sidebar.overlay.parent_gui.gallery.refresh_visible_stars()
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _download  — fetches the original file in a background thread │
