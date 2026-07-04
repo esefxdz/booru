@@ -190,6 +190,8 @@ class BooruGui(QMainWindow):
         self.gallery = Gallery(self)
         gallery_layout.addWidget(self.gallery, 1)
 
+        gallery_layout.addSpacing(8)
+
         self.tag_panel = TagPanel(self)
         gallery_layout.addWidget(self.tag_panel)
 

@@ -174,7 +174,9 @@ class Gallery(QWidget):
         self._refresh_timer.stop()  # cancel any pending timer — we're doing it now
         self._evict_timer.stop()
         self._col_width = settings.manager.thumbnail_size
-        self._col_count = max(1, self.scroll.viewport().width() // self._col_width)
+        available_w = self.scroll.viewport().width()
+        # Account for spacing so the rightmost tile does not overflow
+        self._col_count = max(1, (available_w + self._spacing) // (self._col_width + self._spacing))
         tile_sz = max(50, self._col_width)
 
         use_masonry = getattr(settings.manager, "masonry_mode", False)
