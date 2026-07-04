@@ -89,6 +89,12 @@ class Gallery(QWidget):
         self._refresh_timer.setInterval(50)
         self._refresh_timer.timeout.connect(self._do_refresh)
 
+        # ── Deferred eviction timer (coalesces rapid scroll events) ─
+        self._evict_timer = QTimer(self)
+        self._evict_timer.setSingleShot(True)
+        self._evict_timer.setInterval(200)
+        self._evict_timer.timeout.connect(self._evict_offscreen_bytes)
+
     # ══════════════════════════════════════════════════════════════
     #  UI Construction
     # ══════════════════════════════════════════════════════════════
@@ -166,6 +172,7 @@ class Gallery(QWidget):
     def _do_refresh(self):
         """Recalculate layout, then update which slots are visible."""
         self._refresh_timer.stop()  # cancel any pending timer — we're doing it now
+        self._evict_timer.stop()
         self._col_width = settings.manager.thumbnail_size
         self._col_count = max(1, self.scroll.viewport().width() // self._col_width)
         tile_sz = max(50, self._col_width)
@@ -365,6 +372,7 @@ class Gallery(QWidget):
         self._y_index.clear()
         self.container.setMinimumHeight(0)
         self._px_cache.clear()
+        self._evict_timer.stop()
 
     def open_preview(self, post):
         self.main_app.open_preview(post)
