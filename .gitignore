@@ -62,7 +62,7 @@ cookies_debug.txt
 .DS_Store
 technical debt*.md
 technical_debt*.md
-test_*.py
+tests/
 generate_*.py
 replace_*.py
 CODEBASE_GUIDE.md
