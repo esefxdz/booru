@@ -24,6 +24,7 @@ import asyncio
 import logging
 import time
 from typing import Optional
+from ui import settings_view as settings
 
 from cloudflare_bypasser.fingerprint import (
     _DEFAULT_UA,
@@ -264,7 +265,6 @@ class BypassSession:
         transient failures (5xx, timeouts).
         """
         self._check_loop()
-        from ui import settings_view as settings
 
         if not bypass_rate_limit and getattr(settings.manager, "use_rate_limit", False):
             if self._rate_limit_lock is None:

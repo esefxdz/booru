@@ -14,6 +14,7 @@ to be updated.
 
 from __future__ import annotations
 from typing import TYPE_CHECKING
+from ui import settings_view as settings
 
 if TYPE_CHECKING:
     # Avoid a circular import at module load time; settings is always present
@@ -38,7 +39,6 @@ def get_bypass_data(booru_name: str) -> dict:
     Returns an empty dict when nothing is stored so callers can always use
     ``.get()`` safely without a fallback check.
     """
-    from ui import settings_view as settings
     return settings.manager.bypass_data.get(booru_name) or {}
 
 
@@ -74,7 +74,6 @@ def save_bypass(booru_name: str, cookies: dict, user_agent: str) -> None:
     Both are required for the bypass to work: Cloudflare ties the clearance
     cookie to the exact UA fingerprint that solved the challenge.
     """
-    from ui import settings_view as settings
     settings.manager.bypass_data[booru_name] = {
         "cookies":    cookies,
         "user_agent": user_agent,
@@ -90,6 +89,5 @@ def clear_bypass(booru_name: str) -> None:
     - The user manually clears the bypass in the settings dialog.
     - A request fails with 403/429 (the clearance has expired).
     """
-    from ui import settings_view as settings
     settings.manager.bypass_data.pop(booru_name, None)
     settings.manager.save()

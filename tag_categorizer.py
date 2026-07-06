@@ -199,9 +199,14 @@ class TagCategorizer:
                 if not self._fetch_lock.acquire(blocking=False):
                     break
                 try:
+                    from cloudflare_bypasser import store as cf_store
+                    cookies = dict(cf_store.get_cookies("danbooru") or {})
+                    ua = cf_store.get_user_agent("danbooru") or "BooruBrowser/1.0"
+
                     r = httpx.get(
                         url,
-                        headers={"User-Agent": "BooruBrowser/1.0"},
+                        headers={"User-Agent": ua},
+                        cookies=cookies,
                         timeout=8.0,
                     )
                 finally:
