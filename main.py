@@ -60,7 +60,7 @@ def _setup_logging():
                             f"Check the log at: {log_file}")
                 msg.setDetailedText(tb)
                 msg.exec()
-        except Exception as gui_exc:
+        except Exception:
             logging.critical("Could not show error dialog", exc_info=True)
 
     sys.excepthook = handle_exception
@@ -85,12 +85,9 @@ if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
 from PyQt6.QtWebEngineWidgets import QWebEngineView as _WEV  # noqa: F401
 
 from ui import settings_view as settings
-import boorus
 from gui import BooruGui
 
 import ui.colors as colors
-from pathlib import Path
-from ui import colors
 
 # ── Main Entry ──────────────────────────────────────────────
 
@@ -166,8 +163,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
-        import traceback, sys
+    except Exception:
+        import traceback
+        import sys
         with open("FATAL_CRASH.txt", "w", encoding="utf-8") as f:
             f.write("Application failed to start entirely!\n")
             traceback.print_exc(file=f)

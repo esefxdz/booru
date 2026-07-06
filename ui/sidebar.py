@@ -1,9 +1,8 @@
-import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QLabel, QFrame, QSizePolicy
+    QLabel, QFrame
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QCursor, QIcon
 from ui.bookmarks_main.bookmarks_db import db
 from ui import settings_view as settings

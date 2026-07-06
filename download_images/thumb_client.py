@@ -24,7 +24,6 @@ Public API
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 log = logging.getLogger("thumb_client")

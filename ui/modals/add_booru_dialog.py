@@ -5,7 +5,6 @@ Dialog for adding a custom booru site by URL.
 Includes AutoDetectThread which probes the target site with known
 API patterns to automatically identify the engine and path.
 """
-import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QFormLayout

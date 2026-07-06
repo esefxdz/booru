@@ -11,11 +11,10 @@
 
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QWidget, QFrame,
+    QLineEdit, QWidget,
 )
-from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage, QWebEngineSettings
-from PyQt6.QtCore import pyqtSignal, QTimer, Qt, QUrl
+from PyQt6.QtCore import pyqtSignal, QTimer, Qt
 
 from ui.browser_dialog.in_app_browser import InAppBrowser
 from ui import colors
@@ -459,9 +458,6 @@ def _find_cf_clearance_all_browsers(domain: str) -> dict:
     Safe to call even if browsers are locked or pywin32 is missing —
     every failure path returns an empty dict.
     """
-    import sqlite3
-    import shutil
-    import tempfile
     from pathlib import Path
 
     results = {}

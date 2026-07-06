@@ -5,12 +5,10 @@ Provides a row of buttons (Bookmark, Download, Share, Original) to
 interact with the currently displayed post.
 """
 import logging
-import os
 import threading
-from pathlib import Path
 
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QApplication
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QTimer
 
 from ui import colors
 from ui import settings_view as settings

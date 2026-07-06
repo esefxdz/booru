@@ -11,10 +11,9 @@ Tabs:
   ⚙ Engine       — switch the API engine for this booru
   ℹ Info/Delete  — read-only info + delete button
 """
-import logging
 import os
 from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QDialog, QVBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QMessageBox, QTabWidget,
     QWidget, QFormLayout, QFrame
 )

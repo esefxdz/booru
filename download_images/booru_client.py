@@ -219,7 +219,6 @@ class BooruDownloader(QObject):
         """
         import uuid
         from download_images.image_downloader import download_post
-        from download_images.engines import ENGINE_FNS, DEFAULT_ENGINE
 
         tid = str(task_id) if task_id is not None else str(uuid.uuid4())[:8]
         filename = str(post.get("id", "unknown"))

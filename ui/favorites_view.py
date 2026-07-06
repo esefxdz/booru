@@ -1,13 +1,11 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QPushButton, QFrame, QScrollArea,
-    QLineEdit, QSizePolicy
+    QLineEdit
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor, QCursor
+from PyQt6.QtCore import Qt, QTimer
 
 from ui import settings_view as settings
-from ui.icons import Icons
 from ui.text_bar import BooruTextBar
 # TagChip is shared with BlacklistView — defined once in tag_chip.py
 from ui.tag_chip import TagChip

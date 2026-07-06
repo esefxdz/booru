@@ -1,10 +1,9 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QTextEdit, QPushButton, QFrame, QScrollArea,
-    QLineEdit, QSizePolicy
+    QLineEdit
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer
-from PyQt6.QtGui import QCursor
+from PyQt6.QtCore import Qt, QTimer
 
 from ui import settings_view as settings
 from ui.text_bar import BooruTextBar

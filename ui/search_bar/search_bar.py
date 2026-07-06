@@ -1,6 +1,5 @@
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QScrollArea, QFrame, QSizePolicy
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QScrollArea, QFrame
 from PyQt6.QtCore import Qt, pyqtSignal
-from ui.icons import Icons
 from ui.search_bar.search_tag_chip import SearchTagChip
 from ui.autocomplete import AutocompleteList, AutocompleteHandler
 
@@ -116,7 +115,8 @@ class BooruSearchBar(QFrame):
                 item.widget().deleteLater()
         
         for part in query.split():
-            if not part.strip(): continue
+            if not part.strip():
+                continue
             chip = SearchTagChip(part)
             chip.removed.connect(self._remove_tag)
             # Insert before the entry widget

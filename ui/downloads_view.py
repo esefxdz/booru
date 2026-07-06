@@ -12,7 +12,6 @@ download_finished, download_failed.
 """
 from __future__ import annotations
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -20,7 +19,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QProgressBar, QFrame, QScrollArea, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSlot, QTimer
+from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtGui import QCursor, QDesktopServices
 from PyQt6.QtCore import QUrl
 

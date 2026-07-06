@@ -87,7 +87,8 @@ class SettingsManager:
 
     def initialize(self):
         """Explicit initialization to be called on app startup."""
-        if self._initialized: return
+        if self._initialized:
+            return
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
         # One-time migration from legacy %APPDATA% location

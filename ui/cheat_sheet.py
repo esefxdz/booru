@@ -4,7 +4,7 @@ ui/cheat_sheet.py
 Full-page widget for the Cheat Sheet (Keyboard Shortcuts & Booru Search syntax).
 """
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QWidget, QVBoxLayout, QLabel,
     QFrame, QScrollArea, QGridLayout, QSizePolicy
 )
 from PyQt6.QtCore import Qt

@@ -5,7 +5,6 @@ Provides secure validation for user inputs to prevent injection attacks,
 path traversal, and other security vulnerabilities.
 """
 import re
-import os
 from urllib.parse import urlparse
 from typing import Optional
 

@@ -5,7 +5,6 @@ Provides the BaseAdapter contract, a NormalizedPost dataclass for
 standardized output, and helpers for pagination / rating normalization.
 """
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass

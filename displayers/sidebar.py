@@ -10,7 +10,6 @@ from displayers.details import FileDetails
 from displayers.actions import ActionButtons
 from displayers.post_displayer_tags import ClickableTagsDropdown
 from ui import colors
-from PyQt6.QtCore import Qt
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -37,7 +36,7 @@ class OverlaySidebar(QWidget):
         # Scroll area for everything in sidebar
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet(f"QScrollArea {{ border: none; background-color: transparent; }}")
+        self.scroll.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
         
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)

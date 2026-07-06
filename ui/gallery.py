@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import logging
 from PyQt6.QtWidgets import (
-    QWidget, QScrollArea, QVBoxLayout, QPushButton, QLabel,
+    QWidget, QScrollArea, QVBoxLayout, QLabel,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal, QRect
-from PyQt6.QtGui import QPixmap, QIcon, QPainter, QPainterPath
+from PyQt6.QtGui import QPixmap, QPainter, QPainterPath
 
 from ui import settings_view as settings
 from ui import colors

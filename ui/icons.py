@@ -1,6 +1,5 @@
-import re
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QIcon, QPixmap, QPainter
+from PyQt6.QtCore import Qt
 from PyQt6.QtSvg import QSvgRenderer
 
 

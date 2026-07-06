@@ -14,7 +14,6 @@ Extracted from session.py so the orchestrator stays thin.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import urllib.request
 import urllib.error

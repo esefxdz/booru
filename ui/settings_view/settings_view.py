@@ -7,7 +7,7 @@ Follows the same layout pattern as BlacklistView and FavoritesView.
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QStackedWidget, QFrame, QScrollArea
+    QPushButton, QStackedWidget, QScrollArea
 )
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QCursor
@@ -69,7 +69,7 @@ class SettingsView(QWidget):
         # Right: section content (scrollable)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet(f"QScrollArea {{ border: none; background: transparent; }}")
+        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self.stack = QStackedWidget()

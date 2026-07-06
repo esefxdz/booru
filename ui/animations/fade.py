@@ -21,8 +21,10 @@ def animate_fade_in(widget: QWidget, duration: int = 300):
 
     def on_finished():
         widget.setGraphicsEffect(None)
-        if hasattr(widget, '_fade_anim'): del widget._fade_anim
-        if hasattr(widget, '_fade_effect'): del widget._fade_effect
+        if hasattr(widget, '_fade_anim'):
+            del widget._fade_anim
+        if hasattr(widget, '_fade_effect'):
+            del widget._fade_effect
 
     anim.finished.connect(on_finished)
     anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)

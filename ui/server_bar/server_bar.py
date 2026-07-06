@@ -1,6 +1,6 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QFrame, QPushButton, QMenu
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMenu
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QAction, QCursor
+from PyQt6.QtGui import QCursor
 from ui import settings_view as settings
 import boorus
 from ui.icons import Icons
@@ -114,7 +114,8 @@ class ServerBar(QWidget):
     # │  marks button. Turns accent color when bookmarks mode is active. │
     # └──────────────────────────────────────────────────────────────────┘
     def update_bookmark_style(self):
-        if not hasattr(self, 'bookmark_btn'): return
+        if not hasattr(self, 'bookmark_btn'):
+            return
         if self.main_gui.is_bookmarks_mode:
             self.bookmark_btn.setStyleSheet(f"""
                 QPushButton {{

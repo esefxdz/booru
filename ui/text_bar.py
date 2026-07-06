@@ -1,8 +1,7 @@
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QPushButton, QLabel, QGraphicsDropShadowEffect, QFrame
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from ui.icons import Icons
-import ui.animations as anims
 
 
 from ui import colors

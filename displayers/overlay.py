@@ -5,7 +5,7 @@ This is the top-level container that holds both the MediaViewer (left)
 and the OverlaySidebar (right). It sits on top of the main gallery
 and handles keyboard shortcuts for navigation.
 """
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QWidget, QHBoxLayout
 from ui import colors

@@ -17,15 +17,14 @@ Everything else has been extracted:
 
 import logging
 import os
-import ctypes
 import shutil
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLineEdit, QPushButton, QStackedWidget,
 )
-from PyQt6.QtCore import Qt, QPoint, QSettings
-from PyQt6.QtGui import QFont, QColor, QIcon
+from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtGui import QIcon
 
 from ui import colors
 from ui import settings_view as settings
@@ -51,7 +50,6 @@ from ui.windows_utils import apply_dark_title_bar
 from ui.bookmarks_main.bookmarks_db import db
 from ui.browser_dialog import CloudflareBrowserDialog
 from ui.modals import AddBooruDialog, BulkDownloadDialog
-from cloudflare_bypasser import store as cf_store
 from validation import validate_search_term
 try:
     from displayers.legacy_window import UniversalViewer

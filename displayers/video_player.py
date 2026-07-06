@@ -11,7 +11,7 @@ Falls back to Qt if the selected engine fails to load.
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider,
-    QStyle, QStyleOptionSlider,
+    QStyleOptionSlider,
 )
 from PyQt6.QtCore import Qt, QUrl, QTimer, QSettings, pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput

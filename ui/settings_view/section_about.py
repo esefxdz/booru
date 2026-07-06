@@ -4,7 +4,7 @@ ui/settings_view/section_about.py
 About & Maintenance section: version info, cache clearing, reset to defaults.
 """
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
+    QWidget, QVBoxLayout, QLabel, QPushButton, QFrame
 )
 from PyQt6.QtCore import Qt, QTimer
 from ui import settings_view as settings

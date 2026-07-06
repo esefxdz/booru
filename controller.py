@@ -1,7 +1,6 @@
 import threading
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 from ui import settings_view as settings
-import boorus
 
 class FetchThread(QThread):
     finished = pyqtSignal(list, bool) # posts, is_bookmarks_mode

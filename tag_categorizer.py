@@ -1,14 +1,12 @@
 import logging
 import os
 import json
-import asyncio
 import httpx
 import threading
 import time
 from pathlib import Path
 import shutil
 
-from ui import settings_view as settings
 from ui.settings_view.manager import BASE_DIR
 
 # ── Offline meta-tag knowledge base ──────────────────────────────────────

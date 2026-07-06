@@ -6,7 +6,6 @@ Media & Playback settings section: video engine, legacy viewer toggle.
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QComboBox, QCheckBox, QFrame
 )
-from PyQt6.QtCore import Qt
 from ui import settings_view as settings
 from ui import colors
 

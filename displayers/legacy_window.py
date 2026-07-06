@@ -14,7 +14,6 @@ import sys
 import os
 import json
 import threading
-from pathlib import Path
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QSettings
 from PyQt6.QtGui import QPixmap, QMovie

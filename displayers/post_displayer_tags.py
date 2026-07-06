@@ -16,8 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QFrame, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont, QCursor
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from displayers.details import CollapsibleWidget
 from ui import colors
