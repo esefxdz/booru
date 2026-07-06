@@ -35,6 +35,6 @@ if you want to run the code yourself instead of using the exe:
 
 ## contributing / for devs
 
-this is a side project, but i tried to keep the code organized and modular. there's a [CODEBASE_GUIDE.md](CODEBASE_GUIDE.md) that explains the architecture and how things work under the hood. read that before you start digging around.
+this is a side project, but i tried to keep the code organized and modular.
 
 feel free to open an issue or submit a pull request if you want to fix a bug, add a feature, or write an adapter for a new booru site.
