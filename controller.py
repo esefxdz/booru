@@ -141,24 +141,38 @@ class AppController(QObject):
         return self._is_loading
 
     def _cancel_active_thread(self):
-        """Signal the current FetchThread to stop and wait up to 5 s for it.
+        """Signal the current FetchThread to stop and let it exit asynchronously.
 
         Must be called while holding ``_thread_lock`` or from the Qt main
-        thread before a new thread is started.  The 5-second timeout prevents
-        the UI from hanging if a CDN request is slow to cancel.
+        thread before a new thread is started.
         """
         if self.thread is not None and self.thread.isRunning():
             self.thread.cancel_event.set()
-            self.thread.quit()
-            self.thread.wait(5000)  # ms — thumbnail fetches can take a moment to abort
+            
+            if not hasattr(self, '_orphans'):
+                self._orphans = []
+            
+            # Clean up dead orphans to prevent memory leaks
+            self._orphans = [t for t in self._orphans if t.isRunning()]
+            
+            # Keep a reference to the cancelled thread so Qt doesn't crash 
+            # if it gets garbage collected while still running in the background.
+            self._orphans.append(self.thread)
+            self.thread = None
 
     def shutdown(self):
         """Cleanly cancel all running threads before app exit."""
         with self._thread_lock:
             self._cancel_active_thread()
-        if self.thread is not None and self.thread.isRunning():
-            self.thread.terminate()  # last resort after 2 s wait in _cancel_active_thread
-            self.thread.wait(1000)
+            
+        if hasattr(self, '_orphans'):
+            for t in self._orphans:
+                if t.isRunning():
+                    t.wait(1000)
+                    if t.isRunning():
+                        t.terminate()
+                        t.wait(1000)
+                        
         if hasattr(self, 'bulk_thread') and self.bulk_thread is not None and self.bulk_thread.isRunning():
             self.bulk_thread.cancel_event.set()
             self.bulk_thread.quit()

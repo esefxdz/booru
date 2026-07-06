@@ -61,12 +61,7 @@ class ServerBar(QWidget):
         self.update_bookmark_style()
         self._main_layout.addWidget(self.bookmark_btn)
 
-        # Subtle separator line
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFixedWidth(32)
-        sep.setStyleSheet(f"background-color: {colors.BUTTON_HOVER}; border: none; min-height: 2px;")
-        self._main_layout.addWidget(sep)
+
 
         # ── BOORU SITE BUTTONS ─────────────────────────────────────────
         # Render the user's curated list. boorus.REGISTRY is just the catalog
