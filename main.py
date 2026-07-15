@@ -84,9 +84,15 @@ def _qt_message_handler(mode, context, message):
 from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
 qInstallMessageHandler(_qt_message_handler)
 
-# Disable GPU hardware acceleration in WebEngine to prevent black screens on Windows
-# without having to disable the Chromium sandbox (--no-sandbox).
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--disable-gpu"
+# Disable GPU hardware acceleration in WebEngine to prevent black screens
+# and init crashes on Windows.  --disable-gpu alone isn't always enough;
+# --in-process-gpu keeps GPU work inside the main process, avoiding
+# sandbox/spawn failures that cause silent qFatal crashes.
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+    "--disable-gpu "
+    "--in-process-gpu "
+    "--disable-software-rasterizer"
+)
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtGui import QFont, QIcon
@@ -130,22 +136,6 @@ def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
-
-    # ── WebEngine warmup ────────────────────────────────────────
-    # Force Chromium to initialize NOW instead of lazily on first
-    # user interaction.  If the GPU/driver/sandbox causes a crash
-    # during init, it happens here with a visible error dialog
-    # instead of randomly when the user clicks something.
-    try:
-        from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
-        _warmup_profile = QWebEngineProfile("_startup_warmup", app)
-        _warmup_page = QWebEnginePage(_warmup_profile, None)
-        # Give Chromium a moment to spawn, then clean up
-        _warmup_page.deleteLater()
-        _warmup_profile.deleteLater()
-        logging.info("WebEngine warmup OK")
-    except Exception:
-        logging.warning("WebEngine warmup failed", exc_info=True)
     
     # When frozen by PyInstaller, assets live in sys._MEIPASS (the temp
     # extraction dir).  At runtime we look there first, then fall back to
