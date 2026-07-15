@@ -248,7 +248,7 @@ class FavoritesView(QWidget):
     # │  and immediately saves to disk                                  │
     # └──────────────────────────────────────────────────────────────────┘
     def _on_add_tag(self, text=None):
-        if text is None:
+        if not isinstance(text, str):
             text = self.add_input.text().strip()
         else:
             text = text.strip()

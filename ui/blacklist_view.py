@@ -253,8 +253,9 @@ class BlacklistView(QWidget):
     # │  input box, skipping duplicates, then auto-saves                │
     # └──────────────────────────────────────────────────────────────────┘
     def _on_add_tag(self, text=None):
-        # `text` is passed in when the BooruTextBar emits `submitted`
-        if text is None:
+        # `text` is a str when the text bar emits `submitted`, but a bool
+        # when the Add button is clicked.  Only use `text` if it's a string.
+        if not isinstance(text, str):
             text = self.add_input.text().strip()
         else:
             text = text.strip()
