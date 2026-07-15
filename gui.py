@@ -119,17 +119,6 @@ class BooruGui(QMainWindow):
         self.server_bar.rebuild_list()
         self.trigger_fetch(new=True)
 
-        # ── Silent update check (5s after startup so UI is ready) ─
-        from PyQt6.QtCore import QTimer
-        from updater import Updater
-        self._updater = Updater(self)
-        self._updater.update_available.connect(
-            lambda v, u, n: self.controller.status_updated.emit(
-                f"⬆ Update {v} available — click to download", "green"
-            )
-        )
-        QTimer.singleShot(5000, self._updater.check)
-
     # ══════════════════════════════════════════════════════════════
     #  UI Construction
     # ══════════════════════════════════════════════════════════════
