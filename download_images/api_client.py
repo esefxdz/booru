@@ -101,15 +101,35 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
                 logging.warning("[api_client] HTTP %d from %s", r.status_code, url)
             return []
 
-        return adapter.parse_response(r, site_data)
+        booru_name = settings.manager.active_booru
+        adapter_name = getattr(adapter, "api_type", "unknown")
+
+        result = adapter.parse_response(r, site_data)
+        if not isinstance(result, list):
+            logging.warning(
+                "[api_client] %s/%s parse_response returned %s (expected list) — API may have changed",
+                booru_name, adapter_name, type(result).__name__,
+            )
+            return []
+        return result
     except CloudflareBlockError:
         raise
     except Exception as e:
+        booru = settings.manager.active_booru
+        adapter_name = getattr(adapter, "api_type", "unknown")
         import json
         if isinstance(e, json.JSONDecodeError):
-            logging.error(f"[api_client] JSON decode error from {url}: {e}")
+            logging.error(
+                "[api_client] %s/%s returned invalid JSON from %s: %s",
+                booru, adapter_name, url, e,
+            )
             from download_images.network import BooruAPIError
-            raise BooruAPIError("The booru returned invalid data instead of JSON. The site might be down, or the API URL is wrong.")
-        
-        logging.error(f"[api_client] search_posts error: {e}")
+            raise BooruAPIError(
+                f"'{booru}' ({adapter_name}) returned invalid data instead of JSON. "
+                "The site might be down, or the API URL is wrong."
+            )
+        logging.error(
+            "[api_client] %s/%s parse error for %s: %s",
+            booru, adapter_name, url, e,
+        )
         return []

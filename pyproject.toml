@@ -1,0 +1,38 @@
+[project]
+name = "boorubrowser"
+version = "1.0.0"
+description = "Multi-engine booru image browser with Cloudflare bypass"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes (unused imports, undefined names)
+    "B",      # flake8-bugbear (common bugs)
+    "I",      # isort (import ordering)
+    "SIM",    # flake8-simplify (code simplifications)
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "SIM108", # use ternary operator (sometimes if/else is clearer)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]          # re-exports are fine
+"tests/*.py" = ["F401"]                     # test fixtures may have unused imports
+"generate_boorus.py" = ["B011"]            # assert False is intentional
+"cloudflare_bypasser/__init__.py" = ["F811"] # re-definition for __all__
+"cloudflare_bypasser/fingerprint.py" = ["F401"] # try/except import guards
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false

@@ -337,10 +337,11 @@ class ClickableTagsDropdown(CollapsibleWidget):
 
     def _open_danbooru_cf_bypass(self):
         """Open the Cloudflare bypass dialog for Danbooru."""
-        from ui.browser_dialog import CloudflareBrowserDialog
-        dlg = CloudflareBrowserDialog("https://danbooru.donmai.us", "danbooru", self)
-        dlg.cookies_captured.connect(lambda c: self._on_danbooru_unlocked())
-        dlg.exec()
+        from ui.browser_dialog import run_cf_bypass
+        run_cf_bypass(
+            "danbooru", "https://danbooru.donmai.us", self,
+            on_success=lambda: self._on_danbooru_unlocked(),
+        )
 
     def _on_danbooru_unlocked(self):
         """Called after the user solves the Danbooru CAPTCHA — re-categorize."""

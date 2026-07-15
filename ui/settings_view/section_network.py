@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from ui import settings_view as settings
 from ui import colors
-from cloudflare_bypasser.session import BYPASS_METHODS, BYPASS_METHOD_LABELS, get_available_engines
 
 
 class NetworkSection(QWidget):
@@ -22,6 +21,7 @@ class NetworkSection(QWidget):
         self._build()
 
     def _build(self):
+        from cloudflare_bypasser.session import BYPASS_METHODS, BYPASS_METHOD_LABELS, get_available_engines
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)

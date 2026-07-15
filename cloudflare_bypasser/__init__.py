@@ -112,9 +112,8 @@ async def close_all_sessions():
         try:
             await session.close()
         except Exception:
-            pass
+            log.debug("close_all_sessions: error closing session", exc_info=True)
     _session_cache.clear()
-    log.debug("close_all_sessions: %d sessions closed", len(_session_cache))
 
 
 # ---------------------------------------------------------------------------

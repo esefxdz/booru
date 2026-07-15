@@ -38,7 +38,7 @@ def _setup_logging():
     # Silence noisy loggers that spam every HTTP request / retry
     for noisy in (
         "httpx", "httpcore", "h2", "urllib3", "curl_cffi",
-        "asyncio", "cloudflare_bypasser",
+        "asyncio",
     ):
         logging.getLogger(noisy).setLevel(logging.ERROR)
 
@@ -66,6 +66,23 @@ def _setup_logging():
     sys.excepthook = handle_exception
 
 _setup_logging()
+
+# ── Write a startup marker so we can confirm logging works ────────
+logging.info("BooruBrowser starting (frozen=%s)", getattr(sys, 'frozen', False))
+
+# ── Catch Qt-level messages (C++ crashes, qFatal, etc.) ──────────
+# These bypass Python's exception system and would otherwise kill the
+# app silently.  We log them so they appear in error.txt.
+def _qt_message_handler(mode, context, message):
+    if mode == 4:  # QtFatalMsg — would abort() without this
+        logging.critical("Qt fatal: %s", message)
+    elif mode == 3:  # QtCriticalMsg
+        logging.error("Qt critical: %s", message)
+    else:
+        logging.debug("Qt [%d]: %s", mode, message)
+
+from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
+qInstallMessageHandler(_qt_message_handler)
 
 # Disable GPU hardware acceleration in WebEngine to prevent black screens on Windows
 # without having to disable the Chromium sandbox (--no-sandbox).
@@ -102,7 +119,7 @@ def main():
         myappid = 'esef.boorubrowser.app.1'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     except Exception:
-        pass
+        logging.debug("SetCurrentProcessExplicitAppUserModelID failed", exc_info=True)
 
     from async_loop import start as start_async_loop
     start_async_loop()
@@ -113,6 +130,22 @@ def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
+
+    # ── WebEngine warmup ────────────────────────────────────────
+    # Force Chromium to initialize NOW instead of lazily on first
+    # user interaction.  If the GPU/driver/sandbox causes a crash
+    # during init, it happens here with a visible error dialog
+    # instead of randomly when the user clicks something.
+    try:
+        from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage
+        _warmup_profile = QWebEngineProfile("_startup_warmup", app)
+        _warmup_page = QWebEnginePage(_warmup_profile, None)
+        # Give Chromium a moment to spawn, then clean up
+        _warmup_page.deleteLater()
+        _warmup_profile.deleteLater()
+        logging.info("WebEngine warmup OK")
+    except Exception:
+        logging.warning("WebEngine warmup failed", exc_info=True)
     
     # When frozen by PyInstaller, assets live in sys._MEIPASS (the temp
     # extraction dir).  At runtime we look there first, then fall back to
@@ -153,7 +186,7 @@ def main():
         async_run(thumb_client.close_all())
         async_run(close_all_sessions())
     except Exception:
-        pass
+        logging.debug("Shutdown cleanup failed", exc_info=True)
     finally:
         stop_async_loop()
 

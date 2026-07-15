@@ -46,6 +46,12 @@ class _LightResponse:
 # Recreated if cookies, HTTP/2, or proxy settings change.
 _clients: dict[str, tuple[str, object]] = {}
 
+# Tracks boorus where the lightweight client failed, so callers can skip
+# straight to BypassSession instead of each thumbnail independently
+# discovering the same failure.  Maps booru_name → expiry_time (monotonic).
+_lightweight_blocked: dict[str, float] = {}
+_BLOCKED_TTL = 60.0  # seconds before retrying the lightweight client
+
 
 def _make_client_fp(cookies: dict, use_http2: bool, proxy_url: str) -> str:
     """Fingerprint that captures all settings that affect client construction."""
@@ -153,6 +159,7 @@ async def thumb_fetch(url: str, booru: str = "unknown", timeout: float = 10.0, *
 
         if resp.status_code != 200:
             log.debug("thumb_client: bad status %d for %s", resp.status_code, url)
+            mark_lightweight_blocked(booru)
             return None
 
         # Don't gate on Content-Type — the caller validates bytes with _is_image()
@@ -160,6 +167,7 @@ async def thumb_fetch(url: str, booru: str = "unknown", timeout: float = 10.0, *
 
     except Exception as e:
         log.debug("thumb_client: fetch failed for %s: %s", url, e)
+        mark_lightweight_blocked(booru)
         return None
 
 
@@ -171,3 +179,22 @@ async def close_all():
         except Exception:
             pass
     _clients.clear()
+    _lightweight_blocked.clear()
+
+
+# ---------------------------------------------------------------------------
+# Fallback caching — prevent 50 thumbnails from each triggering the full
+# engine cascade when the lightweight client fails for a booru.
+# ---------------------------------------------------------------------------
+
+def is_lightweight_blocked(booru: str) -> bool:
+    """Return True if the lightweight client recently failed for *booru*."""
+    import time
+    expiry = _lightweight_blocked.get(booru, 0)
+    return time.monotonic() < expiry
+
+
+def mark_lightweight_blocked(booru: str) -> None:
+    """Record that the lightweight client failed for *booru* (TTL: 60s)."""
+    import time
+    _lightweight_blocked[booru] = time.monotonic() + _BLOCKED_TTL

@@ -161,8 +161,9 @@ async def fetch_previews(
 
     # ── Raw-bytes fetcher with lightweight→heavy fallback ─────────
     async def _fetch_raw(url: str, booru: str) -> bytes | None:
-        # 1. Try the fast lightweight client (plain httpx with CF cookies)
-        if thumb_fetch_fn is not None:
+        # 0. Skip lightweight client if it recently failed for this booru
+        from download_images.thumb_client import is_lightweight_blocked
+        if thumb_fetch_fn is not None and not is_lightweight_blocked(booru):
             try:
                 r = await thumb_fetch_fn(url, timeout=10.0, booru=booru)
                 if r is not None and r.status_code == 200:

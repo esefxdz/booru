@@ -23,7 +23,7 @@ from adapters.session_login import supports_session_login, get_session_cookie_na
 from adapters import adapter_choices
 import ui.animations as anims
 from cloudflare_bypasser import get_session, invalidate_session
-from ui.browser_dialog import SessionLoginBrowserDialog, CloudflareBrowserDialog
+from ui.browser_dialog import SessionLoginBrowserDialog
 from ui import settings_view as settings
 import boorus
 
@@ -444,22 +444,15 @@ class APISettingsView(QWidget):
         settings.manager.save()
         self.parent_gui.show_gallery()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _run_cf_bypass  — opens the in-app Chromium browser pointed at │
-    # │  this booru's URL. When cf_clearance arrives, saves it together │
-    # │  with the real User-Agent string so future httpx requests can   │
-    # │  pass the Cloudflare challenge without the browser.             │
-    # └──────────────────────────────────────────────────────────────────┘
     def _run_cf_bypass(self):
-        url = boorus.REGISTRY[self.name]["url"]
-        dlg = CloudflareBrowserDialog(url, self.name, self)
-        # _finalize() inside CloudflareBrowserDialog already calls
-        # store.save_bypass() with the correct UA from the isolated profile.
-        # We only need to trigger a re-fetch on success.
-        dlg.cookies_captured.connect(
-            lambda _: self.parent_gui.trigger_fetch(new=True)
+        """Try auto-solve, fall back to manual CAPTCHA dialog."""
+        from ui.browser_dialog import run_cf_bypass
+        run_cf_bypass(
+            self.name,
+            boorus.REGISTRY[self.name]["url"],
+            self,
+            on_success=lambda: self.parent_gui.trigger_fetch(new=True),
         )
-        dlg.exec()
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _clear_cf  — invalidates the in-memory bypass session and      │

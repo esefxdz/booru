@@ -12,6 +12,7 @@ import os
 import shutil
 from pathlib import Path
 from credentials import migrate_from_settings, get_sensitive, set_sensitive, get_credential, set_credential
+from updater.version import __version__ as VERSION
 
 # --- STATIC CONSTANTS ---
 import sys
@@ -19,7 +20,6 @@ if getattr(sys, 'frozen', False):
     BASE_DIR = Path(os.path.dirname(sys.executable)).resolve()
 else:
     BASE_DIR = Path(__file__).resolve().parent.parent.parent
-VERSION = "1.0.0"
 SEARCH_LIMIT = 50
 TIMEOUT = 30.0
 DOWNLOAD_DIR = BASE_DIR / "files"

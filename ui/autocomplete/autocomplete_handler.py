@@ -93,6 +93,17 @@ class AutocompleteHandler:
     # └──────────────────────────────────────────────────────────────────┘
     def _show(self, results):
         if results is not None:
+            # Skip if the list already shows identical results
+            # (cache emitted first, network returned same data)
+            if self.ac_list.count() > 0 and self.ac_list.isVisible():
+                new_names = {tag.get("name", "") for tag in results[:15]}
+                old_names = {
+                    self.ac_list.item(i).data(Qt.ItemDataRole.UserRole)
+                    for i in range(self.ac_list.count())
+                }
+                if new_names == old_names:
+                    return  # no change — don't flicker
+
             self.ac_list.clear()
             if not results:
                 self.ac_list.hide()

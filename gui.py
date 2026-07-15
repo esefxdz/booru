@@ -48,7 +48,7 @@ from ui.navigation import NavigationManager
 from ui.hotkeys import HotkeyManager
 from ui.windows_utils import apply_dark_title_bar
 from ui.bookmarks_main.bookmarks_db import db
-from ui.browser_dialog import CloudflareBrowserDialog
+from ui.browser_dialog import run_cf_bypass
 from ui.modals import AddBooruDialog, BulkDownloadDialog
 from validation import validate_search_term
 try:
@@ -118,6 +118,17 @@ class BooruGui(QMainWindow):
         # ── Finalise ─────────────────────────────────────────────
         self.server_bar.rebuild_list()
         self.trigger_fetch(new=True)
+
+        # ── Silent update check (5s after startup so UI is ready) ─
+        from PyQt6.QtCore import QTimer
+        from updater import Updater
+        self._updater = Updater(self)
+        self._updater.update_available.connect(
+            lambda v, u, n: self.controller.status_updated.emit(
+                f"⬆ Update {v} available — click to download", "green"
+            )
+        )
+        QTimer.singleShot(5000, self._updater.check)
 
     # ══════════════════════════════════════════════════════════════
     #  UI Construction
@@ -394,11 +405,10 @@ class BooruGui(QMainWindow):
         url = site.get("url", "")
         if not url:
             return
-        dlg = CloudflareBrowserDialog(url, booru_name, self)
-        dlg.cookies_captured.connect(
-            lambda cookies: self._on_cf_cookies_saved(booru_name)
+        run_cf_bypass(
+            booru_name, url, self,
+            on_success=lambda: self._on_cf_cookies_saved(booru_name),
         )
-        dlg.exec()
 
     def _on_cf_cookies_saved(self, booru_name: str):
         self.server_bar.rebuild_list()

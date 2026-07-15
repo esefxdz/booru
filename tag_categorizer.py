@@ -225,7 +225,7 @@ class TagCategorizer:
                     blocked = True
                     self._danbooru_blocked_until = now + 300
             except Exception:
-                # Network error — don't retry other chunks
+                logging.warning("Tag categorizer: danbooru fetch failed for %d tags (network error)", len(chunk), exc_info=True)
                 blocked = True
 
         # Fallback: e621 for anything not resolved
