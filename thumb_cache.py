@@ -65,6 +65,7 @@ from ui import settings_view as settings
 
 _L1_MAX_BYTES: int = 128 * 1024 * 1024    # 128 MB in-memory budget (~6 400 thumbs)
 _L2_MAX_BYTES: int = 1024 * 1024 * 1024  # 1 GB on-disk budget  (~50 000 thumbs)
+_L2_EVICT_CHECK_EVERY: int = 100          # run the eviction scan once per N writes
 _L2_EVICT_RATIO: float = 0.10             # evict oldest 10 % when over limit
 
 
@@ -178,6 +179,7 @@ class _L2:
         self._max_bytes = max_bytes
         self._conn: sqlite3.Connection | None = None
         self._pending_touches: set[str] = set()
+        self._puts_since_evict_check = 0
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _ensure_conn  — opens (or reuses) a long-lived SQLite         │
@@ -282,7 +284,10 @@ class _L2:
             conn.commit()
 
             # Periodic eviction check (amortised: only runs ~every 100 writes)
-            self._maybe_evict(conn)
+            self._puts_since_evict_check += 1
+            if self._puts_since_evict_check >= _L2_EVICT_CHECK_EVERY:
+                self._puts_since_evict_check = 0
+                self._maybe_evict(conn)
 
         except Exception as e:
             logging.error(f"[thumb_cache] L2 put error: {e}")
