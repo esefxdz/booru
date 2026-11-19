@@ -1,9 +1,15 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 import logging
+import re
 import httpx
 from ui import settings_view as settings
 
 _log = logging.getLogger(__name__)
+
+def _cache_filename(domain):
+    """Filesystem-safe cache name. A ":port" must not reach the filename: on NTFS
+    "host:8080.png" is an alternate data stream of a file called "host"."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", domain) + ".png"
 
 def _cache_dir():
     """Return the favicon cache directory, resolved lazily so settings are
@@ -41,7 +47,7 @@ class FaviconFetcher(QThread):
             if not domain:
                 return
             
-            cache_file = cache_dir / f"{domain}.png"
+            cache_file = cache_dir / _cache_filename(domain)
 
             # If we already downloaded this favicon before, emit from cache immediately
             if cache_file.exists():
