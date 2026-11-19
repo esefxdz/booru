@@ -114,7 +114,7 @@ class AutoDetectThread(QThread):
 # ║  CLASS: AddBooruDialog                                              ║
 # ║  Dialog for registering a new custom booru. The user provides a    ║
 # ║  name and URL; auto-detect fills in the engine and API path.       ║
-# ║  On confirm, a .py file is written to the boorus/ folder so the   ║
+# ║  On confirm, the booru is validated and saved to custom_boorus.json║
 # ║  site persists across app restarts.                                ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 class AddBooruDialog(QDialog):
@@ -306,8 +306,8 @@ class AddBooruDialog(QDialog):
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _add_booru  — validates name + URL, appends a numeric suffix   │
-    # │  if the name already exists (e.g. danbooru_2), then writes a    │
-    # │  new .py file to boorus/ and registers it in the in-memory     │
+    # │  if the name already exists (e.g. danbooru_2), then saves       │
+    # │  it to custom_boorus.json and registers it in the in-memory   │
     # │  registry so the server bar icon appears immediately            │
     # └──────────────────────────────────────────────────────────────────┘
     def _add_booru(self):
@@ -338,23 +338,21 @@ class AddBooruDialog(QDialog):
             counter += 1
 
         try:
-            # Invalidate any stale importlib cache from a previously-deleted
-            # booru with the same name so the new file is imported fresh.
-            boorus.invalidate_cache(name)
-
-            # Register in memory first so write_booru_file() can read it.
-            boorus.REGISTRY[name] = {
-                "url":      url,
-                "api_path": api_path,
-                "post_key": None,
-                "api_type": api_type,
-            }
-
-            # Use the centralised helper — it writes a clean template from
-            # REGISTRY data and fsync()s it, the same path used by _save_engine.
-            if not boorus.write_booru_file(name):
+            # Validates every field and persists to custom_boorus.json.
+            try:
+                boorus.add_booru(name, {
+                    "url":      url,
+                    "api_path": api_path,
+                    "post_key": None,
+                    "api_type": api_type,
+                })
+            except boorus.BooruValidationError as e:
                 boorus.REGISTRY.pop(name, None)
-                self._set_status("Could not write booru file — check folder permissions.", "red")
+                self._set_status(f"Invalid input: {e}", "red")
+                return
+            except OSError:
+                boorus.REGISTRY.pop(name, None)
+                self._set_status("Could not save booru — check folder permissions.", "red")
                 return
 
             # Add to the persistent sidebar order and save immediately.

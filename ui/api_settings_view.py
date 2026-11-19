@@ -11,7 +11,6 @@ Tabs:
   ⚙ Engine       — switch the API engine for this booru
   ℹ Info/Delete  — read-only info + delete button
 """
-import os
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QMessageBox, QTabWidget,
@@ -260,9 +259,8 @@ class APISettingsView(QWidget):
         info_layout.addLayout(info_form)
         info_layout.addStretch()
 
-        # Only show delete if the booru has a file on disk (built-ins don't)
-        booru_file = settings.BASE_DIR / "boorus" / f"{name}.py"
-        if os.path.exists(booru_file):
+        # Any registered booru can be removed (built-ins too; removal persists).
+        if name in boorus.REGISTRY:
             del_btn = QPushButton("🗑  Delete This Booru")
             del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             del_btn.setStyleSheet(f"background:{colors.DANGER}; color:{colors.TEXT_PRIMARY}; padding:8px; border-radius:4px;")
@@ -317,7 +315,7 @@ class APISettingsView(QWidget):
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _save_engine  — changes the api_type both in the in-memory    │
-    # │  registry and in the booru's .py file so it survives restart.  │
+    # │  registry and in custom_boorus.json so it survives restart.     │
     # │  Reads the file line-by-line and rewrites only the API_TYPE     │
     # │  line to avoid stomping on custom edits to other fields.        │
     # └──────────────────────────────────────────────────────────────────┘
@@ -334,12 +332,11 @@ class APISettingsView(QWidget):
             QMessageBox.warning(self, "Error", "Booru not found in registry.")
             return
 
-        # …then atomically rewrite the .py file from the full REGISTRY data
-        # (replaces the old brittle line-by-line readlines() approach).
+        # …then persist it (validated) to custom_boorus.json.
         if not boorus.write_booru_file(self.name):
             QMessageBox.warning(
                 self, "Error",
-                f"Could not write {self.name}.py — check file permissions."
+                f"Could not save {self.name} — check file permissions."
             )
             return
 

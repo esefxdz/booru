@@ -1,165 +1,306 @@
 """
 boorus/__init__.py
 
-Auto-discovers all built-in booru definitions (*.py files in this package)
-and exposes them as the REGISTRY dict. Custom/user-added boorus are merged
-into REGISTRY at app startup from settings.json.
+Booru registry. Exposes ``REGISTRY``: ``{name: {url, api_path, post_key, api_type}}``.
 
-Provides helpers for writing booru files and invalidating importlib caches
-so that add/remove/engine-change operations are atomic and durable.
+Storage model
+-------------
+* Built-in boorus are plain data in ``BUILTIN_BOORUS`` below.
+* Everything the user changes (custom boorus, engine overrides on a built-in,
+  removed built-ins) lives in ``custom_boorus.json`` next to ``settings.json``.
+
+Boorus used to be stored as generated ``.py`` files inside this package and
+imported at startup. That let a crafted URL in "Add booru" execute code, and in
+the packaged exe the package folder is a temp dir, so custom boorus were lost
+on exit. Legacy ``.py`` files are migrated once by *parsing* them with ``ast``
+(never importing them) and then deleted.
+
+Every entry is validated before it is stored or loaded, so callers (the Qt UI
+today, an HTTP API later) cannot put arbitrary data in the registry.
 """
-from pathlib import Path
-import importlib
-import sys
+from __future__ import annotations
+
+import ast
+import json
 import logging
+import os
+import re
+import sys
+from pathlib import Path
+from urllib.parse import urlparse
+
+log = logging.getLogger("boorus")
 
 REGISTRY: dict = {}
 
-BOORU_TEMPLATE = """\
-NAME     = "{name}"
-URL      = "{url}"
-API_PATH = "{api_path}"
-POST_KEY = {post_key}
-API_TYPE = "{api_type}"
-"""
+BUILTIN_BOORUS: dict[str, dict] = {
+    "gelbooru": {
+        "url": "https://gelbooru.com",
+        "api_path": "/index.php",
+        "post_key": None,
+        "api_type": "gelbooru",
+    },
+    "safebooru": {
+        "url": "https://safebooru.org",
+        "api_path": "/index.php",
+        "post_key": None,
+        "api_type": "gelbooru",
+    },
+}
+
+_PACKAGE_DIR = Path(__file__).resolve().parent
 
 
-def remove_booru(name: str) -> str | None:
-    """Delete a booru from the registry and its .py file from disk.
+def _app_dir() -> Path:
+    """Directory that holds settings.json (next to the exe, or the repo root)."""
+    if getattr(sys, "frozen", False):
+        return Path(os.path.dirname(sys.executable)).resolve()
+    return _PACKAGE_DIR.parent
 
-    Returns the name of a fallback booru (or None if the registry is
-    now empty) so the caller can switch the active booru.
+
+# Module-level so tests can point it at a temp dir.
+STORE_FILE: Path = _app_dir() / "custom_boorus.json"
+
+
+class BooruValidationError(ValueError):
+    """Raised when a booru entry fails validation."""
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,63}$")
+_API_PATH_RE = re.compile(r"^/[A-Za-z0-9_\-./]*$")
+_POST_KEY_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
+
+
+def _known_api_types() -> set[str]:
+    from adapters import ADAPTERS
+    return set(ADAPTERS)
+
+
+def validate_name(name: str) -> str:
+    if not isinstance(name, str) or not _NAME_RE.match(name):
+        raise BooruValidationError(
+            "Name must be 1-64 chars of lowercase letters, digits, '_' or '-'"
+        )
+    return name
+
+
+def validate_entry(name: str, data: dict) -> dict:
+    """Return a clean copy of *data*, or raise BooruValidationError."""
+    validate_name(name)
+    if not isinstance(data, dict):
+        raise BooruValidationError("Booru entry must be an object")
+
+    url = data.get("url", "")
+    if not isinstance(url, str):
+        raise BooruValidationError("URL must be a string")
+    url = url.strip().rstrip("/")
+    if any(c.isspace() for c in url) or any(c in url for c in "\"'<>\\`"):
+        raise BooruValidationError("URL contains invalid characters")
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise BooruValidationError("URL must be http(s)://host")
+    if parsed.username or parsed.password:
+        raise BooruValidationError("URL must not contain credentials")
+    if parsed.query or parsed.fragment:
+        raise BooruValidationError("URL must not contain a query or fragment")
+    if len(url) > 512:
+        raise BooruValidationError("URL too long")
+
+    api_path = data.get("api_path") or "/index.php"
+    if not isinstance(api_path, str) or not _API_PATH_RE.match(api_path) or ".." in api_path:
+        raise BooruValidationError("API path must start with '/' and contain only URL path characters")
+    if len(api_path) > 256:
+        raise BooruValidationError("API path too long")
+
+    api_type = data.get("api_type") or "gelbooru"
+    if api_type not in _known_api_types():
+        raise BooruValidationError(f"Unknown API type '{api_type}'")
+
+    post_key = data.get("post_key")
+    if post_key is not None and (not isinstance(post_key, str) or not _POST_KEY_RE.match(post_key)):
+        raise BooruValidationError("post_key must be a short identifier or null")
+
+    return {"url": url, "api_path": api_path, "post_key": post_key, "api_type": api_type}
+
+
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
+
+def _read_store() -> dict:
+    """Return ``{"boorus": {...}, "removed": [...]}``. Never raises."""
+    empty = {"boorus": {}, "removed": []}
+    if not STORE_FILE.exists():
+        return empty
+    try:
+        raw = json.loads(STORE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        log.exception("[boorus] %s is unreadable; ignoring it", STORE_FILE)
+        return empty
+    if not isinstance(raw, dict):
+        return empty
+    entries = raw.get("boorus") if isinstance(raw.get("boorus"), dict) else {}
+    removed = raw.get("removed") if isinstance(raw.get("removed"), list) else []
+    return {"boorus": entries, "removed": [r for r in removed if isinstance(r, str)]}
+
+
+def _write_store(store: dict) -> bool:
+    try:
+        STORE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STORE_FILE.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(store, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(STORE_FILE)
+        return True
+    except Exception:
+        log.exception("[boorus] Failed to write %s", STORE_FILE)
+        return False
+
+
+def _parse_legacy_py(path: Path) -> tuple[str, dict] | None:
+    """Read NAME/URL/... literals from an old generated booru .py file.
+
+    Uses ``ast`` so a malicious file is never executed. Anything that is not a
+    plain ``NAME = <literal>`` assignment is ignored.
     """
-    import os as _os
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    values: dict = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            try:
+                values[node.targets[0].id] = ast.literal_eval(node.value)
+            except Exception:
+                continue
+    name = values.get("NAME", path.stem)
+    data = {
+        "url": values.get("URL", ""),
+        "api_path": values.get("API_PATH", "/index.php"),
+        "post_key": values.get("POST_KEY"),
+        "api_type": values.get("API_TYPE", "gelbooru"),
+    }
+    return (name, data) if isinstance(name, str) else None
 
-    # 1. Remove from in-memory registry
-    REGISTRY.pop(name, None)
 
-    # 2. Delete the .py file
-    booru_dir = Path(__file__).resolve().parent
-    booru_file = booru_dir / f"{name}.py"
-    if _os.path.exists(booru_file):
-        try:
-            _os.remove(booru_file)
-        except OSError:
-            logging.exception("[boorus] Error deleting %s", booru_file)
+def _migrate_legacy_py_files(store: dict) -> bool:
+    """Move user-generated ``boorus/*.py`` files into the JSON store.
 
-    # 3. Purge importlib cache + .pyc files
-    invalidate_cache(name)
-
-    # 4. Return a fallback booru name (or None if nothing left)
-    return next(iter(REGISTRY.keys()), None) if REGISTRY else None
-
-
-def _discover():
-    """Import every .py file in this directory and register its metadata."""
-    booru_dir = Path(__file__).resolve().parent
-    for f in sorted(booru_dir.glob("*.py")):
+    Returns True if the store changed.
+    """
+    changed = False
+    for f in sorted(_PACKAGE_DIR.glob("*.py")):
         if f.name.startswith("_"):
             continue
-        mod = importlib.import_module(f"boorus.{f.stem}")
-        name = getattr(mod, "NAME", f.stem)
-        REGISTRY[name] = {
-            "url":      getattr(mod, "URL",      ""),
-            "api_path": getattr(mod, "API_PATH", "/index.php"),
-            "post_key": getattr(mod, "POST_KEY", None),
-            "api_type": getattr(mod, "API_TYPE", "gelbooru"),
-        }
+        parsed = _parse_legacy_py(f)
+        if parsed is None:
+            log.warning("[boorus] Could not parse legacy file %s; leaving it alone", f)
+            continue
+        name, data = parsed
+        try:
+            clean = validate_entry(name, data)
+        except BooruValidationError as e:
+            log.warning("[boorus] Legacy booru %s rejected (%s); file left in place", f.name, e)
+            continue
+        if BUILTIN_BOORUS.get(name) != clean and store["boorus"].get(name) is None:
+            store["boorus"][name] = clean
+            changed = True
+        try:
+            f.unlink()
+            log.info("[boorus] Migrated legacy booru file %s to %s", f.name, STORE_FILE.name)
+        except OSError:
+            log.warning("[boorus] Could not delete migrated legacy file %s", f)
+    return changed
+
+
+def load() -> None:
+    """(Re)build REGISTRY from built-ins + the JSON store."""
+    store = _read_store()
+    if not getattr(sys, "frozen", False) and _migrate_legacy_py_files(store):
+        _write_store(store)
+
+    REGISTRY.clear()
+    removed = set(store["removed"])
+    for name, data in BUILTIN_BOORUS.items():
+        if name not in removed:
+            REGISTRY[name] = dict(data)
+    for name, data in store["boorus"].items():
+        try:
+            REGISTRY[name] = validate_entry(name, data)
+        except BooruValidationError as e:
+            log.warning("[boorus] Skipping invalid stored booru '%s': %s", name, e)
+
+
+# ---------------------------------------------------------------------------
+# Public API (kept compatible with the old .py-file based helpers)
+# ---------------------------------------------------------------------------
+
+def add_booru(name: str, data: dict) -> dict:
+    """Validate, register and persist a booru. Returns the stored entry.
+
+    Raises BooruValidationError on invalid input, OSError if it cannot be saved.
+    """
+    clean = validate_entry(name, data)
+    REGISTRY[name] = clean
+    if not write_booru_file(name):
+        raise OSError(f"Could not save {STORE_FILE}")
+    return clean
 
 
 def write_booru_file(name: str) -> bool:
-    """Overwrite the .py file for *name* using data from REGISTRY.
+    """Persist REGISTRY[name] to the JSON store.
 
-    This ensures the file on disk always matches the in-memory state,
-    avoiding the old ``readlines()`` / line-replacement approach that
-    could corrupt files when the format changed.
-
-    Returns True on success, False if the booru is not in REGISTRY.
+    The name is historical (boorus used to be .py files); callers mutate
+    REGISTRY and then call this. Invalid entries are refused and not written.
     """
     data = REGISTRY.get(name)
     if not data:
-        logging.warning("[boorus] write_booru_file: '%s' not in REGISTRY", name)
+        log.warning("[boorus] write_booru_file: '%s' not in REGISTRY", name)
         return False
-
-    booru_dir = Path(__file__).resolve().parent
-    booru_file = booru_dir / f"{name}.py"
-
-    post_key = data.get("post_key")
-    post_key_repr = f'"{post_key}"' if isinstance(post_key, str) else str(post_key)
-
-    content = BOORU_TEMPLATE.format(
-        name=name,
-        url=data.get("url", ""),
-        api_path=data.get("api_path", ""),
-        post_key=post_key_repr,
-        api_type=data.get("api_type", "gelbooru"),
-    )
-
     try:
-        with open(booru_file, "w", encoding="utf-8") as f:
-            f.write(content)
-            f.flush()
-            # Ensure the write hits disk before we try to import from it
-            import os as _os
-            _os.fsync(f.fileno())
-        return True
-    except Exception:
-        logging.exception("[boorus] Failed to write %s", booru_file)
+        clean = validate_entry(name, data)
+    except BooruValidationError as e:
+        log.error("[boorus] Refusing to save invalid booru '%s': %s", name, e)
         return False
+
+    store = _read_store()
+    if BUILTIN_BOORUS.get(name) == clean:
+        store["boorus"].pop(name, None)   # back to the built-in default
+    else:
+        store["boorus"][name] = clean
+    if name in store["removed"]:
+        store["removed"].remove(name)
+    REGISTRY[name] = clean
+    return _write_store(store)
+
+
+def remove_booru(name: str) -> str | None:
+    """Remove a booru and persist that. Returns a fallback booru name or None."""
+    REGISTRY.pop(name, None)
+    store = _read_store()
+    store["boorus"].pop(name, None)
+    if name in BUILTIN_BOORUS and name not in store["removed"]:
+        store["removed"].append(name)
+    _write_store(store)
+    return next(iter(REGISTRY), None)
 
 
 def invalidate_cache(name: str) -> None:
-    """Remove a booru module from ``sys.modules`` and delete its ``.pyc``.
-
-    Call this after writing a booru file so that the next
-    ``importlib.import_module`` picks up the fresh content instead of
-    a stale cached bytecode file.
-    """
-    mod_key = f"boorus.{name}"
-    if mod_key in sys.modules:
-        del sys.modules[mod_key]
-
-    # Nuke any cached bytecode so an old .pyc doesn't shadow the new .py
-    booru_dir = Path(__file__).resolve().parent
-    pycache = booru_dir / "__pycache__"
-    if pycache.exists():
-        for pyc in pycache.glob(f"{name}.cpython-*.pyc"):
-            try:
-                pyc.unlink()
-            except OSError:
-                pass
-        # Also nuke the variant without cpython tag (older Python)
-        for pyc in pycache.glob(f"{name}.*.pyc"):
-            try:
-                pyc.unlink()
-            except OSError:
-                pass
+    """No-op. Kept for callers written for the old .py-file storage."""
 
 
 def reregister(name: str) -> bool:
-    """Re-read a booru .py file and update REGISTRY in-place.
-
-    Used after writing a booru file to ensure the in-memory REGISTRY
-    reflects exactly what was written (catches any write errors).
-    Returns True if the booru was re-registered successfully.
-    """
-    invalidate_cache(name)
-    try:
-        mod = importlib.import_module(f"boorus.{name}")
-        REGISTRY[name] = {
-            "url":      getattr(mod, "URL",      ""),
-            "api_path": getattr(mod, "API_PATH", "/index.php"),
-            "post_key": getattr(mod, "POST_KEY", None),
-            "api_type": getattr(mod, "API_TYPE", "gelbooru"),
-        }
-        return True
-    except ModuleNotFoundError:
-        # The file was deleted — remove from REGISTRY
-        REGISTRY.pop(name, None)
-        return False
-    except Exception:
-        logging.exception("[boorus] Failed to re-register '%s'", name)
-        return False
+    """Reload *name* from storage into REGISTRY. Returns True if it exists."""
+    load()
+    return name in REGISTRY
 
 
-_discover()
+load()
