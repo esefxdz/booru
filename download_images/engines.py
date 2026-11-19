@@ -48,6 +48,16 @@ _TIMEOUT = 60
 _CHUNK = 65536
 
 
+def _proxy_url() -> str:
+    """The user's configured proxy ("" = direct). Read on every download so a
+    settings change applies immediately."""
+    try:
+        from ui import settings_view as settings
+        return (getattr(settings.manager, "proxy_url", "") or "").strip()
+    except Exception:
+        return ""
+
+
 def _is_tls_error(e: BaseException) -> bool:
     if isinstance(e, ssl.SSLError):
         return True
@@ -101,9 +111,15 @@ def _download_urllib(url: str, dest: Path, headers: dict,
     """Download using Python's built-in urllib."""
     req = urllib.request.Request(url, headers=headers)
     ctx = ssl.create_default_context()
-    opener = urllib.request.build_opener(
-        urllib.request.HTTPSHandler(context=ctx), _SameSiteRedirectHandler()
-    )
+    handlers: list = [urllib.request.HTTPSHandler(context=ctx), _SameSiteRedirectHandler()]
+    proxy = _proxy_url()
+    if proxy:
+        if not proxy.lower().startswith(("http://", "https://")):
+            # urllib has no SOCKS support. Fail instead of silently going direct.
+            log.error("urllib: proxy %r is not HTTP; choose another download engine", proxy.split("@")[-1])
+            return False
+        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    opener = urllib.request.build_opener(*handlers)
     try:
         resp = opener.open(req, timeout=_TIMEOUT)
     except urllib.error.HTTPError as e:
@@ -139,8 +155,11 @@ def _download_requests(url: str, dest: Path, headers: dict,
     if _requests_session is None:
         _requests_session = _req.Session()
 
+    proxy = _proxy_url()
+    proxies = {"http": proxy, "https": proxy} if proxy else None
     try:
-        with _requests_session.get(url, headers=headers, stream=True, timeout=_TIMEOUT) as r:
+        with _requests_session.get(url, headers=headers, stream=True, timeout=_TIMEOUT,
+                                   proxies=proxies) as r:
             if r.status_code != 200:
                 log.warning("requests: HTTP %s for %s", r.status_code, url)
                 return False
@@ -157,18 +176,25 @@ def _download_requests(url: str, dest: Path, headers: dict,
 # ═══════════════════════════════════════════════════════════════════════
 
 _httpx_client = None
+_httpx_client_key = None
 
 
 def _download_httpx(url: str, dest: Path, headers: dict,
                     on_progress: Callable | None = None) -> bool:
     """Download using ``httpx`` with streaming."""
     import httpx
-    global _httpx_client
+    global _httpx_client, _httpx_client_key
     from ui import settings_view as settings
 
-    if _httpx_client is None:
-        use_h2 = getattr(settings.manager, "use_http2", False)
-        _httpx_client = httpx.Client(timeout=_TIMEOUT, follow_redirects=True, http2=use_h2)
+    use_h2 = getattr(settings.manager, "use_http2", False)
+    proxy = _proxy_url()
+    key = (use_h2, proxy)
+    if _httpx_client is None or _httpx_client_key != key:
+        if _httpx_client is not None:
+            _httpx_client.close()
+        _httpx_client = httpx.Client(timeout=_TIMEOUT, follow_redirects=True, http2=use_h2,
+                                     proxy=proxy or None)
+        _httpx_client_key = key
 
     try:
         with _httpx_client.stream("GET", url, headers=headers) as r:
@@ -195,8 +221,10 @@ def _download_curl_cffi(url: str, dest: Path, headers: dict,
     from curl_cffi import requests as cffi_req
 
     try:
+        proxy = _proxy_url()
         r = cffi_req.get(url, headers=headers, impersonate="chrome136",
-                         timeout=_TIMEOUT, allow_redirects=True)
+                         timeout=_TIMEOUT, allow_redirects=True,
+                         proxies={"http": proxy, "https": proxy} if proxy else None)
     except Exception as e:
         if _is_tls_error(e):
             log.error("curl_cffi: TLS certificate verification failed for %s: %s", url, e)
