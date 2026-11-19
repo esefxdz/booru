@@ -5,6 +5,8 @@ import threading
 import time
 import shutil
 
+from fileutil import atomic_write_text
+
 from app_paths import legacy_appdata_dir
 from ui.settings_view.manager import BASE_DIR
 
@@ -66,11 +68,16 @@ CAT_MAP = {
     5: "meta"
 }
 
+_UNRESOLVED_RETRY_SECONDS = 300
+
 class TagCategorizer:
     def __init__(self):
         self.cache_file = BASE_DIR / "tag_cache.json"
         self._legacy_cache_file = legacy_appdata_dir() / "tag_cache.json"
         self.cache = {}
+        # Tags a lookup could not resolve: remembered in memory only, with an
+        # expiry, so a network failure is never persisted as "general".
+        self._unresolved: dict[str, float] = {}
         self._load_cache()
         self._lock = threading.Lock()
         self._fetch_lock = threading.Lock()
@@ -94,8 +101,7 @@ class TagCategorizer:
     def _save_cache(self):
         self.cache_file.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.cache_file, "w", encoding="utf-8") as f:
-                json.dump(self.cache, f)
+            atomic_write_text(self.cache_file, json.dumps(self.cache))
         except Exception as e:
             logging.error(f"[tag_categorizer] Failed to save cache: {e}")
 
@@ -142,6 +148,8 @@ class TagCategorizer:
                 
             if cache_key in self.cache:
                 result[self.cache[cache_key]].append(tag)
+            elif self._unresolved.get(cache_key, 0) > time.monotonic():
+                result["general"].append(tag)
             else:
                 unknown_tags.append(tag)
 
@@ -161,8 +169,12 @@ class TagCategorizer:
                 # Re-evaluate previously unknown tags using now-populated cache
                 for tag in unknown_tags:
                     cache_key = tag.replace(" ", "_").lower()
-                    cat = self.cache.get(cache_key, "general") 
-                    self.cache[cache_key] = cat 
+                    cat = self.cache.get(cache_key)
+                    if cat is None:
+                        # Not resolved (failure or unknown tag): show as general
+                        # but do not persist it; retry after a while.
+                        cat = "general"
+                        self._unresolved[cache_key] = time.monotonic() + _UNRESOLVED_RETRY_SECONDS
                     result[cat].append(tag)
                 self._save_cache()
 
@@ -171,7 +183,7 @@ class TagCategorizer:
     def _fetch_from_danbooru(self, tags: list):
         # Circuit breaker: if Danbooru was blocked recently, skip straight to e621.
         now = time.monotonic()
-        if now - getattr(self, '_danbooru_blocked_until', 0) < 300:
+        if now < getattr(self, '_danbooru_blocked_until', 0):
             self._fetch_from_e621(tags)
             return
 
