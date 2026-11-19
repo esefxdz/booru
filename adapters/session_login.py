@@ -141,8 +141,14 @@ async def perform_login(
             # send these domain-less cookies to every redirect target.
             headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in bypass_session.cookies.items())
 
+    site_host = (parsed_site.hostname or "").lower().rstrip(".")
+
     def _on_site(cookie_domain: str) -> bool:
-        d = (cookie_domain or "").lstrip(".")
+        d = (cookie_domain or "").lstrip(".").lower()
+        if site_host and "." not in site_host and ":" not in site_host:
+            # Dotless site (localhost, nas): the cookiejar stores host-only
+            # cookies as "<host>.local". Exact host only, no site_key logic.
+            return d in (site_host, site_host + ".local")
         return bool(d) and same_site(f"https://{d}/", site_url)
 
     try:

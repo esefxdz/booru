@@ -375,7 +375,10 @@ def is_private_host(host: str) -> bool:
     try:
         ip = _ipaddress.ip_address(host)
     except ValueError:
-        return False
+        # A bare intranet name ("nas") resolves via the local network, never
+        # the public DNS. Digit-leading dotless strings are excluded: the OS
+        # resolver reads "134744072" or "0x8080808" as an IPv4 address.
+        return bool(re.fullmatch(r"[a-z_][a-z0-9_-]*", host))
     return ip.is_private or ip.is_loopback or ip.is_link_local
 
 

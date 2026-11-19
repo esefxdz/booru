@@ -260,3 +260,95 @@ def test_login_same_site_redirect_and_harvest(login_servers):
 def test_login_refuses_plain_http_to_public_host():
     from adapters.session_login import perform_login
     assert asyncio.run(perform_login("http://example.com", "gelbooru", "a", "b")) == {}
+
+
+# --- dotless hosts (localhost, intranet names) ------------------------------
+
+@pytest.mark.parametrize("site,sent_to,expected", [
+    ("http://localhost:8080/x", "http://localhost:8080/y", "a=1"),
+    ("http://nas:8080/x", "http://nas:8080/y", "a=1"),
+    ("http://nas:8080/x", "http://other:8080/y", None),
+    ("http://nas:8080/x", "http://nas.evil.com/y", None),
+    ("http://nas:8080/x", "http://localhost:8080/y", None),
+    ("http://localhost:8080/x", "https://example.com/y", None),
+    ("https://gelbooru.com/x", "https://img.gelbooru.com/y", "a=1"),
+    ("https://gelbooru.com/x", "https://evil.com/y", None),
+])
+def test_engine_cookie_jar_dotless_hosts(site, sent_to, expected):
+    import urllib.request
+    import requests
+    from cloudflare_bypasser.engines import _set_site_scoped_cookies
+    jar = requests.Session().cookies
+    _set_site_scoped_cookies(jar, {"a": "1"}, site)
+    req = urllib.request.Request(sent_to)
+    jar.add_cookie_header(req)
+    assert req.get_header("Cookie") == expected
+
+
+@pytest.mark.parametrize("host,expected", [
+    ("localhost", True), ("nas", True), ("my-nas", True), ("NAS.", True),
+    ("printer.local", True), ("192.168.1.5", True), ("10.0.0.2", True),
+    ("example.com", False), ("8.8.8.8", False), ("", False),
+    ("2001:4860:4860::8888", False), ("::1", True),
+    ("134744072", False), ("0x8080808", False), ("1", False),
+])
+def test_is_private_host(host, expected):
+    assert v.is_private_host(host) is expected
+
+
+def test_login_harvests_from_localhost():
+    import socket
+    from adapters.session_login import perform_login
+
+    class _DualStack(http.server.ThreadingHTTPServer):
+        address_family = socket.AF_INET6
+
+        def server_bind(self):
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            super().server_bind()
+
+    try:
+        srv = _DualStack(("::", 0), _Login)
+    except OSError:
+        pytest.skip("no IPv6 dual-stack sockets")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    _Login.seen = []
+    _Login.mode = "ok"
+    site = f"http://localhost:{srv.server_port}"
+    try:
+        out = asyncio.run(perform_login(site, "gelbooru", "alice", "hunter2"))
+    finally:
+        srv.shutdown()
+    assert _Login.seen, "login request never reached the localhost server"
+    assert out == {"PHPSESSID": "good"}
+
+
+def test_login_allows_plain_http_to_bare_lan_name(monkeypatch):
+    import httpx
+    from adapters.session_login import perform_login
+    seen = []
+
+    class _Resp:
+        is_redirect = False
+        url = "http://nas:8080/x"
+
+    class _Client:
+        def __init__(self, *a, **k):
+            self.headers = {}
+            self.cookies = httpx.Cookies()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, **k):
+            seen.append(url)
+            self.cookies.set("PHPSESSID", "good", domain="nas.local", path="/")
+            self.cookies.set("PHPSESSID2", "x", domain="evil.com", path="/")
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    out = asyncio.run(perform_login("http://nas:8080", "gelbooru", "a", "b"))
+    assert seen and out == {"PHPSESSID": "good"}

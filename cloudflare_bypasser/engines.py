@@ -367,7 +367,15 @@ def _set_site_scoped_cookies(jar, cookies: dict, url: str) -> None:
         ipaddress.ip_address(host)
         domain = host                      # IP address: that exact host only
     except ValueError:
-        domain = "." + site_key(host)
+        key = site_key(host)
+        if "." in key:
+            domain = "." + key
+        else:
+            # Dotless host (localhost, an intranet name): cookiejar matches it
+            # as "<host>.local", so bind to that. cookiejar also sends it to a
+            # host literally named "<host>.local" and its subdomains (mDNS);
+            # other dotless or dotted hosts never get it.
+            domain = key + ".local"
     for k, v in cookies.items():
         jar.set(k, v, domain=domain, path="/")
 
