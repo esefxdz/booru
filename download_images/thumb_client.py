@@ -114,7 +114,8 @@ async def _get_client(booru: str, cookies: dict, use_http2: bool, proxy_url: str
     client = httpx.AsyncClient(
         http2=use_http2,
         follow_redirects=True,
-        cookies=cookies or None,
+        # No client-level cookies: httpx would send domain-less cookies to
+        # every host. thumb_fetch() adds them per request, same site only.
         proxy=proxy_url or None,
         headers=image_headers,
         limits=httpx.Limits(
@@ -155,7 +156,14 @@ async def thumb_fetch(url: str, booru: str = "unknown", timeout: float = 10.0, *
 
         client = await _get_client(booru, cookies, use_http2, proxy_url)
 
-        resp = await client.get(url, timeout=timeout)
+        from validation import same_site
+        import boorus
+        site_url = boorus.REGISTRY.get(booru, {}).get("url", "")
+        req_headers = None
+        if cookies and same_site(url, site_url):
+            req_headers = {"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())}
+
+        resp = await client.get(url, timeout=timeout, headers=req_headers)
 
         if resp.status_code != 200:
             log.debug("thumb_client: bad status %d for %s", resp.status_code, url)

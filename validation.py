@@ -312,3 +312,49 @@ def safe_media_path(folder, post_id, url: str, prefix: str = "", default_ext: st
     if dest.resolve().parent != folder.resolve():
         raise ValidationError(f"Refusing to write outside {folder}: {name!r}")
     return dest
+
+
+# ---------------------------------------------------------------------------
+# Cookie scoping
+# ---------------------------------------------------------------------------
+# Bypass/session cookies are stored as a flat {name: value} dict without the
+# domain they were issued for. These helpers decide whether a request URL is
+# "the same site" as the booru, so cookies are never sent to third parties.
+
+import ipaddress as _ipaddress
+
+# Second-level labels that are public suffixes under a ccTLD (co.uk, com.au...).
+_SLD_SUFFIXES = frozenset({"co", "com", "net", "org", "ac", "gov", "edu", "ne", "or", "go"})
+
+
+def site_key(host: str) -> str:
+    """Approximate registrable domain of *host* ("img3.gelbooru.com" -> "gelbooru.com").
+
+    IP addresses and single-label hosts are returned unchanged. This is a
+    small heuristic, not the full Public Suffix List; it errs on the side of
+    a *longer* key (fewer hosts match) for ccTLD second-level suffixes.
+    """
+    host = (host or "").strip().lower().rstrip(".")
+    try:
+        _ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        pass
+    labels = host.split(".")
+    if len(labels) <= 2:
+        return host
+    if len(labels[-1]) == 2 and labels[-2] in _SLD_SUFFIXES:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def same_site(url: str, site_url: str) -> bool:
+    """True if *url* belongs to the same registrable domain as *site_url*."""
+    try:
+        a = urlparse(url or "").hostname
+        b = urlparse(site_url or "").hostname
+    except ValueError:
+        return False
+    if not a or not b:
+        return False
+    return site_key(a) == site_key(b)

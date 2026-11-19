@@ -73,13 +73,39 @@ def _write_stream(dest: Path, chunks, total: int, on_progress: Callable | None) 
 #  Engine 1 — urllib (Python stdlib, always available)
 # ═══════════════════════════════════════════════════════════════════════
 
+class _SameSiteRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """urllib copies every header (Cookie, Authorization) to the redirect
+    target, whatever its host. Drop them when the redirect leaves the site,
+    and refuse redirects to non-http(s) schemes."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from validation import ValidationError, require_http_url, same_site
+        try:
+            require_http_url(newurl)
+        except ValidationError:
+            return None
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and not same_site(newurl, req.full_url):
+            for h in ("Cookie", "Authorization"):
+                new.remove_header(h)
+                new.unredirected_hdrs.pop(h, None)
+            # Request stores header names .capitalize()d
+            for k in list(new.headers):
+                if k.lower() in ("cookie", "authorization"):
+                    del new.headers[k]
+        return new
+
+
 def _download_urllib(url: str, dest: Path, headers: dict,
                      on_progress: Callable | None = None) -> bool:
     """Download using Python's built-in urllib."""
     req = urllib.request.Request(url, headers=headers)
     ctx = ssl.create_default_context()
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=ctx), _SameSiteRedirectHandler()
+    )
     try:
-        resp = urllib.request.urlopen(req, timeout=_TIMEOUT, context=ctx)
+        resp = opener.open(req, timeout=_TIMEOUT)
     except urllib.error.HTTPError as e:
         log.warning("urllib: HTTP %s for %s", e.code, url)
         return False

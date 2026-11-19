@@ -89,7 +89,7 @@ def download_post(
         engine = DEFAULT_ENGINE
 
     # ── Build request headers ─────────────────────────────────────
-    headers = _build_headers(post)
+    headers = _build_headers(post, url)
 
     # ── Execute download ──────────────────────────────────────────
     log.info("Downloading post %s via %s -> %s", post_id, engine, dest.name)
@@ -141,8 +141,12 @@ async def download_post_async(
 # ║    - cf_clearance cookie injected as a Cookie header                ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
-def _build_headers(post: dict) -> dict:
-    """Build HTTP headers for downloading a post's image."""
+def _build_headers(post: dict, url: str = "") -> dict:
+    """Build HTTP headers for downloading *url* (a post's image).
+
+    Bypass cookies are attached only when *url* is on the booru's own site;
+    a file URL on any other host gets no cookies.
+    """
     from ui import settings_view as settings
     import boorus
 
@@ -166,8 +170,9 @@ def _build_headers(post: dict) -> dict:
     if bypass_ua:
         headers["User-Agent"] = bypass_ua
 
-    # Inject CF bypass cookies as a Cookie header
-    bypass_cookies = cf_store.get_cookies(post_booru)
+    # Inject CF bypass cookies as a Cookie header — same site only
+    from validation import same_site
+    bypass_cookies = cf_store.get_cookies(post_booru) if same_site(url, base_url) else {}
     if bypass_cookies:
         cookie_str = "; ".join(f"{k}={v}" for k, v in bypass_cookies.items())
         headers["Cookie"] = cookie_str

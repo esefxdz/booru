@@ -90,6 +90,14 @@ class BypassSession:
         Cookies to send (including cf_clearance).
     proxy_url : str
         Optional proxy URL (http/https/socks5).
+    site_url : str
+        The booru's base URL. Cookies are only attached to requests whose
+        host is on the same registrable domain; other hosts (third-party
+        CDNs, anything a server points us at) get none.
+    site_url : str
+        The booru's base URL. Cookies are only attached to requests whose
+        host is on the same registrable domain; other hosts (third-party
+        CDNs, anything a server points us at) get none.
     method : str
         Which bypass engine to use.  ``"auto"`` tries all in priority order.
         Any other value from :data:`BYPASS_METHODS` locks to that engine.
@@ -101,9 +109,12 @@ class BypassSession:
         cookies: dict | None = None,
         proxy_url: str = "",
         method: str = "auto",
+        site_url: str = "",
     ) -> None:
         self.user_agent = user_agent or _DEFAULT_UA
         self.cookies = cookies or {}
+        # Cookies are only sent to URLs on the same site as this booru.
+        self.site_url = site_url
         self.proxy_url = proxy_url
         self.method = method if method in BYPASS_METHODS else "auto"
 
@@ -207,14 +218,14 @@ class BypassSession:
 
         if engine == "curl_cffi":
             return await _try_curl_cffi(
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
+                url, params, headers, self._cookies_for(url), self.proxy_url, timeout,
                 self._cffi_sessions, winner_hint=self._cffi_winner,
             )
         elif engine == "cloudscraper":
             return await loop.run_in_executor(
                 None,
                 _try_cloudscraper_sync,
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
+                url, params, headers, self._cookies_for(url), self.proxy_url, timeout,
             )
         elif engine == "httpx":
             if self._httpx_client is None and _HAS_HTTPX:
@@ -224,23 +235,22 @@ class BypassSession:
                     http2=use_h2,
                     follow_redirects=True,
                     timeout=timeout,
-                    cookies=self._merged_cookies or None,
                     proxy=self.proxy_url or None,
                 )
             return await _try_httpx(
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout, self._httpx_client,
+                url, params, headers, self._cookies_for(url), self.proxy_url, timeout, self._httpx_client,
             )
         elif engine == "requests":
             return await loop.run_in_executor(
                 None,
                 _try_requests_sync,
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
+                url, params, headers, self._cookies_for(url), self.proxy_url, timeout,
             )
         elif engine == "urllib":
             return await loop.run_in_executor(
                 None,
                 _try_urllib_sync,
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
+                url, params, headers, self._cookies_for(url), self.proxy_url, timeout,
             )
         return None
 
@@ -254,6 +264,20 @@ class BypassSession:
         merged = {**self.cookies}
         merged.update(self._cookie_jar)
         return merged
+
+    def _cookies_for(self, url: str) -> dict:
+        """Cookies to send to *url*: all of them on the booru's own site,
+        none anywhere else."""
+        from validation import same_site
+        if self.site_url and same_site(url, self.site_url):
+            return self._merged_cookies
+        return {}
+
+    def _remember_cookies(self, url: str, resp) -> None:
+        """Keep response cookies only when they came from the booru's site."""
+        from validation import same_site
+        if resp.cookies and self.site_url and same_site(url, self.site_url):
+            self._cookie_jar.update(resp.cookies)
 
     # ------------------------------------------------------------------
     # Async interface
@@ -315,8 +339,7 @@ class BypassSession:
                         self._successful_engine = engine
                     if engine == "curl_cffi" and resp.engine_used and "/" in resp.engine_used:
                         self._cffi_winner = resp.engine_used.split("/", 1)[1]
-                    if resp.cookies:
-                        self._cookie_jar.update(resp.cookies)
+                    self._remember_cookies(url, resp)
                     return resp
                 if resp:
                     last_response = resp
@@ -379,8 +402,7 @@ class BypassSession:
                         self._successful_engine = engine
                     if engine == "curl_cffi" and resp.engine_used and "/" in resp.engine_used:
                         self._cffi_winner = resp.engine_used.split("/", 1)[1]
-                    if resp.cookies:
-                        self._cookie_jar.update(resp.cookies)
+                    self._remember_cookies(url, resp)
                     return resp
                 if resp:
                     last_response = resp
@@ -420,20 +442,20 @@ class BypassSession:
         """Dispatch a single synchronous engine attempt (no asyncio)."""
         if engine == "curl_cffi":
             return _try_curl_cffi_sync(
-                url, params, headers, self._merged_cookies, self.proxy_url,
+                url, params, headers, self._cookies_for(url), self.proxy_url,
                 timeout, self._cffi_sync_sessions, winner_hint=self._cffi_winner,
             )
         elif engine == "cloudscraper":
             return _try_cloudscraper_sync(
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
+                url, params, headers, self._cookies_for(url), self.proxy_url, timeout,
             )
         elif engine == "requests":
             return _try_requests_sync(
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
+                url, params, headers, self._cookies_for(url), self.proxy_url, timeout,
             )
         elif engine == "urllib":
             return _try_urllib_sync(
-                url, params, headers, self._merged_cookies, self.proxy_url, timeout,
+                url, params, headers, self._cookies_for(url), self.proxy_url, timeout,
             )
         return None
 
@@ -448,6 +470,7 @@ class BypassSession:
             {**self.cookies, **extra},
             self.proxy_url,
             self.method,
+            site_url=self.site_url,
         )
 
     def __repr__(self) -> str:

@@ -58,7 +58,9 @@ def _session_fingerprint(booru_name: str) -> str:
     proxy = settings.manager.proxy_url or ""
     method = getattr(settings.manager, "cf_bypass_method", "auto")
     cookie_part = ",".join(f"{k}={v}" for k, v in sorted(cookies.items()))
-    return f"{ua}|{cookie_part}|{proxy}|{method}"
+    import boorus
+    site = boorus.REGISTRY.get(booru_name, {}).get("url", "")
+    return f"{ua}|{cookie_part}|{proxy}|{method}|{site}"
 
 
 # ---------------------------------------------------------------------------
@@ -89,11 +91,13 @@ def get_session(booru_name: str) -> BypassSession:
         log.debug("get_session: invalidating cached session for %s (fp changed)", booru_name)
 
     from ui import settings_view as settings
+    import boorus
     session = BypassSession(
         user_agent=_store.get_user_agent(booru_name),
         cookies=_store.get_cookies(booru_name),
         proxy_url=settings.manager.proxy_url,
         method=getattr(settings.manager, "cf_bypass_method", "auto"),
+        site_url=boorus.REGISTRY.get(booru_name, {}).get("url", ""),
     )
     _session_cache[booru_name] = (fp, session)
     log.debug("get_session: new cached session for %s", booru_name)

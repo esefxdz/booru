@@ -413,6 +413,10 @@ async def _try_httpx(
 
     try:
         if client is not None:
+            # The shared client has no cookie jar of its own (it would send
+            # cookies to every host); the caller passes scoped cookies.
+            if cookies:
+                headers = {**headers, "Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())}
             resp = await client.get(url, params=params, headers=headers)
         else:
             async with httpx.AsyncClient(

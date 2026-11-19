@@ -16,16 +16,25 @@ def test_powershell_engine_removed():
 
 
 def test_urllib_tls_failure_is_not_retried_insecurely(tmp_path, monkeypatch):
-    calls = []
+    opens = []
+    real_build_opener = engines.urllib.request.build_opener
 
-    def fake_urlopen(req, timeout=None, context=None):
-        calls.append(context)
-        assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
-        raise urllib.error.URLError(ssl.SSLCertVerificationError("self-signed"))
+    def fake_build_opener(*handlers):
+        https = [h for h in handlers if isinstance(h, engines.urllib.request.HTTPSHandler)]
+        assert https and https[0]._context.verify_mode == ssl.CERT_REQUIRED
+        assert https[0]._context.check_hostname
+        opener = real_build_opener(*handlers)
 
-    monkeypatch.setattr(engines.urllib.request, "urlopen", fake_urlopen)
+        def failing_open(req, timeout=None):
+            opens.append(req.full_url)
+            raise urllib.error.URLError(ssl.SSLCertVerificationError("self-signed"))
+
+        opener.open = failing_open
+        return opener
+
+    monkeypatch.setattr(engines.urllib.request, "build_opener", fake_build_opener)
     assert engines._download_urllib("https://mitm.example/x.jpg", tmp_path / "x", {}) is False
-    assert len(calls) == 1
+    assert opens == ["https://mitm.example/x.jpg"]   # exactly one attempt, no insecure retry
 
 
 # ── Real transfers against a local HTTP server ──────────────────────────
