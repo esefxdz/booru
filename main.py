@@ -12,16 +12,19 @@ import download_images.thumb_client as thumb_client
 def _setup_logging():
     """Wire up rotating file logs so crashes are diagnosable in packaged builds."""
     from app_paths import data_dir
-    log_file = data_dir() / "error.txt"
+    log_file = None
     handlers = []
     try:
+        # data_dir() can raise (e.g. LOCALAPPDATA not writable); fall back to
+        # stderr-only logging instead of stopping the app from starting.
+        log_file = data_dir() / "error.txt"
         handlers.append(RotatingFileHandler(
             log_file,
             maxBytes=5 * 1024 * 1024,
             backupCount=3,
             encoding="utf-8",
         ))
-    except OSError:
+    except Exception:
         pass  # never let logging setup stop the app from starting
     if sys.stdout is not None and sys.stderr is not None:
         handlers.append(logging.StreamHandler())
@@ -54,7 +57,7 @@ def _setup_logging():
                 msg.setIcon(QMessageBox.Icon.Critical)
                 msg.setWindowTitle("Fatal Error")
                 msg.setText("The application encountered an unrecoverable error and must close.\n\n"
-                            f"Check the log at: {log_file}")
+                            f"Check the log at: {log_file or '(file logging unavailable)'}")
                 msg.setDetailedText(tb)
                 msg.exec()
         except Exception:
