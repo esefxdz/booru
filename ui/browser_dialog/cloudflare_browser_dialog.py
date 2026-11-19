@@ -1,10 +1,9 @@
 ###########################################################################################
 # ui/browser_dialog/cloudflare_browser_dialog.py — Cloudflare bypass dialog.
 #
-# Three-engine approach:
+# Two-engine approach:
 #   Engine 1 — In-app embedded browser (interactive CAPTCHA / Turnstile)
 #   Engine 2 — Manual cookie paste with UA field
-#   Engine 3 — Auto-import from system browsers (Chrome/Edge/Firefox/Brave)
 #
 # All engines produce (cookies, user_agent) → saved via cloudflare_bypasser.store.
 ###########################################################################################
@@ -70,7 +69,7 @@ class CloudflareBrowserDialog(InAppBrowser):
         # ── Status bar ─────────────────────────────────────────────────
         self._add_status_bar()
 
-        # ── Fallback: manual paste + auto-import ───────────────────────
+        # ── Fallback: manual cookie paste ──────────────────────────────
         self._add_fallback_panel()
 
         # ── Deferred URL load ──────────────────────────────────────────
@@ -269,7 +268,7 @@ class CloudflareBrowserDialog(InAppBrowser):
             QTimer.singleShot(800, lambda: self._finalize(self._found_cookies))
 
     # ═══════════════════════════════════════════════════════════════════
-    #  Fallback Panel (Engine 2: Manual Paste + Engine 3: Auto-Import)
+    #  Fallback Panel (Engine 2: Manual Paste)
     # ═══════════════════════════════════════════════════════════════════
 
     def _add_fallback_panel(self):
@@ -344,15 +343,6 @@ class CloudflareBrowserDialog(InAppBrowser):
         self._warn_lbl.setStyleSheet(f"color: {colors.FAVORITE}; font-size: 10px;")
         btn_row.addWidget(self._warn_lbl, 1)
 
-        # Engine 3: Auto-import button
-        import_btn = QPushButton("🔍 Auto-Import from Browser")
-        import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        import_btn.setStyleSheet(
-            f"background: {colors.ACCENT}; color: white; "
-            f"font-weight: bold; border-radius: 4px; padding: 5px 12px; font-size: 11px;"
-        )
-        import_btn.clicked.connect(self._auto_import)
-        btn_row.addWidget(import_btn)
 
         # Engine 2: Manual apply button
         apply_btn = QPushButton("✅ Apply & Close")
@@ -394,43 +384,6 @@ class CloudflareBrowserDialog(InAppBrowser):
         QTimer.singleShot(500, lambda u=ua: self._finalize(cookies, ua=u))
 
     # ═══════════════════════════════════════════════════════════════════
-    #  Engine 3 — Auto-Import from System Browsers
-    # ═══════════════════════════════════════════════════════════════════
-
-    def _auto_import(self):
-        """Search system browsers for a cf_clearance cookie matching this booru."""
-        self._warn_lbl.setText("🔍 Searching browser cookie stores…")
-        self._warn_lbl.setStyleSheet(f"color: {colors.ACCENT}; font-size: 10px;")
-
-        # Run in a timer so the UI updates before the (potentially slow) disk I/O
-        QTimer.singleShot(50, self._do_auto_import)
-
-    def _do_auto_import(self):
-        # Extract the domain from the URL for matching
-        try:
-            from urllib.parse import urlparse
-            current_url = self.browser.url().toString()
-            domain = urlparse(current_url).hostname or self.booru_name
-        except Exception:
-            domain = self.booru_name
-
-        results = _find_cf_clearance_all_browsers(domain)
-
-        if not results:
-            self._warn_lbl.setText(
-                "❌ No cf_clearance found in any browser. "
-                "Visit the site in Chrome/Firefox first, then try again."
-            )
-            self._warn_lbl.setStyleSheet(f"color: {colors.DANGER}; font-size: 10px;")
-            return
-
-        # Use the first valid result
-        browser_name, cookie_val = next(iter(results.items()))
-        self._cf_input.setText(cookie_val)
-        self._warn_lbl.setText(f"✅ Found cf_clearance in {browser_name} — click Apply to use it")
-        self._warn_lbl.setStyleSheet(f"color: {colors.SUCCESS}; font-size: 10px;")
-
-    # ═══════════════════════════════════════════════════════════════════
     #  Finalize — save and close
     # ═══════════════════════════════════════════════════════════════════
 
@@ -444,193 +397,3 @@ class CloudflareBrowserDialog(InAppBrowser):
         # else: already saved correctly -- do not overwrite
         self.cookies_captured.emit(cookies)
         self.accept()
-
-
-# ═══════════════════════════════════════════════════════════════════════
-#  Engine 3 helper — read cookies from system browsers
-# ═══════════════════════════════════════════════════════════════════════
-
-def _find_cf_clearance_all_browsers(domain: str) -> dict:
-    """
-    Search all known browser cookie stores for a cf_clearance cookie
-    matching *domain*.  Returns {browser_name: cookie_value}.
-
-    Safe to call even if browsers are locked or pywin32 is missing —
-    every failure path returns an empty dict.
-    """
-    from pathlib import Path
-
-    results = {}
-
-    # ── Chromium-based browsers ────────────────────────────────────
-    chromium_browsers = {
-        "Chrome": Path.home() / "AppData/Local/Google/Chrome/User Data/Default/Network/Cookies",
-        "Edge":   Path.home() / "AppData/Local/Microsoft/Edge/User Data/Default/Network/Cookies",
-        "Brave":  Path.home() / "AppData/Local/BraveSoftware/Brave-Browser/User Data/Default/Network/Cookies",
-        "Opera":  Path.home() / "AppData/Roaming/Opera Software/Opera Stable/Network/Cookies",
-    }
-
-    for browser, db_path in chromium_browsers.items():
-        if not db_path.exists():
-            continue
-        val = _read_chromium_cookie(db_path, domain)
-        if val:
-            results[browser] = val
-
-    # ── Firefox ────────────────────────────────────────────────────
-    ff_val = _read_firefox_cookie(domain)
-    if ff_val:
-        results["Firefox"] = ff_val
-
-    return results
-
-
-def _read_chromium_cookie(db_path, domain: str) -> str | None:
-    """Read cf_clearance from a Chromium SQLite cookie DB.
-    Copies the DB first since Chrome locks it while running.
-    """
-    import sqlite3
-    import shutil
-    import tempfile
-
-    try:
-        # Copy the locked DB to a temp file
-        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        tmp.close()
-        shutil.copy2(db_path, tmp.name)
-
-        conn = sqlite3.connect(tmp.name)
-        # Try unencrypted value first (works on some builds)
-        row = conn.execute(
-            "SELECT value, encrypted_value FROM cookies "
-            "WHERE host_key LIKE ? AND name = 'cf_clearance' "
-            "ORDER BY last_access_utc DESC LIMIT 1",
-            (f"%{domain}%",)
-        ).fetchone()
-        conn.close()
-
-        import os
-        os.unlink(tmp.name)
-
-        if not row:
-            return None
-
-        plain_val, encrypted_val = row
-
-        # If the plain text value is populated, use it
-        if plain_val:
-            return plain_val
-
-        # Otherwise try to decrypt the encrypted_value
-        return _decrypt_chromium_value(encrypted_val)
-    except Exception:
-        return None
-
-
-def _decrypt_chromium_value(encrypted_value: bytes) -> str | None:
-    """Decrypt a Chromium DPAPI-encrypted cookie value on Windows."""
-    if not encrypted_value:
-        return None
-
-    try:
-        # v10/v20 = AES-256-GCM encrypted (Chrome 80+)
-        if encrypted_value[:3] in (b"v10", b"v20"):
-            return _decrypt_aes_gcm(encrypted_value)
-
-        # Legacy DPAPI (pre Chrome 80)
-        import win32crypt
-        data, _ = win32crypt.CryptUnprotectData(encrypted_value, None, None, None, 0)
-        return data.decode("utf-8", errors="replace")
-    except ImportError:
-        # pywin32 not installed
-        return None
-    except Exception:
-        return None
-
-
-def _decrypt_aes_gcm(encrypted_value: bytes) -> str | None:
-    """Decrypt AES-256-GCM encrypted cookie (Chrome 80+)."""
-    try:
-        import json
-        import base64
-        import win32crypt
-        from pathlib import Path
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-        # Find Local State to get the encryption key
-        # Try Chrome first, then Edge, then Brave
-        local_state_paths = [
-            Path.home() / "AppData/Local/Google/Chrome/User Data/Local State",
-            Path.home() / "AppData/Local/Microsoft/Edge/User Data/Local State",
-            Path.home() / "AppData/Local/BraveSoftware/Brave-Browser/User Data/Local State",
-        ]
-
-        key = None
-        for ls_path in local_state_paths:
-            if ls_path.exists():
-                with open(ls_path, "r", encoding="utf-8") as f:
-                    local_state = json.load(f)
-                encrypted_key = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
-                # Remove "DPAPI" prefix (5 bytes)
-                encrypted_key = encrypted_key[5:]
-                key, _ = win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)
-                break
-
-        if not key:
-            return None
-
-        # Decrypt: first 3 bytes = version, next 12 = nonce, rest = ciphertext + tag
-        nonce = encrypted_value[3:15]
-        ciphertext = encrypted_value[15:]
-        aesgcm = AESGCM(key)
-        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
-        return plaintext.decode("utf-8", errors="replace")
-    except ImportError:
-        return None
-    except Exception:
-        return None
-
-
-def _read_firefox_cookie(domain: str) -> str | None:
-    """Read cf_clearance from Firefox's cookies.sqlite."""
-    import sqlite3
-    import shutil
-    import tempfile
-    from pathlib import Path
-
-    try:
-        ff_profiles = Path.home() / "AppData/Roaming/Mozilla/Firefox/Profiles"
-        if not ff_profiles.exists():
-            return None
-
-        # Find the default profile directory
-        for profile_dir in ff_profiles.iterdir():
-            if not profile_dir.is_dir():
-                continue
-            cookie_db = profile_dir / "cookies.sqlite"
-            if not cookie_db.exists():
-                continue
-
-            # Copy to avoid locking issues
-            tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-            tmp.close()
-            shutil.copy2(cookie_db, tmp.name)
-
-            conn = sqlite3.connect(tmp.name)
-            row = conn.execute(
-                "SELECT value FROM moz_cookies "
-                "WHERE host LIKE ? AND name = 'cf_clearance' "
-                "ORDER BY lastAccessed DESC LIMIT 1",
-                (f"%{domain}%",)
-            ).fetchone()
-            conn.close()
-
-            import os
-            os.unlink(tmp.name)
-
-            if row and row[0]:
-                return row[0]
-
-        return None
-    except Exception:
-        return None
