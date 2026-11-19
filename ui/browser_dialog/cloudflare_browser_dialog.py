@@ -48,7 +48,6 @@ class CloudflareBrowserDialog(InAppBrowser):
         ws = page.settings()
         ws.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         ws.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        ws.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         self.browser.setPage(page)
 
         # ── Cookie detection: signal-based ─────────────────────────────

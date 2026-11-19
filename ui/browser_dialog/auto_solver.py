@@ -65,7 +65,6 @@ class CloudflareAutoSolver(QObject):
         ws = self._page.settings()
         ws.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         ws.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        ws.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
         self._page.loadFinished.connect(self._on_page_loaded)
 
         # ── Timers ─────────────────────────────────────────────────────

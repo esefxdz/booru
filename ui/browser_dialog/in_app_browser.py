@@ -98,7 +98,6 @@ class InAppBrowser(QDialog):
         ws = self.browser.page().settings()
         ws.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         ws.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        ws.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
 
         self.browser.loadProgress.connect(self.progress.setValue)
         self.browser.loadFinished.connect(lambda ok: self.progress.hide())
