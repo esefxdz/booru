@@ -115,3 +115,39 @@ def test_urllib_refuses_socks_proxy_instead_of_going_direct(tmp_path, monkeypatc
     from ui import settings_view as settings
     monkeypatch.setattr(settings.manager, "proxy_url", "socks5://127.0.0.1:9", raising=False)
     assert engines._download_urllib("http://203.0.113.7/x.png", tmp_path / "x", {}) is False
+
+
+class _Truncating(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "1000")   # promise 1000 bytes...
+        self.end_headers()
+        self.wfile.write(b"x" * 300)                   # ...send 300 and hang up
+        self.wfile.flush()
+        self.close_connection = True
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.mark.parametrize("name", [e for e in engines.ENGINES if e in engines.get_available_engines()])
+def test_truncated_download_is_not_accepted(tmp_path, name):
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Truncating)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{srv.server_port}/img.jpg"
+        try:
+            ok = engines.ENGINE_FNS[name](url, tmp_path / "img.jpg", {"User-Agent": "t"})
+        except Exception:
+            ok = False
+        assert ok is False, f"{name} accepted a 300/1000-byte file"
+    finally:
+        srv.shutdown()
+
+
+def test_requests_session_is_per_thread():
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(4) as pool:
+        ids = set(pool.map(lambda _: id(engines._requests_session()), range(8)))
+    assert len(ids) > 1
+    engines.shutdown()

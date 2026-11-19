@@ -110,3 +110,31 @@ def test_bypass_session_refuses_file_scheme():
     r = _refuse_non_http("file:///C:/Windows/win.ini")
     assert r is not None and r.status_code == 0 and r.content == b""
     assert _refuse_non_http("https://safebooru.org/index.php") is None
+
+
+def test_double_click_downloads_once_and_file_is_intact(tmp_path, monkeypatch):
+    import threading
+    import time
+    calls = []
+
+    def slow_engine(url, dest, headers, on_progress=None):
+        calls.append(threading.current_thread().name)
+        with open(dest, "wb") as f:
+            for i in range(20):
+                f.write(bytes([65 + len(calls) - 1]) * 100)   # thread-specific bytes
+                time.sleep(0.005)
+        return True
+
+    monkeypatch.setitem(image_downloader.ENGINE_FNS, "slow", slow_engine)
+    post = {"id": 42, "_booru": "safebooru"}
+    results = []
+    ts = [threading.Thread(target=lambda: results.append(
+        image_downloader.download_post(post, tmp_path, _Downloader("https://a/42.png"), engine="slow")))
+        for _ in range(3)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert results == [True, True, True]
+    assert len(calls) == 1, "the same post was downloaded concurrently"
+    data = (tmp_path / "42.png").read_bytes()
+    assert len(data) == 2000 and len(set(data)) == 1     # one stream, not a mix
+    assert not list(tmp_path.glob("*.part"))

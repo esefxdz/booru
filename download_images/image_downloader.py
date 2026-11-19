@@ -13,12 +13,24 @@ Public API:
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Callable
 
 from download_images.engines import ENGINE_FNS, DEFAULT_ENGINE
 
 log = logging.getLogger("image_downloader")
+
+# One lock per destination file: two downloads of the same post (double
+# click, or bulk + single) used to write into the same .part file.
+_dest_locks: dict[str, threading.Lock] = {}
+_dest_locks_guard = threading.Lock()
+
+
+def _lock_for(dest: Path) -> threading.Lock:
+    key = str(dest).lower()
+    with _dest_locks_guard:
+        return _dest_locks.setdefault(key, threading.Lock())
 
 
 
@@ -58,8 +70,6 @@ def download_post(
     on_progress : callable or None
         ``fn(downloaded_bytes, total_bytes)`` called during download.
     """
-    from ui import settings_view as settings
-
     # ── Resolve URL and filename ──────────────────────────────────
     url = downloader.get_file_url(post)
     if not url:
@@ -77,10 +87,17 @@ def download_post(
         log.warning("Refusing download for post %r: %s", post_id, e)
         return False
 
-    # Skip if already downloaded
-    if dest.exists() and dest.stat().st_size > 0:
-        log.info("Already exists: %s", dest)
-        return True
+    with _lock_for(dest):
+        # Checked inside the lock: a concurrent download of the same post
+        # may have just finished.
+        if dest.exists() and dest.stat().st_size > 0:
+            log.info("Already exists: %s", dest)
+            return True
+        return _download_to(url, dest, post, post_id, engine, on_progress)
+
+
+def _download_to(url, dest: Path, post: dict, post_id, engine, on_progress) -> bool:
+    from ui import settings_view as settings
 
     # ── Resolve engine ────────────────────────────────────────────
     if engine is None:

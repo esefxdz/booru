@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import ssl
+import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -79,6 +80,10 @@ def _write_stream(dest: Path, chunks, total: int, on_progress: Callable | None) 
             downloaded += len(chunk)
             if on_progress and total:
                 on_progress(downloaded, total)
+    # A connection that closes early is not always an exception (urllib just
+    # returns fewer bytes). Never accept a short file as a finished download.
+    if total and downloaded < total:
+        raise IOError(f"incomplete download: {downloaded} of {total} bytes")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -123,22 +128,33 @@ def _download_urllib(url: str, dest: Path, headers: dict,
 #  Engine 2 — requests (popular third-party library)
 # ═══════════════════════════════════════════════════════════════════════
 
-_requests_session = None
+# requests.Session is not thread-safe and downloads run on several threads,
+# so each thread gets its own session.
+_requests_local = threading.local()
+_requests_sessions: list = []          # every session created, for shutdown()
+_requests_sessions_lock = threading.Lock()
+
+
+def _requests_session():
+    import requests as _req
+    s = getattr(_requests_local, "session", None)
+    if s is None:
+        s = _requests_local.session = _req.Session()
+        with _requests_sessions_lock:
+            _requests_sessions.append(s)
+    return s
 
 
 def _download_requests(url: str, dest: Path, headers: dict,
                        on_progress: Callable | None = None) -> bool:
     """Download using the ``requests`` library."""
     import requests as _req
-    global _requests_session
-    if _requests_session is None:
-        _requests_session = _req.Session()
 
     proxy = _proxy_url()
     proxies = {"http": proxy, "https": proxy} if proxy else None
     try:
-        with _requests_session.get(url, headers=headers, stream=True, timeout=_TIMEOUT,
-                                   proxies=proxies) as r:
+        with _requests_session().get(url, headers=headers, stream=True, timeout=_TIMEOUT,
+                                     proxies=proxies) as r:
             if r.status_code != 200:
                 log.warning("requests: HTTP %s for %s", r.status_code, url)
                 return False
@@ -235,10 +251,12 @@ ENGINE_FNS: dict[str, Callable] = {
 
 def shutdown():
     """Close any globally cached sessions to avoid unclosed socket warnings on exit."""
-    global _requests_session, _httpx_client
-    if _requests_session is not None:
-        _requests_session.close()
-        _requests_session = None
+    global _httpx_client
+    with _requests_sessions_lock:
+        for s in _requests_sessions:
+            s.close()
+        _requests_sessions.clear()
+    _requests_local.__dict__.clear()
     if _httpx_client is not None:
         _httpx_client.close()
         _httpx_client = None
