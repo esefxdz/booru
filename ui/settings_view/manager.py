@@ -17,6 +17,7 @@ from updater.version import __version__ as VERSION
 # --- STATIC CONSTANTS ---
 import sys
 import threading
+import time
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(os.path.dirname(sys.executable)).resolve()
 else:
@@ -89,6 +90,7 @@ class SettingsManager:
         self.session_keys: dict = {}
         self.auth_tokens: dict  = {}
         self._initialized = False
+        self._save_disabled = False
 
     def initialize(self):
         """Explicit initialization to be called on app startup."""
@@ -111,14 +113,31 @@ class SettingsManager:
 
     def load(self):
         """Load settings from disk and update singleton attributes."""
-        if not _SETTINGS_FILE.exists():
-            return
-        try:
-            with open(_SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
-                data = json.load(f)
-        except Exception as e:
-            logging.info(f"[settings] Could not read settings file, using defaults: {e}")
-            return
+        data = {}
+        if _SETTINGS_FILE.exists():
+            try:
+                with open(_SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("settings.json is not a JSON object")
+            except (ValueError, UnicodeDecodeError) as e:
+                # Corrupt file: keep a copy instead of letting the next save
+                # overwrite it, then continue with defaults.
+                aside = _SETTINGS_FILE.with_name(f"settings.json.unreadable-{int(time.time())}")
+                try:
+                    _SETTINGS_FILE.replace(aside)
+                    logging.error("[settings] settings.json is corrupt (%s); moved it to %s "
+                                  "and started from defaults", e, aside.name)
+                except OSError:
+                    logging.exception("[settings] settings.json is corrupt and could not be moved aside")
+                    self._save_disabled = True
+                data = {}
+            except OSError as e:
+                # Locked / permission problem: don't overwrite what we couldn't read.
+                logging.error("[settings] Could not read settings.json (%s); "
+                              "changes this session will not be saved", e)
+                self._save_disabled = True
+                data = {}
 
         # --- Migration: thumbnail_size > 500 means it was actually a resolution ---
         if "thumbnail_size" in data and "thumbnail_res" not in data:
@@ -193,6 +212,9 @@ class SettingsManager:
         # This prevents a crash/early-save from wiping the user's real settings.
         if not self._initialized:
             logging.debug("[settings] save() called before initialize() — skipped.")
+            return False
+        if self._save_disabled:
+            logging.warning("[settings] save() skipped: settings.json could not be read this session")
             return False
         self.validate()
         # These keys contain live session cookies, CF bypass tokens, and auth

@@ -139,3 +139,44 @@ def test_settings_fall_back_when_active_booru_missing(store, tmp_path):
         assert m.active_booru == "safebooru"
     finally:
         m.active_booru, m.booru_order = old
+
+
+def _fresh_manager(monkeypatch):
+    import sys
+    import ui.settings_view  # noqa: F401
+    mod = sys.modules["ui.settings_view.manager"]
+    m = mod.manager
+    for k, v in (("blacklist", ""), ("bypass_data", {}), ("_save_disabled", False), ("_initialized", True)):
+        monkeypatch.setattr(m, k, v, raising=False)
+    return mod, m
+
+
+def test_corrupt_settings_moved_aside_and_secrets_still_loaded(monkeypatch):
+    import credentials
+    mod, m = _fresh_manager(monkeypatch)
+    credentials.set_sensitive("_bypass_data", {"gelbooru": {"cookies": {"cf_clearance": "keep"}}})
+    mod._SETTINGS_FILE.write_text("{ truncated by a crash")
+    m.load()
+    aside = list(mod._SETTINGS_FILE.parent.glob("settings.json.unreadable-*"))
+    assert len(aside) == 1 and aside[0].read_text() == "{ truncated by a crash"
+    # the secrets were loaded, so a save can't wipe them
+    assert m.bypass_data["gelbooru"]["cookies"]["cf_clearance"] == "keep"
+    assert m.save()
+    assert credentials.get_sensitive("_bypass_data")["gelbooru"]["cookies"]["cf_clearance"] == "keep"
+
+
+def test_unreadable_settings_disables_saving(monkeypatch):
+    mod, m = _fresh_manager(monkeypatch)
+    mod._SETTINGS_FILE.write_text('{"blacklist": "keepme"}')
+    real_open = open
+
+    def locked_open(path, *a, **k):
+        if str(path) == str(mod._SETTINGS_FILE) and "r" in (a[0] if a else k.get("mode", "r")):
+            raise PermissionError(32, "being used by another process")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", locked_open)
+    m.load()
+    monkeypatch.setattr("builtins.open", real_open)
+    assert m.save() is False
+    assert mod._SETTINGS_FILE.read_text() == '{"blacklist": "keepme"}'
