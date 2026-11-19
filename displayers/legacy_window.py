@@ -14,7 +14,7 @@ import sys
 import json
 import threading
 
-from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QSettings
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QSettings, QObject, QCoreApplication
 from PyQt6.QtGui import QPixmap, QMovie
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -116,14 +116,45 @@ class ClickableSlider(QSlider):
         super().mousePressEvent(event)
 
 
+class _WorkerBridge(QObject):
+    """Carries one worker result to the GUI thread.
+
+    It is owned by the QApplication, not the window, so it is still alive
+    when a worker finishes after the window was closed and deleted
+    (WA_DeleteOnClose); Qt has then already dropped the connection to the
+    dead window's slot and the emit does nothing. The worker frees it with
+    deleteLater(), which runs on the GUI thread.
+    """
+    done = pyqtSignal(object)
+
+
+def _run_in_worker(job, slot):
+    """Run job() on a daemon thread and deliver a non-None result to slot.
+
+    slot must be a Python method of the window: PyQt queues the call to the
+    GUI thread and drops it if the window is destroyed first. (A built-in
+    slot such as ``button.setText`` is NOT dropped and crashes natively on
+    a deleted button.) job must not touch widgets.
+    """
+    bridge = _WorkerBridge(QCoreApplication.instance())
+    bridge.done.connect(slot)
+
+    def run():
+        try:
+            result = job()
+            if result is not None:
+                bridge.done.emit(result)
+        finally:
+            bridge.deleteLater()
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  CLASS: DisplayerWindow                                              ║
 # ║  Legacy standalone window launched as a subprocess.                 ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 class DisplayerWindow(QMainWindow):
-    image_ready = pyqtSignal(bytes)
-    gif_ready = pyqtSignal(str)
-
     def __init__(self, post, file_url):
         super().__init__()
         self.post = post
@@ -183,9 +214,6 @@ class DisplayerWindow(QMainWindow):
         self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.addWidget(self.content, stretch=1)
 
-        self.image_ready.connect(self._show_image)
-        self.gif_ready.connect(self._show_gif)
-
         self.lbl = QLabel("Loading...")
         self.lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.content_layout.addWidget(self.lbl)
@@ -234,20 +262,24 @@ class DisplayerWindow(QMainWindow):
 
     def _download(self):
         self.dl_btn.setText("Downloading...")
+        post_id, file_url = self.post_id, self.file_url
         def work():
             try:
                 # Use the global settings manager instead of a hardcoded "files" folder
                 dl_dir = settings.manager.get_download_dir()
                 dl_dir.mkdir(parents=True, exist_ok=True)
                 from validation import safe_media_path
-                path = safe_media_path(dl_dir, self.post_id, self.file_url)
-                data = _fetch_bytes(self.file_url)
+                path = safe_media_path(dl_dir, post_id, file_url)
+                data = _fetch_bytes(file_url)
                 path.write_bytes(data)
-                self.dl_btn.setText("Downloaded")
+                return "Downloaded"
             except Exception as e:
                 logging.error(f"[legacy_window] Download error: {e}")
-                self.dl_btn.setText("Failed")
-        threading.Thread(target=work, daemon=True).start()
+                return "Failed"
+        _run_in_worker(work, self._set_download_status)
+
+    def _set_download_status(self, text):
+        self.dl_btn.setText(text)
 
     # ----- View Original -----
 
@@ -277,11 +309,10 @@ class DisplayerWindow(QMainWindow):
         url = self._get_image_url(optimized)
         def work():
             try:
-                data = _fetch_bytes(url)
-                self.image_ready.emit(data)
+                return _fetch_bytes(url)
             except Exception as e:
                 logging.error(f"[legacy_window] Image load error: {e}")
-        threading.Thread(target=work, daemon=True).start()
+        _run_in_worker(work, self._show_image)
 
     def _show_image(self, data):
         pix = QPixmap()
@@ -310,19 +341,20 @@ class DisplayerWindow(QMainWindow):
     def _load_gif(self, optimized):
         url = _resolve_url(self.file_url)
         self._gif_optimized = optimized
+        booru, post_id = self.post.get('_booru'), self.post_id
         def work():
             try:
-                data = _fetch_bytes(url, self.post.get('_booru'))
+                data = _fetch_bytes(url, booru)
                 from ui import settings_view as settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
                 from validation import safe_media_path
-                path = safe_media_path(tmp, self.post_id, "x.gif", prefix="view_")
+                path = safe_media_path(tmp, post_id, "x.gif", prefix="view_")
                 path.write_bytes(data)
-                self.gif_ready.emit(str(path))
+                return str(path)
             except Exception as e:
                 logging.error(f"[legacy_window] GIF load error: {e}")
-        threading.Thread(target=work, daemon=True).start()
+        _run_in_worker(work, self._show_gif)
 
     def _show_gif(self, path):
         self.movie = QMovie(path)
@@ -347,8 +379,9 @@ class DisplayerWindow(QMainWindow):
         self.content_layout.addWidget(self.video_widget)
         self.video_widget.clicked.connect(self._toggle_play)
 
-        self.player = QMediaPlayer()
-        self.audio = QAudioOutput()
+        # Parented to the window so WA_DeleteOnClose frees them with it.
+        self.player = QMediaPlayer(self)
+        self.audio = QAudioOutput(self)
         self.player.setAudioOutput(self.audio)
         self.player.setVideoOutput(self.video_widget)
         self.player.setSource(QUrl(self.file_url))
@@ -456,6 +489,10 @@ class DisplayerWindow(QMainWindow):
             self._fit_pixmap()
 
     def closeEvent(self, event):
+        player = getattr(self, "player", None)     # only video windows have one
+        if player is not None:
+            player.stop()
+            player.setSource(QUrl())
         self._qs.setValue("window_w", self.width())
         self._qs.setValue("window_h", self.height())
         super().closeEvent(event)
