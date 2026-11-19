@@ -1,6 +1,7 @@
 """
 szurubooru.py - Adapter for Szurubooru (modern booru engine).
 """
+import logging
 from .base import BaseAdapter
 
 
@@ -26,7 +27,10 @@ class SzurubooruAdapter(BaseAdapter):
             if isinstance(data, dict) and "results" in data:
                 return data["results"]
             return []
-        except Exception:
+        except Exception as e:
+            logging.getLogger("adapters").warning(
+                "[szurubooru] could not parse response from %s (HTTP %s): %s",
+                str(getattr(r, "url", "?")).split("?")[0], getattr(r, "status_code", "?"), e)
             return []
 
     def get_preview_url(self, post: dict) -> str:

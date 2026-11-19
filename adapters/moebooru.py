@@ -2,6 +2,7 @@
 moebooru.py - Adapter for Moebooru-based sites.
 Covers: Yande.re, Konachan, older Danbooru forks
 """
+import logging
 from .base import BaseAdapter
 
 
@@ -24,7 +25,10 @@ class MoebooruAdapter(BaseAdapter):
         try:
             data = r.json()
             return data if isinstance(data, list) else []
-        except Exception:
+        except Exception as e:
+            logging.getLogger("adapters").warning(
+                "[moebooru] could not parse response from %s (HTTP %s): %s",
+                str(getattr(r, "url", "?")).split("?")[0], getattr(r, "status_code", "?"), e)
             return []
 
     def get_preview_url(self, post: dict) -> str:

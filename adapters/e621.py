@@ -2,6 +2,7 @@
 e621.py - Adapter for e621 / e926 (furry boorus).
 Covers: e621.net, e926.net (with nested JSON structure and species tags)
 """
+import logging
 from .base import BaseAdapter
 
 
@@ -26,7 +27,10 @@ class E621Adapter(BaseAdapter):
             if isinstance(data, dict):
                 return data.get("posts", [])
             return []
-        except Exception:
+        except Exception as e:
+            logging.getLogger("adapters").warning(
+                "[e621] could not parse response from %s (HTTP %s): %s",
+                str(getattr(r, "url", "?")).split("?")[0], getattr(r, "status_code", "?"), e)
             return []
 
     def get_preview_url(self, post: dict) -> str:

@@ -160,8 +160,8 @@ def _extract_cookies(resp) -> dict:
                         k, v = part.split("=", 1)
                         result[k.strip()] = v.strip()
                 return result
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("cookie extraction failed: %s", e)
     return {}
 
 

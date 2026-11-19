@@ -2,6 +2,7 @@
 philomena.py - Adapter for Philomena-based sites (MLP boorus).
 Covers: Derpibooru, Ponerpics, etc.
 """
+import logging
 from .base import BaseAdapter
 
 
@@ -28,7 +29,10 @@ class PhilomenaAdapter(BaseAdapter):
             if isinstance(data, dict) and "images" in data:
                 return data["images"]
             return []
-        except Exception:
+        except Exception as e:
+            logging.getLogger("adapters").warning(
+                "[philomena] could not parse response from %s (HTTP %s): %s",
+                str(getattr(r, "url", "?")).split("?")[0], getattr(r, "status_code", "?"), e)
             return []
 
     def get_preview_url(self, post: dict) -> str:

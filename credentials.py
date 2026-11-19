@@ -298,12 +298,14 @@ class CredentialManager:
             credentials = self._load_credentials()
             return [k for k in credentials.keys() if not k.startswith("_")]
         except Exception:
+            logging.exception("[credentials] Failed to list credentials")
             return []
 
     def get_sensitive(self, key: str) -> dict:
         try:
             return self._load_credentials().get(key, {})
         except Exception:
+            logging.exception("[credentials] Failed to read sensitive data %s", key)
             return {}
 
     def set_sensitive(self, key: str, data: dict) -> bool:

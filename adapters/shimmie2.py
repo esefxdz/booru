@@ -2,6 +2,7 @@
 shimmie2.py - Adapter for Shimmie2-based sites.
 Older booru engine with simpler JSON/HTML APIs.
 """
+import logging
 from .base import BaseAdapter
 
 
@@ -32,7 +33,10 @@ class Shimmie2Adapter(BaseAdapter):
             elif isinstance(data, list):
                 return data
             return []
-        except Exception:
+        except Exception as e:
+            logging.getLogger("adapters").warning(
+                "[shimmie2] could not parse response from %s (HTTP %s): %s",
+                str(getattr(r, "url", "?")).split("?")[0], getattr(r, "status_code", "?"), e)
             return []
 
     def get_preview_url(self, post: dict) -> str:

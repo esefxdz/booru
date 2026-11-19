@@ -2,6 +2,7 @@
 danbooru.py - Adapter for Danbooru-based sites.
 Covers: Danbooru, SafebooruDonmai
 """
+import logging
 from .base import BaseAdapter
 
 
@@ -24,7 +25,10 @@ class DanbooruAdapter(BaseAdapter):
         try:
             data = r.json()
             return data if isinstance(data, list) else []
-        except Exception:
+        except Exception as e:
+            logging.getLogger("adapters").warning(
+                "[danbooru] could not parse response from %s (HTTP %s): %s",
+                str(getattr(r, "url", "?")).split("?")[0], getattr(r, "status_code", "?"), e)
             return []
 
     def get_preview_url(self, post: dict) -> str:

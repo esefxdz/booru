@@ -2,6 +2,7 @@
 gelbooru.py - Adapter for Gelbooru-based sites.
 Covers: Gelbooru, Safebooru, Rule34, xBooru, RealBooru, HypnoHub, etc.
 """
+import logging
 from .base import BaseAdapter
 
 
@@ -42,7 +43,10 @@ class GelbooruAdapter(BaseAdapter):
                 for p in root.findall('.//post'):
                     posts.append(p.attrib)
                 return posts
-            except Exception:
+            except Exception as e:
+                logging.getLogger("adapters").warning(
+                    "[gelbooru] could not parse response from %s (HTTP %s): %s",
+                    str(getattr(r, "url", "?")).split("?")[0], getattr(r, "status_code", "?"), e)
                 return []
 
     def get_preview_url(self, post: dict) -> str:
