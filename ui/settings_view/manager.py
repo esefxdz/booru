@@ -37,6 +37,14 @@ _SETTINGS_FILE = _SETTINGS_DIR / "settings.json"
 # Serialises saves from the GUI thread and the asyncio thread.
 _SAVE_LOCK = threading.RLock()
 
+# Secret fields -> their key in the credentials store. Never written to
+# settings.json (except unmigrated plaintext from old builds, see load()).
+_SECRET_STORE_KEYS = {
+    "bypass_data": "_bypass_data",
+    "session_keys": "_session_keys",
+    "auth_tokens": "_auth_tokens",
+}
+
 
 class SettingsManager:
     _instance = None
@@ -81,6 +89,9 @@ class SettingsManager:
         # True when the secrets store could not be read at load(); save() then
         # leaves it alone so it can't overwrite real cookies with empty dicts.
         self._secrets_unloaded = False
+        # Plaintext secrets found in an old settings.json that are not yet
+        # verified in the credentials store; save() keeps them in the file.
+        self._legacy_plaintext = None
 
     def initialize(self):
         """Explicit initialization to be called on app startup."""
@@ -154,19 +165,66 @@ class SettingsManager:
             if hasattr(self, k):
                 setattr(self, k, v)
 
-        # Load sensitive fields from secure storage
+        # Builds before 2026-05-19 saved these in plaintext in settings.json.
+        # Read, never removed from `data`: the file keeps them until they are
+        # verified in the credentials store.
+        plaintext = {k: data[k] for k in _SECRET_STORE_KEYS
+                     if isinstance(data.get(k), dict) and data[k]}
+
+        # Load sensitive fields from secure storage (all or nothing)
         try:
-            self.bypass_data = get_sensitive("_bypass_data", raise_on_error=True) or {}
-            self.session_keys = get_sensitive("_session_keys", raise_on_error=True) or {}
-            self.auth_tokens = get_sensitive("_auth_tokens", raise_on_error=True) or {}
-            self._secrets_unloaded = False
+            stored = {k: get_sensitive(sk, raise_on_error=True) or {}
+                      for k, sk in _SECRET_STORE_KEYS.items()}
         except Exception as e:
             self._secrets_unloaded = True
+            self._legacy_plaintext = plaintext or None  # nothing migrated, keep it
             logging.error(f"[settings] Failed to load sensitive data ({e}); "
                           "saved logins/cookies will not be written this session")
+        else:
+            self._secrets_unloaded = False
+            self._legacy_plaintext = None
+            if plaintext:
+                stored = self._migrate_plaintext_secrets(plaintext, stored)
+            for k, v in stored.items():
+                setattr(self, k, v)
 
         self.validate()
         self._reconcile_active_booru()
+
+    def _migrate_plaintext_secrets(self, plaintext, stored):
+        """Move plaintext secrets from an old settings.json into the store.
+
+        Merged per site; an entry already in the store wins (it was written
+        by a newer build). Returns the merged values. If they cannot be
+        written and read back, the plaintext stays pending so save() keeps it
+        in settings.json; the next load() tries again.
+        """
+        if not all(isinstance(stored[k], dict) for k in plaintext):
+            logging.error("[settings] Credentials store has an unexpected format; "
+                          "keeping old cookies/logins in settings.json")
+            self._legacy_plaintext = plaintext
+            return stored
+        merged = dict(stored)
+        for k, plain in plaintext.items():
+            merged[k] = {**plain, **stored[k]}
+        if merged == stored:
+            return stored  # already in the store; the next save drops the plaintext
+        with _SAVE_LOCK:
+            try:
+                ok = set_sensitive_many({_SECRET_STORE_KEYS[k]: merged[k] for k in plaintext})
+                check = {k: get_sensitive(sk, raise_on_error=True) or {}
+                         for k, sk in _SECRET_STORE_KEYS.items()} if ok else None
+            except Exception:
+                logging.exception("[settings] Reading back migrated cookies/logins failed")
+                check = None
+        if check != merged:
+            self._legacy_plaintext = plaintext
+            logging.error("[settings] Could not move cookies/logins from settings.json to "
+                          "the credentials store; keeping them in settings.json for now")
+        else:
+            logging.info("[settings] Moved cookies/logins from settings.json to the "
+                         "credentials store (%s)", ", ".join(sorted(plaintext)))
+        return merged
 
     def _reconcile_active_booru(self):
         """If the saved active booru no longer exists (e.g. a deleted custom
@@ -214,7 +272,7 @@ class SettingsManager:
         # These keys contain live session cookies, CF bypass tokens, and auth
         # headers.  They must never be written to the plaintext settings.json
         # file — they go to credentials.bin via CredentialManager instead.
-        _SENSITIVE_KEYS = {"bypass_data", "session_keys", "auth_tokens"}
+        _SENSITIVE_KEYS = set(_SECRET_STORE_KEYS)
         
         with _SAVE_LOCK:
             # One credentials.bin write for all three (was three separate
@@ -233,6 +291,10 @@ class SettingsManager:
                 k: v for k, v in self.__dict__.items()
                 if not k.startswith("_") and k not in _SENSITIVE_KEYS
             }
+            if self._legacy_plaintext:
+                # Old plaintext not yet verified in the store: keep it in
+                # settings.json rather than lose it (load() retries).
+                data.update(self._legacy_plaintext)
             return self._raw_save(data)
 
     def _raw_save(self, data):
