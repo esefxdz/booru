@@ -66,8 +66,10 @@ from cloudflare_bypasser.fingerprint import (  # noqa: E402, F401
 from cloudflare_bypasser.engines import _Response  # noqa: E402, F401
 
 
-#: Hard cap on engine calls per request (was up to 24-45 network requests
-#: for one blocked URL).
+#: Most engine calls one get()/get_sync() makes, retries and get_sync's
+#: httpx fallback included (was up to 24-45 network requests for one blocked
+#: URL). It counts engine calls, not requests: curl_cffi may send a second
+#: fingerprint on a 403 within one call.
 _MAX_ENGINE_ATTEMPTS = 8
 #: After a Cloudflare challenge, stop hitting that host for this long.
 _BLOCK_COOLDOWN = 30.0
@@ -476,17 +478,23 @@ class BypassSession:
         bypass_rate_limit: bool = False,
         only_engines: list[str] | None = None,
         _solve_since: Optional[int] = None,
+        _max_attempts: Optional[int] = None,
     ) -> BypassResponse:
         """
         GET with automatic engine failover and retry.
 
         In ``auto`` mode, tries curl_cffi → cloudscraper → httpx → requests
         → urllib, at most _MAX_ENGINE_ATTEMPTS engine calls in total.
-        Whole rounds are retried (with backoff) only when every failure was
-        transient (no response, 5xx). A 4xx or a Cloudflare challenge ends
-        the call, and a challenge opens a per-host circuit for
-        _BLOCK_COOLDOWN seconds.
+        The first good answer is returned at once; that includes an
+        ordinary 4xx that is not a block. A block (Cloudflare challenge or a
+        possible block, see BypassResponse.is_blocked) lets the remaining
+        engines of the current round try once each, then no further round
+        runs. Whole rounds are retried (with backoff) only when every
+        failure was transient (no response, 5xx). A block left at the end
+        opens a per-host circuit for _BLOCK_COOLDOWN seconds.
         """
+        if _max_attempts is None:
+            _max_attempts = _MAX_ENGINE_ATTEMPTS
         # Captured first: this session's cookies predate any solve after it.
         solve_gen = _solve_since if _solve_since is not None else solve_generation(url)
         self._check_loop()
@@ -529,7 +537,7 @@ class BypassSession:
         for round_no in range(1, _MAX_RETRIES + 1):
             definitive = False
             for engine in engines:
-                if attempts >= _MAX_ENGINE_ATTEMPTS:
+                if attempts >= _max_attempts:
                     break
                 attempts += 1
                 resp = await self._run_async_engine(
@@ -544,7 +552,7 @@ class BypassSession:
                         "Engine %s returned %d for %s (blocked=%s)",
                         engine, resp.status_code, url, resp.is_blocked,
                     )
-            if definitive or attempts >= _MAX_ENGINE_ATTEMPTS or round_no == _MAX_RETRIES:
+            if definitive or attempts >= _max_attempts or round_no == _MAX_RETRIES:
                 break
             wait = _RETRY_BACKOFF_BASE * (2 ** (round_no - 1))
             log.info("Attempt %d/%d failed for %s (transient), retrying in %.1fs",
@@ -614,8 +622,9 @@ class BypassSession:
 
         Tries the sync engines (curl_cffi, cloudscraper, requests, urllib),
         then, only if every one failed transiently and httpx is enabled,
-        httpx on the shared event loop. Engines already tried are never
-        re-run.
+        httpx on the shared event loop. The fallback gets only what is left
+        of the _MAX_ENGINE_ATTEMPTS budget (none after two full rounds of
+        the four sync engines).
         """
         solve_gen = solve_generation(url)
         refused = _refuse_non_http(url)
@@ -647,10 +656,12 @@ class BypassSession:
                 break
             time.sleep(_RETRY_BACKOFF_BASE * (2 ** (round_no - 1)))
 
-        if not definitive and "httpx" in engines:
+        remaining = _MAX_ENGINE_ATTEMPTS - attempts
+        if not definitive and "httpx" in engines and remaining > 0:
             async_resp = self._run_on_shared_loop(
                 self.get(url, params=params, headers=headers, timeout=timeout,
-                         only_engines=["httpx"], _solve_since=solve_gen),
+                         only_engines=["httpx"], _solve_since=solve_gen,
+                         _max_attempts=remaining),
                 timeout,
             )
             if async_resp is not None and async_resp.status_code > 0:

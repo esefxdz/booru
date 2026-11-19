@@ -108,15 +108,27 @@ def test_transient_5xx_is_still_retried_but_capped(server):
     assert not sess._blocked_until          # a 5xx is not a block
 
 
-# sync: two rounds of the 4 sync engines = 8 attempts (the cap), then the
-# httpx fallback runs through get(only_engines=["httpx"]), which has its own
-# budget and makes 3 hits (3 rounds of one engine) = 11 hits total. That is
-# more than _MAX_ENGINE_ATTEMPTS: the cap is per loop, not per get_sync call.
+# sync: two rounds of the 4 sync engines = 8 attempts, which is the whole
+# _MAX_ENGINE_ATTEMPTS budget. The httpx fallback shares that budget, so it
+# has nothing left and does not run: 8 hits. (It used to get a budget of its
+# own and add 3 more hits, 11 in total.)
 def test_transient_5xx_get_sync_hits(server):
     _Counter.status, _Counter.body = 503, _BIG_HTML
     r = _session(server).get_sync(server + "/flaky")
     assert r.status_code == 503
-    assert _Counter.hits == 8 + 3, _Counter.hits
+    assert _Counter.hits == sess._MAX_ENGINE_ATTEMPTS == 8, _Counter.hits
+
+
+# The fallback still runs when budget is left, but only with what is left:
+# urllib x3 rounds (503) = 3 attempts, httpx gets the remaining 1, not 3.
+def test_get_sync_httpx_fallback_uses_remaining_budget(server, monkeypatch):
+    _Counter.status, _Counter.body = 503, _BIG_HTML
+    s = _session(server)
+    monkeypatch.setattr(s, "_get_engine_order", lambda: ["urllib", "httpx"])
+    monkeypatch.setattr(sess, "_MAX_ENGINE_ATTEMPTS", 4)
+    r = s.get_sync(server + "/flaky")
+    assert r.status_code == 503
+    assert _Counter.hits == 3 + 1, _Counter.hits
 
 
 def test_success_closes_circuit(server):
