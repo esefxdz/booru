@@ -3,7 +3,7 @@ credentials.py — Local storage for API keys, tokens and bypass/session cookies
 
 Format
 ------
-``credentials.bin`` (next to settings.json) holds one JSON object.
+``credentials.v2.bin`` (next to settings.json) holds one JSON object.
 
 * On Windows it is encrypted with DPAPI (``CryptProtectData``), the same
   mechanism browsers use: only the same Windows user account can decrypt
@@ -18,7 +18,7 @@ another PC/account means saved logins have to be entered again. The old
 XOR scheme had the same limitation (its key included the MAC address).
 
 If the file cannot be decrypted it is renamed to
-``credentials.bin.unreadable-<timestamp>`` and an error is logged, instead
+``credentials.v2.bin.unreadable-<timestamp>`` and an error is logged, instead
 of being silently overwritten with an empty store.
 """
 import base64
@@ -147,62 +147,84 @@ def _decrypt(data: str) -> str:
 class CredentialManager:
     """Credential storage in a DPAPI-encrypted local JSON file."""
 
+    #: Current store. A new name (not credentials.bin) so an older exe, which
+    #: cannot read DPAPI and would overwrite the file with an empty store,
+    #: never sees it. Downgrading just starts logged out instead of wiping.
+    FILE_NAME = "credentials.v2.bin"
+    #: Written by <= 1.1.x next to the exe: XOR-obfuscated or plain JSON.
+    LEGACY_NAME = "credentials.bin"
+
     @staticmethod
     def _get_credentials_file() -> Path:
-        """Get the path to the credentials file.
-
-        Stored next to settings.json in the app directory so the whole
-        folder is portable (copy to USB, another machine, etc.).
-        Falls back to the legacy %APPDATA% location for migration.
-        """
+        """Path of the DPAPI store (in the data folder, see app_paths)."""
         from ui.settings_view.manager import BASE_DIR
-        return BASE_DIR / "credentials.bin"
+        return BASE_DIR / CredentialManager.FILE_NAME
 
     @staticmethod
     def _get_legacy_credentials_file() -> Path:
-        """Legacy %APPDATA% path — only used for one-time migration."""
+        """Pre-portable %APPDATA% location — only read for one-time migration."""
         appdata = os.environ.get("APPDATA", ".")
-        return Path(appdata) / "BooruBrowser" / "credentials.bin"
+        return Path(appdata) / "BooruBrowser" / CredentialManager.LEGACY_NAME
+
+    def _legacy_sources(self) -> list[Path]:
+        cred_file = self._get_credentials_file()
+        return [
+            cred_file.with_name(self.LEGACY_NAME),      # next to the exe (<= 1.1.x)
+            self._get_legacy_credentials_file(),         # %APPDATA% (older)
+            cred_file.with_name("credentials.json"),     # plaintext (oldest)
+        ]
 
     def _ensure_file_exists(self):
-        """Ensure the credentials file and directory exist."""
-        cred_file = self._get_credentials_file()
-        cred_file.parent.mkdir(parents=True, exist_ok=True)
-        if not cred_file.exists():
-            cred_file.write_text(_encrypt("{}"))
+        """Kept for callers; migration happens in _load_credentials, and
+        _save_credentials creates the file, so nothing to pre-create here."""
+        self._get_credentials_file().parent.mkdir(parents=True, exist_ok=True)
+
+    def _migrate_legacy(self) -> Optional[Dict[str, Any]]:
+        """If there is no v2 store yet, import the first readable legacy file.
+
+        The legacy file is deleted only after the v2 store has been written
+        and read back successfully (it holds reversible-XOR or plaintext
+        secrets, so leaving it around would defeat the encryption).
+        """
+        for src in self._legacy_sources():
+            if not src.exists():
+                continue
+            try:
+                data = json.loads(_decrypt(src.read_text(encoding="utf-8")))
+                if not isinstance(data, dict):
+                    raise CredentialReadError("not a JSON object")
+            except (CredentialReadError, OSError, ValueError) as e:
+                logging.warning("[credentials] Could not read legacy %s (%s); left in place", src, e)
+                continue
+            try:
+                self._save_credentials(data)
+                check = json.loads(_decrypt(self._get_credentials_file().read_text(encoding="utf-8")))
+                if check != data:
+                    raise CredentialReadError("read-back mismatch")
+            except Exception:
+                logging.exception("[credentials] Migration from %s failed; legacy file kept", src)
+                return data
+            try:
+                src.unlink()
+            except OSError:
+                logging.warning("[credentials] Migrated %s but could not delete it", src)
+            logging.info("[credentials] Migrated %s to %s (DPAPI)", src.name,
+                         self._get_credentials_file().name)
+            return data
+        return None
 
     @_locked
     def _load_credentials(self) -> Dict[str, Any]:
-        """Load credentials, migrating legacy locations/formats if needed.
+        """Load credentials, migrating legacy files on first use.
 
         Never returns {} for a file that exists but is unreadable: that file
         is moved aside first so the next save cannot destroy it.
         """
         cred_file = self._get_credentials_file()
-
-        # One-time migration from the legacy %APPDATA% location / JSON file.
         if not cred_file.exists():
-            legacy_bin = self._get_legacy_credentials_file()
-            legacy_json = cred_file.with_name("credentials.json")
-            if legacy_bin.exists():
-                try:
-                    cred_file.parent.mkdir(parents=True, exist_ok=True)
-                    import shutil
-                    shutil.copy2(legacy_bin, cred_file)
-                    legacy_bin.unlink(missing_ok=True)
-                    logging.info("[credentials] Migrated credentials.bin from %APPDATA%")
-                except Exception as me:
-                    logging.warning("[credentials] Could not migrate legacy credentials.bin: %s", me)
-            elif legacy_json.exists():
-                try:
-                    data = json.loads(legacy_json.read_text(encoding="utf-8"))
-                    self._save_credentials(data)
-                    legacy_json.unlink()
-                    return data
-                except Exception as e:
-                    logging.warning("[credentials] Could not migrate credentials.json: %s", e)
-
-        if not cred_file.exists():
+            migrated = self._migrate_legacy()
+            if migrated is not None:
+                return migrated
             return {}
 
         raw = cred_file.read_text(encoding="utf-8")
@@ -222,13 +244,12 @@ class CredentialManager:
                 raise
             return {}
 
-        # Upgrade legacy XOR/plaintext files to DPAPI in place.
+        # A v2 file is always DPAPI on Windows; re-encrypt if it somehow isn't.
         if _have_dpapi() and not raw.lstrip().startswith(_DPAPI_PREFIX):
             try:
                 self._save_credentials(data)
-                logging.info("[credentials] Upgraded credentials.bin to DPAPI encryption")
             except Exception:
-                logging.exception("[credentials] Could not upgrade credentials.bin to DPAPI")
+                logging.exception("[credentials] Could not re-encrypt %s", cred_file.name)
         return data
 
     def _save_credentials(self, credentials: Dict[str, Any]):

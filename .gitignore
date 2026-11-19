@@ -58,6 +58,12 @@ custom_boorus.json
 custom_boorus.tmp
 credentials.tmp
 credentials.bin.unreadable-*
+credentials.v2.bin
+credentials.v2.bin.unreadable-*
+settings.json.unreadable-*
+custom_boorus.json.unreadable-*
+FATAL_CRASH.txt
+.*.tmp
 *.part
 
 # Debug and Logs
