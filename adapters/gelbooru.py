@@ -2,6 +2,7 @@
 gelbooru.py - Adapter for Gelbooru-based sites.
 Covers: Gelbooru, Safebooru, Rule34, xBooru, RealBooru, HypnoHub, etc.
 """
+from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
 
@@ -88,10 +89,11 @@ class GelbooruAdapter(BaseAdapter):
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
+        q = _urlquote(prefix, safe="*")
         api_path = site_data.get("api_path", "/index.php")
         return [
-            f"{base}{api_path}?page=autocomplete2&term={prefix}&type=tag_query&limit=15",
-            f"{base}/autocomplete.php?q={prefix}"
+            f"{base}{api_path}?page=autocomplete2&term={q}&type=tag_query&limit=15",
+            f"{base}/autocomplete.php?q={q}"
         ]
 
     def parse_tag_autocomplete(self, data) -> list[dict]:

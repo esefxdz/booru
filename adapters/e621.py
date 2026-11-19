@@ -2,6 +2,7 @@
 e621.py - Adapter for e621 / e926 (furry boorus).
 Covers: e621.net, e926.net (with nested JSON structure and species tags)
 """
+from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
 
@@ -73,7 +74,8 @@ class E621Adapter(BaseAdapter):
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
-        return [f"{base}/tags.json?search[name_matches]={prefix}*&limit=20&search[order]=count"]
+        q = _urlquote(prefix, safe="*")
+        return [f"{base}/tags.json?search[name_matches]={q}*&limit=20&search[order]=count"]
 
     def parse_tag_autocomplete(self, data) -> list[dict]:
         TYPE_MAP = {0: "general", 1: "artist", 3: "copyright", 4: "character", 5: "general", 7: "meta"}

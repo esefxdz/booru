@@ -1,6 +1,7 @@
 """
 zerochan.py - Adapter for Zerochan (HTML-based API).
 """
+from urllib.parse import quote as _urlquote
 import logging
 import re
 from .base import BaseAdapter
@@ -91,7 +92,8 @@ class ZerochanAdapter(BaseAdapter):
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
-        return [f"{base}/suggest?q={prefix}"]
+        q = _urlquote(prefix, safe="*")
+        return [f"{base}/suggest?q={q}"]
 
     def parse_tag_autocomplete(self, data) -> list[dict]:
         if not isinstance(data, list):

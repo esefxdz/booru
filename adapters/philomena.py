@@ -2,6 +2,7 @@
 philomena.py - Adapter for Philomena-based sites (MLP boorus).
 Covers: Derpibooru, Ponerpics, etc.
 """
+from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
 
@@ -84,7 +85,8 @@ class PhilomenaAdapter(BaseAdapter):
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
-        return [f"{base}/api/v1/json/search/tags?q={prefix}*"]
+        q = _urlquote(prefix, safe="*")
+        return [f"{base}/api/v1/json/search/tags?q={q}*"]
 
     def parse_tag_autocomplete(self, data) -> list[dict]:
         if isinstance(data, dict):

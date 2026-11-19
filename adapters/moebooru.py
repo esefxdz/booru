@@ -2,6 +2,7 @@
 moebooru.py - Adapter for Moebooru-based sites.
 Covers: Yande.re, Konachan, older Danbooru forks
 """
+from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
 
@@ -58,8 +59,9 @@ class MoebooruAdapter(BaseAdapter):
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
+        q = _urlquote(prefix, safe="*")
         # Moebooru tags endpoint
-        return [f"{base}/tag.json?limit=20&name=*{prefix}*"]
+        return [f"{base}/tag.json?limit=20&name=*{q}*"]
 
     def parse_tag_autocomplete(self, data) -> list[dict]:
         TYPE_MAP = {0: "general", 1: "artist", 3: "copyright", 4: "character", 5: "circle", 6: "faults"}

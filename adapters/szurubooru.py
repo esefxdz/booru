@@ -1,6 +1,7 @@
 """
 szurubooru.py - Adapter for Szurubooru (modern booru engine).
 """
+from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
 
@@ -86,7 +87,8 @@ class SzurubooruAdapter(BaseAdapter):
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
-        return [f"{base}/api/tags?query={prefix}*"]
+        q = _urlquote(prefix, safe="*")
+        return [f"{base}/api/tags?query={q}*"]
 
     def parse_tag_autocomplete(self, data) -> list[dict]:
         if not isinstance(data, dict):

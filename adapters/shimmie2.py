@@ -2,6 +2,7 @@
 shimmie2.py - Adapter for Shimmie2-based sites.
 Older booru engine with simpler JSON/HTML APIs.
 """
+from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
 
@@ -77,7 +78,8 @@ class Shimmie2Adapter(BaseAdapter):
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
-        return [f"{base}/api/internal/autocomplete?s={prefix}"]
+        q = _urlquote(prefix, safe="*")
+        return [f"{base}/api/internal/autocomplete?s={q}"]
 
     def parse_tag_autocomplete(self, data) -> list[dict]:
         if not isinstance(data, list):

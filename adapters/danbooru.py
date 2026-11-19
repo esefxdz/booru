@@ -2,6 +2,7 @@
 danbooru.py - Adapter for Danbooru-based sites.
 Covers: Danbooru, SafebooruDonmai
 """
+from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
 
@@ -71,9 +72,10 @@ class DanbooruAdapter(BaseAdapter):
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
+        q = _urlquote(prefix, safe="*")
         return [
-            f"{base}/autocomplete.json?search[query]={prefix}&search[type]=tag_query&limit=15",
-            f"{base}/tags.json?search[name_matches]={prefix}*&limit=15"
+            f"{base}/autocomplete.json?search[query]={q}&search[type]=tag_query&limit=15",
+            f"{base}/tags.json?search[name_matches]={q}*&limit=15"
         ]
 
     def parse_tag_autocomplete(self, data) -> list[dict]:

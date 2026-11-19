@@ -2,6 +2,7 @@
 html_scraper.py - HTML scraper fallback for Gelbooru-like sites.
 Used as a fallback when JSON API fails.
 """
+from urllib.parse import quote as _urlquote
 import re
 from .base import BaseAdapter
 
@@ -90,9 +91,10 @@ class HtmlScraperAdapter(BaseAdapter):
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
+        q = _urlquote(prefix, safe="*")
         return [
-            f"{base}/index.php?page=autocomplete2&term={prefix}&type=tag_query&limit=15",
-            f"{base}/autocomplete.php?q={prefix}"
+            f"{base}/index.php?page=autocomplete2&term={q}&type=tag_query&limit=15",
+            f"{base}/autocomplete.php?q={q}"
         ]
 
     def parse_tag_autocomplete(self, data) -> list[dict]:
