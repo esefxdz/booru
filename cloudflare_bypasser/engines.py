@@ -599,6 +599,12 @@ def _try_urllib_sync(
                 "https": proxy_url,
             })
             handlers.append(proxy_handler)
+        else:
+            # No app proxy means a direct connection. Without this,
+            # build_opener adds a default ProxyHandler that picks up
+            # HTTP(S)_PROXY and the Windows registry proxy, unlike the
+            # other engines given proxies=None.
+            handlers.append(urllib.request.ProxyHandler({}))
 
         opener = urllib.request.build_opener(*handlers)
 
