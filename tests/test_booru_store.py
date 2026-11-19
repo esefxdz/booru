@@ -180,3 +180,73 @@ def test_unreadable_settings_disables_saving(monkeypatch):
     monkeypatch.setattr("builtins.open", real_open)
     assert m.save() is False
     assert mod._SETTINGS_FILE.read_text() == '{"blacklist": "keepme"}'
+
+
+def test_locked_credentials_at_load_do_not_wipe_secrets_on_save(monkeypatch):
+    import credentials
+    mod, m = _fresh_manager(monkeypatch)
+    monkeypatch.setattr(m, "_secrets_unloaded", False, raising=False)
+    blob = {"gelbooru": {"cookies": {"cf_clearance": "keep"}}}
+    credentials.set_sensitive("_bypass_data", blob)
+    mod._SETTINGS_FILE.write_text('{"blacklist": "x"}')
+
+    real = credentials.CredentialManager._load_credentials
+    locked = {"on": True}
+
+    def flaky(self):
+        if locked["on"]:
+            raise PermissionError(32, "being used by another process")
+        return real(self)
+
+    monkeypatch.setattr(credentials.CredentialManager, "_load_credentials", flaky)
+    m.load()
+    assert m._secrets_unloaded is True
+    locked["on"] = False  # the lock clears after startup, before the user saves
+    m.blacklist = "changed"
+    assert m.save()  # non-secret settings still save
+    assert "changed" in mod._SETTINGS_FILE.read_text()
+    assert credentials.get_sensitive("_bypass_data") == blob  # not wiped by empty dicts
+
+    m.load()  # a later successful load clears the flag
+    assert m._secrets_unloaded is False
+    assert m.bypass_data == blob
+
+
+def test_failed_secret_write_is_not_silent(monkeypatch, caplog):
+    mod, m = _fresh_manager(monkeypatch)
+    monkeypatch.setattr(m, "_secrets_unloaded", False, raising=False)
+    monkeypatch.setattr(mod, "set_sensitive_many", lambda items: False)
+    with caplog.at_level("ERROR"):
+        m.save()
+    assert "could not write cookies/tokens" in caplog.text
+
+
+def test_get_sensitive_raise_on_error_distinguishes_failure(monkeypatch):
+    import credentials
+
+    def boom(self):
+        raise PermissionError(32, "locked")
+
+    monkeypatch.setattr(credentials.CredentialManager, "_load_credentials", boom)
+    assert credentials.get_sensitive("_bypass_data") == {}
+    with pytest.raises(PermissionError):
+        credentials.get_sensitive("_bypass_data", raise_on_error=True)
+
+
+def test_transient_permission_error_on_read_is_retried(tmp_path, monkeypatch):
+    import credentials
+    monkeypatch.setattr(credentials.time, "sleep", lambda s: None)
+    f = tmp_path / "c.bin"
+    f.write_text("hello")
+    real = type(f).read_text
+    calls = {"n": 0}
+
+    def flaky(self, *a, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError(32, "locked")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(type(f), "read_text", flaky)
+    assert credentials.CredentialManager._read_with_retry(f) == "hello"
+    assert calls["n"] == 2

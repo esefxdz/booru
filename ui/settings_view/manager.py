@@ -89,6 +89,9 @@ class SettingsManager:
         self.auth_tokens: dict  = {}
         self._initialized = False
         self._save_disabled = False
+        # True when the secrets store could not be read at load(); save() then
+        # leaves it alone so it can't overwrite real cookies with empty dicts.
+        self._secrets_unloaded = False
 
     def initialize(self):
         """Explicit initialization to be called on app startup."""
@@ -163,11 +166,14 @@ class SettingsManager:
 
         # Load sensitive fields from secure storage
         try:
-            self.bypass_data = get_sensitive("_bypass_data") or {}
-            self.session_keys = get_sensitive("_session_keys") or {}
-            self.auth_tokens = get_sensitive("_auth_tokens") or {}
+            self.bypass_data = get_sensitive("_bypass_data", raise_on_error=True) or {}
+            self.session_keys = get_sensitive("_session_keys", raise_on_error=True) or {}
+            self.auth_tokens = get_sensitive("_auth_tokens", raise_on_error=True) or {}
+            self._secrets_unloaded = False
         except Exception as e:
-            logging.error(f"[settings] Failed to load sensitive data: {e}")
+            self._secrets_unloaded = True
+            logging.error(f"[settings] Failed to load sensitive data ({e}); "
+                          "saved logins/cookies will not be written this session")
 
         self.validate()
         self._reconcile_active_booru()
@@ -223,11 +229,16 @@ class SettingsManager:
         with _SAVE_LOCK:
             # One credentials.bin write for all three (was three separate
             # read-modify-write cycles that could interleave).
-            set_sensitive_many({
+            if self._secrets_unloaded:
+                logging.warning("[settings] save(): secrets store was unreadable at "
+                                "startup; not writing cookies/tokens (would erase them)")
+            elif not set_sensitive_many({
                 "_bypass_data": self.bypass_data,
                 "_session_keys": self.session_keys,
                 "_auth_tokens": self.auth_tokens,
-            })
+            }):
+                logging.error("[settings] save(): could not write cookies/tokens to "
+                              "the credentials store; they were not saved")
             data = {
                 k: v for k, v in self.__dict__.items()
                 if not k.startswith("_") and k not in _SENSITIVE_KEYS

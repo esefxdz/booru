@@ -213,6 +213,17 @@ class CredentialManager:
             return data
         return None
 
+    @staticmethod
+    def _read_with_retry(path: Path) -> str:
+        """read_text, retrying briefly on PermissionError: an AV scanner or
+        sync client often holds the file for a few hundred ms at startup."""
+        for delay in (0.1, 0.2, 0.4):
+            try:
+                return path.read_text(encoding="utf-8")
+            except PermissionError:
+                time.sleep(delay)
+        return path.read_text(encoding="utf-8")
+
     @_locked
     def _load_credentials(self) -> Dict[str, Any]:
         """Load credentials, migrating legacy files on first use.
@@ -227,7 +238,7 @@ class CredentialManager:
                 return migrated
             return {}
 
-        raw = cred_file.read_text(encoding="utf-8")
+        raw = self._read_with_retry(cred_file)
         try:
             data = json.loads(_decrypt(raw))
             if not isinstance(data, dict):
@@ -338,11 +349,18 @@ class CredentialManager:
             return []
 
     @_locked
-    def get_sensitive(self, key: str) -> dict:
+    def get_sensitive(self, key: str, *, raise_on_error: bool = False) -> dict:
+        """Return the stored blob, or {} if absent.
+
+        A failed read also returns {} by default; pass raise_on_error=True
+        to tell "unreadable" apart from "no secrets" (the exception propagates).
+        """
         try:
             return self._load_credentials().get(key, {})
         except Exception:
             logging.exception("[credentials] Failed to read sensitive data %s", key)
+            if raise_on_error:
+                raise
             return {}
 
     @_locked
@@ -419,9 +437,9 @@ def migrate_from_settings(settings_credentials: Dict[str, Any]) -> None:
     """Migrate credentials from settings.json."""
     _credential_manager.migrate_from_settings(settings_credentials)
 
-def get_sensitive(key: str) -> dict:
+def get_sensitive(key: str, *, raise_on_error: bool = False) -> dict:
     """Retrieve sensitive data dict (e.g. bypass_data)."""
-    return _credential_manager.get_sensitive(key)
+    return _credential_manager.get_sensitive(key, raise_on_error=raise_on_error)
 
 def set_sensitive(key: str, data: dict) -> bool:
     """Store sensitive data dict securely."""
