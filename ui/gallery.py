@@ -306,8 +306,9 @@ class Gallery(QWidget):
     def prepare_skeletons(self, posts):
         """Register posts as pure data. No widgets are created here."""
         from ui.bookmarks_main.bookmarks_db import db
-        incoming_ids = [str(p.get("id")) for p in posts if p.get("id")]
-        bookmarked_set = db.are_posts_bookmarked(incoming_ids)
+        # (booru, id): ids are only unique per booru, and the bookmarks page
+        # mixes posts from several boorus.
+        bookmarked_keys = db.bookmarked_keys(posts)
 
         for post in posts:
             post_id = post.get("id")
@@ -319,7 +320,7 @@ class Gallery(QWidget):
             self._posts.append(post)
             self._post_id_to_idx[post_id] = idx
             self._rects.append(QRect())
-            self._post_bookmarked[idx] = str(post_id) in bookmarked_set
+            self._post_bookmarked[idx] = (post.get("_booru") or "unknown", str(post_id)) in bookmarked_keys
             if idx not in self._aspect_ratios:
                 self._aspect_ratios[idx] = self._get_aspect_ratio(post)
 

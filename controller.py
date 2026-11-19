@@ -38,8 +38,11 @@ class FetchThread(QThread):
                 end = start + settings.SEARCH_LIMIT
                 posts = all_bms[start:end]
             else:
+                # Capture before the await: the user may switch booru mid-search.
+                searched_booru = settings.manager.active_booru
                 posts = async_run(self.downloader.get_image_urls(self.tags, settings.SEARCH_LIMIT, self.current_page - 1, session_manager=get_session))
-                for p in posts: p["_booru"] = settings.manager.active_booru
+                for p in posts:
+                    p["_booru"] = searched_booru
 
             # Phase 1: Emit metadata immediately so the UI shows skeletons
             self.posts_ready.emit(posts, self.is_bookmarks_mode)

@@ -409,7 +409,7 @@ class BooruGui(QMainWindow):
         if is_now_bookmarked:
             db.add_bookmark(post)
         else:
-            db.remove_bookmark(pid)
+            db.remove_bookmark(pid, post.get("_booru"))
         if hasattr(self, "sidebar"):
             self.sidebar.refresh_bookmark_count()
 

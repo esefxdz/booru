@@ -65,36 +65,102 @@ class BookmarksDB:
             conn = self._get_conn()
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS bookmarks (
-                    id TEXT PRIMARY KEY,
-                    booru TEXT,
+                    booru TEXT NOT NULL DEFAULT 'unknown',
+                    id TEXT NOT NULL,
                     post_data TEXT,
-                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (booru, id)
                 )
             ''')
-    def is_post_bookmarked(self, post_id: str) -> bool:
+            self._migrate_to_composite_key(conn)
+
+    @staticmethod
+    def _migrate_to_composite_key(conn):
+        """v1 keyed bookmarks on post id alone, so the same id on two boorus
+        overwrote each other. Rebuild the table keyed on (booru, id) once,
+        keeping the old table as bookmarks_v1_backup."""
+        pk = [row[1] for row in sorted(
+            (r for r in conn.execute("PRAGMA table_info(bookmarks)") if r[5]), key=lambda r: r[5])]
+        if pk == ["booru", "id"]:
+            return
+        logging.info("[bookmarks] Migrating bookmarks table to a (booru, id) key")
+        with conn:   # one transaction: all or nothing
+            conn.execute('''
+                CREATE TABLE bookmarks_v2 (
+                    booru TEXT NOT NULL DEFAULT 'unknown',
+                    id TEXT NOT NULL,
+                    post_data TEXT,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (booru, id)
+                )
+            ''')
+            conn.execute('''
+                INSERT OR IGNORE INTO bookmarks_v2 (booru, id, post_data, added_at)
+                SELECT COALESCE(NULLIF(booru, ''), 'unknown'), id, post_data, added_at
+                FROM bookmarks
+            ''')
+            conn.execute("DROP TABLE IF EXISTS bookmarks_v1_backup")
+            conn.execute("ALTER TABLE bookmarks RENAME TO bookmarks_v1_backup")
+            conn.execute("ALTER TABLE bookmarks_v2 RENAME TO bookmarks")
+
+    # Rows saved by very old versions have booru 'unknown'; they match any booru
+    # so upgrading never makes an existing bookmark look un-bookmarked.
+
+    def is_post_bookmarked(self, post_id: str, booru: str | None = None) -> bool:
         pid = str(post_id)
         with self._lock:
             conn = self._get_conn()
-            cursor = conn.execute("SELECT 1 FROM bookmarks WHERE id = ?", (pid,))
+            if booru is None:
+                cursor = conn.execute("SELECT 1 FROM bookmarks WHERE id = ?", (pid,))
+            else:
+                cursor = conn.execute(
+                    "SELECT 1 FROM bookmarks WHERE id = ? AND booru IN (?, 'unknown')", (pid, booru))
             return cursor.fetchone() is not None
 
-    def are_posts_bookmarked(self, post_ids: list[str]) -> set[str]:
+    def are_posts_bookmarked(self, post_ids: list[str], booru: str | None = None) -> set[str]:
+        """Ids among *post_ids* that are bookmarked (on *booru*, if given)."""
         if not post_ids:
             return set()
-        
-        # SQLite maximum bound parameters is typically 999, so we chunk it just in case
-        chunk_size = 900
+        chunk_size = 900   # SQLite bound-parameter limit is 999
         bookmarked = set()
-        
         with self._lock:
             conn = self._get_conn()
             for i in range(0, len(post_ids), chunk_size):
                 chunk = [str(pid) for pid in post_ids[i:i + chunk_size]]
                 placeholders = ",".join("?" * len(chunk))
-                cursor = conn.execute(f"SELECT id FROM bookmarks WHERE id IN ({placeholders})", chunk)
+                if booru is None:
+                    cursor = conn.execute(
+                        f"SELECT id FROM bookmarks WHERE id IN ({placeholders})", chunk)
+                else:
+                    cursor = conn.execute(
+                        f"SELECT id FROM bookmarks WHERE id IN ({placeholders}) "
+                        "AND booru IN (?, 'unknown')", chunk + [booru])
                 bookmarked.update(row[0] for row in cursor.fetchall())
-                
         return bookmarked
+
+    def bookmarked_keys(self, posts: list[dict]) -> set[tuple[str, str]]:
+        """``{(booru, id)}`` for the posts in *posts* that are bookmarked.
+
+        Works for mixed lists (the bookmarks page shows several boorus).
+        """
+        ids = list({str(p.get("id")) for p in posts if p.get("id") is not None})
+        if not ids:
+            return set()
+        rows: set[tuple[str, str]] = set()
+        with self._lock:
+            conn = self._get_conn()
+            for i in range(0, len(ids), 900):
+                chunk = ids[i:i + 900]
+                placeholders = ",".join("?" * len(chunk))
+                rows.update(conn.execute(
+                    f"SELECT booru, id FROM bookmarks WHERE id IN ({placeholders})", chunk).fetchall())
+        unknown_ids = {pid for b, pid in rows if b == "unknown"}
+        keys = {(b, pid) for b, pid in rows if b != "unknown"}
+        for p in posts:
+            pid = str(p.get("id"))
+            if pid in unknown_ids:
+                keys.add((p.get("_booru") or "unknown", pid))
+        return keys
 
     def add_bookmark(self, post: dict):
         raw_id = post.get("id")
@@ -103,22 +169,24 @@ class BookmarksDB:
         pid = str(raw_id)
         if not pid:
             return
-
-        booru = post.get("_booru", "unknown")
-        
+        booru = post.get("_booru") or "unknown"
         with self._lock:
             conn = self._get_conn()
             conn.execute(
-                "INSERT OR REPLACE INTO bookmarks (id, booru, post_data) VALUES (?, ?, ?)",
-                (pid, booru, json.dumps(post))
+                "INSERT OR REPLACE INTO bookmarks (booru, id, post_data) VALUES (?, ?, ?)",
+                (booru, pid, json.dumps(post))
             )
             conn.commit()
 
-    def remove_bookmark(self, post_id: str):
+    def remove_bookmark(self, post_id: str, booru: str | None = None):
         pid = str(post_id)
         with self._lock:
             conn = self._get_conn()
-            conn.execute("DELETE FROM bookmarks WHERE id = ?", (pid,))
+            if booru is None:
+                conn.execute("DELETE FROM bookmarks WHERE id = ?", (pid,))
+            else:
+                conn.execute("DELETE FROM bookmarks WHERE id = ? AND booru IN (?, 'unknown')",
+                             (pid, booru))
             conn.commit()
 
     def get_all_bookmarks(self) -> list:
