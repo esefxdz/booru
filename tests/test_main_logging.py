@@ -43,9 +43,11 @@ def test_error_dialog_is_built_on_the_gui_thread(monkeypatch):
     """The excepthook may fire on a worker thread (PyQt routes slot/QThread
     exceptions there); the dialog must still be created on the GUI thread."""
     import threading
-    from PyQt6.QtCore import QCoreApplication
+    from PyQt6.QtWidgets import QApplication
 
-    app = QCoreApplication.instance() or QCoreApplication([])
+    # A full QApplication (not QCoreApplication): later tests reuse the
+    # instance to build widgets, which crashes on a bare QCoreApplication.
+    app = QApplication.instance() or QApplication([])
     built_on = []
 
     class FakeBox:
