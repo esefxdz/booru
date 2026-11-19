@@ -64,6 +64,26 @@ from cloudflare_bypasser.fingerprint import (  # noqa: E402, F401
 from cloudflare_bypasser.engines import _Response  # noqa: E402, F401
 
 
+#: Hard cap on engine calls per request (was up to 24-45 network requests
+#: for one blocked URL).
+_MAX_ENGINE_ATTEMPTS = 8
+#: After a Cloudflare challenge, stop hitting that host for this long.
+_BLOCK_COOLDOWN = 30.0
+
+
+def _host_of(url: str) -> str:
+    from urllib.parse import urlparse
+    try:
+        return (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _is_definitive(resp) -> bool:
+    """A response that retrying will not change: any 4xx or a CF challenge."""
+    return bool(resp) and (resp.is_blocked or 400 <= resp.status_code < 500)
+
+
 def _refuse_non_http(url) -> Optional[BypassResponse]:
     """Return a status-0 response for anything that is not an absolute
     http(s) URL. Server-supplied URLs reach this layer, and urllib/curl
@@ -127,6 +147,7 @@ class BypassSession:
         self._rate_limit_lock = None
         self._cookie_jar = {}
         self._cffi_winner: str | None = None
+        self._blocked_until: dict[str, float] = {}   # host -> monotonic deadline
 
     # ------------------------------------------------------------------
     # Loop-aware client invalidation
@@ -290,13 +311,17 @@ class BypassSession:
         headers: dict | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
         bypass_rate_limit: bool = False,
+        only_engines: list[str] | None = None,
     ) -> BypassResponse:
         """
         GET with automatic engine failover and retry.
 
         In ``auto`` mode, tries curl_cffi → cloudscraper → httpx → requests
-        → urllib.  Retries up to 3 times with exponential backoff on
-        transient failures (5xx, timeouts).
+        → urllib, at most _MAX_ENGINE_ATTEMPTS engine calls in total.
+        Whole rounds are retried (with backoff) only when every failure was
+        transient (no response, 5xx). A 4xx or a Cloudflare challenge ends
+        the call, and a challenge opens a per-host circuit for
+        _BLOCK_COOLDOWN seconds.
         """
         self._check_loop()
 
@@ -321,48 +346,83 @@ class BypassSession:
                 await asyncio.sleep(delay_needed)
 
         merged_headers = self._build_headers(headers)
-        last_response: Optional[BypassResponse] = None
+
+        open_resp = self._circuit_open(url)
+        if open_resp is not None:
+            return open_resp
 
         # In auto mode, try the previously successful engine first
-        engines = self._get_engine_order()
-        if self.method == "auto" and self._successful_engine and self._successful_engine in engines:
+        engines = list(only_engines) if only_engines else self._get_engine_order()
+        if (not only_engines and self.method == "auto" and self._successful_engine
+                and self._successful_engine in engines):
             engines.remove(self._successful_engine)
             engines.insert(0, self._successful_engine)
 
-        for attempt in range(1, _MAX_RETRIES + 1):
+        last_response: Optional[BypassResponse] = None
+        attempts = 0
+        for round_no in range(1, _MAX_RETRIES + 1):
+            definitive = False
             for engine in engines:
+                if attempts >= _MAX_ENGINE_ATTEMPTS:
+                    break
+                attempts += 1
                 resp = await self._run_async_engine(
                     engine, url, params, merged_headers, timeout,
                 )
-                if resp and not resp.is_blocked and resp.status_code < 500:
-                    if self.method == "auto":
-                        self._successful_engine = engine
-                    if engine == "curl_cffi" and resp.engine_used and "/" in resp.engine_used:
-                        self._cffi_winner = resp.engine_used.split("/", 1)[1]
-                    self._remember_cookies(url, resp)
+                if self._accept(engine, url, resp):
                     return resp
                 if resp:
                     last_response = resp
+                    definitive = definitive or _is_definitive(resp)
                     log.debug(
                         "Engine %s returned %d for %s (blocked=%s)",
                         engine, resp.status_code, url, resp.is_blocked,
                     )
+            if definitive or attempts >= _MAX_ENGINE_ATTEMPTS or round_no == _MAX_RETRIES:
+                break
+            wait = _RETRY_BACKOFF_BASE * (2 ** (round_no - 1))
+            log.info("Attempt %d/%d failed for %s (transient), retrying in %.1fs",
+                     round_no, _MAX_RETRIES, url, wait)
+            await asyncio.sleep(wait)
 
-            if attempt < _MAX_RETRIES:
-                wait = _RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
-                log.info(
-                    "Attempt %d/%d failed for %s, retrying in %.1fs",
-                    attempt, _MAX_RETRIES, url, wait,
-                )
-                await asyncio.sleep(wait)
+        return self._give_up(url, last_response)
 
+    # ------------------------------------------------------------------
+    # Retry policy helpers (shared by get and get_sync)
+    # ------------------------------------------------------------------
+
+    def _accept(self, engine: str, url: str, resp) -> bool:
+        """Record and accept a good response."""
+        if not (resp and not resp.is_blocked and 0 < resp.status_code < 500):
+            return False
+        if self.method == "auto":
+            self._successful_engine = engine
+        if engine == "curl_cffi" and resp.engine_used and "/" in resp.engine_used:
+            self._cffi_winner = resp.engine_used.split("/", 1)[1]
+        self._remember_cookies(url, resp)
+        self._blocked_until.pop(_host_of(url), None)
+        return True
+
+    def _circuit_open(self, url: str) -> Optional[BypassResponse]:
+        """While a host is known to be blocking us, answer without network I/O.
+
+        Without this, every thumbnail on a page re-ran the whole engine
+        chain against a site that had just served a challenge.
+        """
+        host = _host_of(url)
+        until = self._blocked_until.get(host)
+        if until and time.monotonic() < until:
+            log.debug("Circuit open for %s; not sending request", host)
+            return BypassResponse(b"", "", 403, url, None, "circuit-open")
+        return None
+
+    def _give_up(self, url: str, last_response: Optional[BypassResponse]) -> BypassResponse:
         if last_response:
-            log.warning(
-                "All engines failed for %s, returning last response [%d]",
-                url, last_response.status_code,
-            )
+            if last_response.is_blocked:
+                self._blocked_until[_host_of(url)] = time.monotonic() + _BLOCK_COOLDOWN
+            log.warning("All engines failed for %s, returning last response [%d]",
+                        url, last_response.status_code)
             return last_response
-
         log.error("Total failure for %s — no engine could reach the server", url)
         return BypassResponse(b"", "", 0, url, None, "none")
 
@@ -379,61 +439,71 @@ class BypassSession:
     ) -> BypassResponse:
         """Synchronous wrapper.
 
-        Tries sync engines first (curl_cffi → cloudscraper → requests →
-        urllib) using persistent sync sessions for connection reuse.  Falls
-        back to the full async engine chain only when httpx HTTP/2 is needed
-        or when locked to an async-only engine.
+        Tries the sync engines (curl_cffi, cloudscraper, requests, urllib),
+        then, only if every one failed transiently and httpx is enabled,
+        httpx on the shared event loop. Engines already tried are never
+        re-run.
         """
         refused = _refuse_non_http(url)
         if refused is not None:
             return refused
+        open_resp = self._circuit_open(url)
+        if open_resp is not None:
+            return open_resp
 
         merged_headers = self._build_headers(headers)
-
         engines = self._get_engine_order()
         sync_engines = [e for e in engines if e != "httpx"]
         last_response: Optional[BypassResponse] = None
+        attempts = 0
+        definitive = False
 
-        for attempt in range(1, _MAX_RETRIES + 1):
+        for round_no in range(1, _MAX_RETRIES + 1):
             for engine in sync_engines:
+                if attempts >= _MAX_ENGINE_ATTEMPTS:
+                    break
+                attempts += 1
                 resp = self._try_sync_engine(engine, url, params, merged_headers, timeout)
-                if resp and not resp.is_blocked and resp.status_code < 500:
-                    if self.method == "auto":
-                        self._successful_engine = engine
-                    if engine == "curl_cffi" and resp.engine_used and "/" in resp.engine_used:
-                        self._cffi_winner = resp.engine_used.split("/", 1)[1]
-                    self._remember_cookies(url, resp)
+                if self._accept(engine, url, resp):
                     return resp
                 if resp:
                     last_response = resp
-            if attempt < _MAX_RETRIES:
-                wait = _RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
-                time.sleep(wait)
+                    definitive = definitive or _is_definitive(resp)
+            if definitive or attempts >= _MAX_ENGINE_ATTEMPTS or round_no == _MAX_RETRIES:
+                break
+            time.sleep(_RETRY_BACKOFF_BASE * (2 ** (round_no - 1)))
 
-        if last_response is None or "httpx" in engines:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop and loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(
-                        asyncio.run,
-                        self.get(url, params=params, headers=headers, timeout=timeout),
-                    )
-                    async_resp = future.result(timeout=timeout + 10)
-            else:
-                async_resp = asyncio.run(
-                    self.get(url, params=params, headers=headers, timeout=timeout)
-                )
-            if async_resp and async_resp.status_code > 0:
+        if not definitive and "httpx" in engines:
+            async_resp = self._run_on_shared_loop(
+                self.get(url, params=params, headers=headers, timeout=timeout,
+                         only_engines=["httpx"]),
+                timeout,
+            )
+            if async_resp is not None and async_resp.status_code > 0:
                 return async_resp
 
-        if last_response:
-            return last_response
-        return BypassResponse(b"", "", 0, url, None, "none")
+        return self._give_up(url, last_response)
+
+    @staticmethod
+    def _run_on_shared_loop(coro, timeout: int):
+        """Run *coro* on the app's global event loop (never a throwaway one,
+        which orphaned this session's clients). Returns None if that is not
+        possible without blocking the loop itself."""
+        try:
+            asyncio.get_running_loop()
+            coro.close()      # called from inside a loop: blocking here would deadlock
+            return None
+        except RuntimeError:
+            pass
+        import async_loop
+        try:
+            return async_loop.submit(coro).result(timeout=timeout + 10)
+        except RuntimeError:
+            # No global loop (e.g. tests, standalone tools): run it locally.
+            return asyncio.run(coro)
+        except Exception as e:
+            log.debug("async fallback failed: %s", e)
+            return None
 
     def _try_sync_engine(
         self, engine: str, url: str, params: dict | None,

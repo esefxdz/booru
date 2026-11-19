@@ -194,6 +194,8 @@ async def _try_curl_cffi(
     if winner_hint and winner_hint in targets and targets[0] != winner_hint:
         targets.remove(winner_hint)
         targets.insert(0, winner_hint)
+    # On a 403 try one other fingerprint, not all of them (each is a request).
+    targets = targets[:2]
 
     for target in targets:
         try:
@@ -279,6 +281,8 @@ def _try_curl_cffi_sync(
     if winner_hint and winner_hint in targets and targets[0] != winner_hint:
         targets.remove(winner_hint)
         targets.insert(0, winner_hint)
+    # On a 403 try one other fingerprint, not all of them (each is a request).
+    targets = targets[:2]
 
     for target in targets:
         try:
