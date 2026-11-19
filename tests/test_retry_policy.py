@@ -80,7 +80,7 @@ def test_transient_5xx_is_still_retried_but_capped(server):
 def test_success_closes_circuit(server):
     s = _session(server)
     asyncio.run(s.get(server + "/x"))                  # opens the circuit
-    s._blocked_until.clear()                            # cooldown elapsed
+    sess._blocked_until.clear()                         # cooldown elapsed
     _Counter.status, _Counter.body = 200, b'{"ok": true}'
     r = asyncio.run(s.get(server + "/x"))
-    assert r.status_code == 200 and not s._blocked_until
+    assert r.status_code == 200 and not sess._blocked_until

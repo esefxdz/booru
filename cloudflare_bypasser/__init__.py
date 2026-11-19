@@ -26,6 +26,7 @@ from cloudflare_bypasser.session import (
     BYPASS_METHOD_LABELS,
     ENGINE_ORDER,
     get_available_engines,
+    reset_circuit as _reset_circuit,
 )
 from cloudflare_bypasser import store as _store
 
@@ -110,6 +111,15 @@ def invalidate_session(booru_name: str) -> None:
     _session_cache.pop(booru_name, None)
 
 
+def bypass_solved(booru_name: str) -> None:
+    """The user (or the auto-solver) just passed the challenge and the new
+    cookies are already saved: drop the cached session WITHOUT touching the
+    store, and reopen the host so the next request goes out."""
+    _session_cache.pop(booru_name, None)
+    import boorus
+    _reset_circuit(boorus.REGISTRY.get(booru_name, {}).get("url", ""))
+
+
 async def close_all_sessions():
     """Close all cached bypass sessions — call at app shutdown."""
     for _, (__, session) in list(_session_cache.items()):
@@ -129,6 +139,7 @@ __all__ = [
     "BypassResponse",
     "get_session",
     "invalidate_session",
+    "bypass_solved",
     "close_all_sessions",
     "get_available_engines",
     "BYPASS_METHODS",

@@ -80,8 +80,11 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
         # ── Cloudflare challenge wall detection ───────────────────
         if hasattr(r, "is_blocked") and r.is_blocked:
             booru = settings.manager.active_booru
-            from cloudflare_bypasser import invalidate_session
-            invalidate_session(booru)
+            # "circuit-open" is synthetic: no request was sent, so it says
+            # nothing about the stored clearance. Keep the cookies then.
+            if getattr(r, "engine_used", None) != "circuit-open":
+                from cloudflare_bypasser import invalidate_session
+                invalidate_session(booru)
             raise CloudflareBlockError(
                 f"'{booru}' is behind Cloudflare protection. "
                 f"Right-click the booru icon -> Cloudflare tab -> "

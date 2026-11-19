@@ -157,11 +157,11 @@ class CloudflareAutoSolver(QObject):
         self._captured = True
         self._cleanup()
 
-        from cloudflare_bypasser import store, invalidate_session
+        from cloudflare_bypasser import store, bypass_solved
         cookies = dict(self._found_cookies)
         ua = self._profile.httpUserAgent() or _CHROME_UA
         store.save_bypass(self._booru_name, cookies, ua)
-        invalidate_session(self._booru_name)
+        bypass_solved(self._booru_name)   # not invalidate_session: that clears the store
         self.solved.emit(cookies, ua)
 
     def _on_timeout(self) -> None:

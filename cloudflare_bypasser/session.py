@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import threading
 import time
 from typing import Optional
 from ui import settings_view as settings
@@ -78,6 +79,68 @@ def _host_of(url: str) -> str:
         return (urlparse(url).hostname or "").lower()
     except ValueError:
         return ""
+
+
+# Circuit-breaker state is module-level, not per BypassSession: api_client
+# drops the cached session after a block, and a fresh session must not
+# forget that the host is blocking us. Keyed by (host, port) so two
+# self-hosted boorus on one machine do not pause each other. Touched from
+# the asyncio thread and from worker threads (get_sync), hence the lock.
+_blocked_until: dict[tuple[str, int], float] = {}   # (host, port) -> monotonic deadline
+_blocked_lock = threading.Lock()
+
+
+def _circuit_key(url: str) -> tuple[str, int]:
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(url)
+        port = u.port
+    except ValueError:
+        return ("", 0)
+    if port is None:
+        port = 443 if (u.scheme or "").lower() == "https" else 80
+    return ((u.hostname or "").lower(), port)
+
+
+def _open_circuit(url: str) -> None:
+    with _blocked_lock:
+        _blocked_until[_circuit_key(url)] = time.monotonic() + _BLOCK_COOLDOWN
+
+
+def _close_circuit(url: str) -> None:
+    with _blocked_lock:
+        _blocked_until.pop(_circuit_key(url), None)
+
+
+def _circuit_is_open(url: str) -> bool:
+    key = _circuit_key(url)
+    with _blocked_lock:
+        until = _blocked_until.get(key)
+        if until is None:
+            return False
+        if time.monotonic() < until:
+            return True
+        del _blocked_until[key]
+        return False
+
+
+def reset_circuit(site_url: str) -> None:
+    """Close the breaker for every host on *site_url*'s site (the API host
+    and its CDN hosts alike). Call after the user has solved the challenge."""
+    from validation import site_key
+    host = _host_of(site_url)
+    if not host:
+        return
+    key = site_key(host)
+    with _blocked_lock:
+        for k in [k for k in _blocked_until if k[0] == host or site_key(k[0]) == key]:
+            del _blocked_until[k]
+
+
+def reset_all_circuits() -> None:
+    """Close every breaker (used by the test suite)."""
+    with _blocked_lock:
+        _blocked_until.clear()
 
 
 def _is_definitive(resp) -> bool:
@@ -148,7 +211,6 @@ class BypassSession:
         self._rate_limit_lock = None
         self._cookie_jar = {}
         self._cffi_winner: str | None = None
-        self._blocked_until: dict[str, float] = {}   # host -> monotonic deadline
 
     # ------------------------------------------------------------------
     # Loop-aware client invalidation
@@ -408,7 +470,7 @@ class BypassSession:
         if engine == "curl_cffi" and resp.engine_used and "/" in resp.engine_used:
             self._cffi_winner = resp.engine_used.split("/", 1)[1]
         self._remember_cookies(url, resp)
-        self._blocked_until.pop(_host_of(url), None)
+        _close_circuit(url)
         return True
 
     def _circuit_open(self, url: str) -> Optional[BypassResponse]:
@@ -417,17 +479,15 @@ class BypassSession:
         Without this, every thumbnail on a page re-ran the whole engine
         chain against a site that had just served a challenge.
         """
-        host = _host_of(url)
-        until = self._blocked_until.get(host)
-        if until and time.monotonic() < until:
-            log.debug("Circuit open for %s; not sending request", host)
+        if _circuit_is_open(url):
+            log.debug("Circuit open for %s; not sending request", _host_of(url))
             return BypassResponse(b"", "", 403, url, None, "circuit-open")
         return None
 
     def _give_up(self, url: str, last_response: Optional[BypassResponse]) -> BypassResponse:
         if last_response:
             if last_response.is_blocked:
-                self._blocked_until[_host_of(url)] = time.monotonic() + _BLOCK_COOLDOWN
+                _open_circuit(url)
             log.warning("All engines failed for %s, returning last response [%d]",
                         url, last_response.status_code)
             return last_response

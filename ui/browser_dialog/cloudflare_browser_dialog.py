@@ -401,5 +401,7 @@ class CloudflareBrowserDialog(InAppBrowser):
             from cloudflare_bypasser import store
             store.save_bypass(self.booru_name, cookies, ua)
         # else: already saved correctly -- do not overwrite
+        from cloudflare_bypasser import bypass_solved
+        bypass_solved(self.booru_name)
         self.cookies_captured.emit(cookies)
         self.accept()
