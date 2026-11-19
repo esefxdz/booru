@@ -31,6 +31,8 @@ from cloudflare_bypasser.fingerprint import (
     _requests_lib,
 )
 
+from validation import redact_secrets as _redact
+
 log = logging.getLogger("cloudflare_bypasser")
 
 
@@ -134,7 +136,7 @@ class BypassResponse:
         return False
 
     def __repr__(self) -> str:
-        return f"<BypassResponse [{self.status_code}] engine={self.engine_used} {self.url}>"
+        return f"<BypassResponse [{self.status_code}] engine={self.engine_used} {_redact(self.url)}>"
 
 
 _CF_MARKERS = (
@@ -276,11 +278,11 @@ async def _try_curl_cffi(
             if status_code != 403:
                 return result
 
-            log.debug("curl_cffi/%s got 403 for %s, trying next target", target, url)
+            log.debug("curl_cffi/%s got 403 for %s, trying next target", target, _redact(url))
             last_err = result
 
         except Exception as e:
-            log.debug("curl_cffi/%s failed for %s: %s", target, url, e)
+            log.debug("curl_cffi/%s failed for %s: %s", target, _redact(url), _redact(e))
             last_err = None
             continue
 
@@ -364,11 +366,11 @@ def _try_curl_cffi_sync(
             if status_code != 403:
                 return result
 
-            log.debug("curl_cffi_sync/%s got 403 for %s, trying next target", target, url)
+            log.debug("curl_cffi_sync/%s got 403 for %s, trying next target", target, _redact(url))
             last_err = result
 
         except Exception as e:
-            log.debug("curl_cffi_sync/%s failed for %s: %s", target, url, e)
+            log.debug("curl_cffi_sync/%s failed for %s: %s", target, _redact(url), _redact(e))
             last_err = None
             continue
 
@@ -459,7 +461,7 @@ def _try_cloudscraper_sync(
         return BypassResponse(content, text, status_code, final_url, json_data, "cloudscraper", cookies_resp,
                             headers=_lower_headers(getattr(resp, "headers", None)))
     except Exception as e:
-        log.debug("cloudscraper failed for %s: %s", url, e)
+        log.debug("cloudscraper failed for %s: %s", _redact(url), _redact(e))
         return None
 
 
@@ -510,7 +512,7 @@ async def _try_httpx(
         return BypassResponse(content, text, status_code, final_url, json_data, "httpx", cookies_resp,
                             headers=_lower_headers(getattr(resp, "headers", None)))
     except Exception as e:
-        log.debug("httpx failed for %s: %s", url, e)
+        log.debug("httpx failed for %s: %s", _redact(url), _redact(e))
         return None
 
 
@@ -557,7 +559,7 @@ def _try_requests_sync(
         return BypassResponse(content, text, status_code, final_url, json_data, "requests", cookies_resp,
                             headers=_lower_headers(getattr(resp, "headers", None)))
     except Exception as e:
-        log.debug("requests failed for %s: %s", url, e)
+        log.debug("requests failed for %s: %s", _redact(url), _redact(e))
         return None
 
 
@@ -625,5 +627,5 @@ def _try_urllib_sync(
         return BypassResponse(content, text, e.code, url, None, "urllib", {},
                               headers=_lower_headers(getattr(e, "headers", None)))
     except Exception as e:
-        log.debug("urllib failed for %s: %s", url, e)
+        log.debug("urllib failed for %s: %s", _redact(url), _redact(e))
         return None

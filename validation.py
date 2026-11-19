@@ -419,3 +419,17 @@ class SameSiteRedirectHandler(_urllib_request.HTTPRedirectHandler):
                 if k.lower() in ("cookie", "authorization"):
                     del new.headers[k]
         return new
+
+
+# Query parameters that carry credentials (adapters' build_params).
+_SECRET_PARAM_RE = re.compile(
+    r"(?<=[?&;])(api_key|key|user_id|login|pass_hash|password_hash|password|"
+    r"access_token|token)=[^&#\s'\"]*",
+    re.IGNORECASE,
+)
+
+
+def redact_secrets(text) -> str:
+    """*text* (a URL, or an error message quoting one) with the values of
+    credential query parameters replaced by ``***``, for logging."""
+    return _SECRET_PARAM_RE.sub(lambda m: m.group(1) + "=***", str(text))
