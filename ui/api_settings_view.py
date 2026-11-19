@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget, QFormLayout, QFrame
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from validation import ValidationError, validate_filename
+from validation import ValidationError
 from adapters.session_login import supports_session_login, get_session_cookie_names, perform_login, get_login_url
 from adapters import adapter_choices
 import ui.animations as anims
@@ -304,8 +304,8 @@ class APISettingsView(QWidget):
             api_key = api_key.text().strip() if api_key else ""
             if user_id and api_key:
                 try:
-                    user_id = validate_filename(user_id)
-                    api_key = validate_filename(api_key)
+                    # Credentials are opaque strings: never "sanitise" them
+                    # (validate_filename rewrote : ? * " < > | and broke keys).
                     settings.manager.set_credential(self.name, user_id, api_key)
                 except Exception as e:
                     QMessageBox.warning(self, "Error", f"Invalid credentials: {e}")
@@ -359,13 +359,11 @@ class APISettingsView(QWidget):
     # └──────────────────────────────────────────────────────────────────┘
     def _do_session_login(self):
         username = self._sess_user.text().strip()
-        password = self._sess_pass.text().strip()
+        password = self._sess_pass.text()   # leading/trailing spaces are valid
 
         try:
             if not username or not password:
                 raise ValidationError("Username and password are required")
-            username = validate_filename(username)
-            password = validate_filename(password)
         except Exception as e:
             self._sess_status.setText(f"⚠ Invalid input: {e}")
             self._sess_status.setStyleSheet(f"color: {colors.DANGER};")

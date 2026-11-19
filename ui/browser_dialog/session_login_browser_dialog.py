@@ -29,6 +29,7 @@ class SessionLoginBrowserDialog(InAppBrowser):
         super().__init__(url, f"Login — {booru_name}", parent)
         self.target_cookies = target_cookies  # List of names (e.g. ['user_id', 'pass_hash'])
         self._found = {}
+        self._site_url = url  # only accept cookies issued for this site
 
         # Add a big "Capture Session" button to the top toolbar
         self.save_btn = QPushButton("✅  Logged in? Save & Close")
@@ -44,8 +45,15 @@ class SessionLoginBrowserDialog(InAppBrowser):
 
     def _on_cookie_added(self, cookie):
         name = cookie.name().data().decode()
-        if name in self.target_cookies:
-            self._found[name] = cookie.value().data().decode()
+        if name not in self.target_cookies:
+            return
+        # Generic names like PHPSESSID are set by ads/analytics frames too.
+        # Only keep the cookie if its domain belongs to the booru's site.
+        from validation import same_site
+        domain = cookie.domain().lstrip(".")
+        if not domain or not same_site(f"https://{domain}/", self._site_url):
+            return
+        self._found[name] = cookie.value().data().decode()
 
     # ┌──────────────────────────────────────────────────────────────────┐
     # │  _manual_capture  — triggered when the user clicks the green    │
