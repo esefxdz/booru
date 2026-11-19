@@ -49,8 +49,8 @@ def _resolve_url(url, site_data=None):
     return url
 
 
-def _fetch_bytes(url, booru_name=None):
-    """Download raw bytes through the CF-bypass session."""
+def _fetch_headers(url, booru_name=None):
+    """Return (session, headers) for fetching *url* for *booru_name*."""
     from cloudflare_bypasser import get_session
     headers = _IMAGE_HEADERS.copy()
     headers["User-Agent"] = settings.manager.get_user_agent()
@@ -61,10 +61,25 @@ def _fetch_bytes(url, booru_name=None):
     if site_data.get("url"):
         headers["Referer"] = site_data["url"]
 
-    resp = get_session(target_booru).get_sync(url, headers=headers)
+    return get_session(target_booru), headers
+
+
+def _fetch_bytes(url, booru_name=None):
+    """Download raw bytes through the CF-bypass session."""
+    session, headers = _fetch_headers(url, booru_name)
+    resp = session.get_sync(url, headers=headers)
     if resp.status_code != 200:
         raise RuntimeError(f"HTTP {resp.status_code} from {url}")
     return resp.content
+
+
+def _fetch_to_file(url, dest, booru_name=None):
+    """Stream *url* into *dest* (never holds a video in RAM; *dest* only
+    appears once the download is complete)."""
+    session, headers = _fetch_headers(url, booru_name)
+    resp = session.download_sync(url, dest, headers=headers)
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code} from {url}")
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
@@ -359,15 +374,18 @@ class MediaViewer(QWidget):
 
         def work():
             try:
-                data = _fetch_bytes(url, self.post.get('_booru'))
-                if cancel.is_set():
-                    return
                 from ui import settings_view as settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
                 from validation import safe_media_path
                 path = safe_media_path(tmp, self.post.get('id'), url, prefix="view_", default_ext=".mp4")
-                path.write_bytes(data)
+                _fetch_to_file(url, path, self.post.get('_booru'))
+                if cancel.is_set():
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+                    return
                 self._current_temp_path = str(path)
                 self.video_ready.emit(str(path))
             except Exception as e:
