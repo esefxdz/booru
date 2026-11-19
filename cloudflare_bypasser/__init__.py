@@ -105,9 +105,26 @@ def get_session(booru_name: str) -> BypassSession:
     return session
 
 
-def invalidate_session(booru_name: str) -> None:
-    """Clear stored bypass data AND the cached session for *booru_name*."""
-    _store.clear_bypass(booru_name)
+_UNSET = object()
+
+
+def bypass_snapshot(booru_name: str):
+    """Opaque token for what is stored for *booru_name* right now. Take it
+    before sending a request; pass it to :func:`invalidate_session`."""
+    return _store.snapshot(booru_name)
+
+
+def invalidate_session(booru_name: str, unless_changed_since=_UNSET) -> None:
+    """Clear stored bypass data AND the cached session for *booru_name*.
+
+    With *unless_changed_since* (a :func:`bypass_snapshot`), do nothing if
+    the stored data changed since then: the user solved the challenge while
+    the failing request was in flight, so the block is stale."""
+    if unless_changed_since is _UNSET:
+        _store.clear_bypass(booru_name)
+    elif not _store.clear_bypass_if_unchanged(booru_name, unless_changed_since):
+        log.debug("invalidate_session: %s re-solved since request started; keeping it", booru_name)
+        return
     _session_cache.pop(booru_name, None)
 
 
@@ -139,6 +156,7 @@ __all__ = [
     "BypassResponse",
     "get_session",
     "invalidate_session",
+    "bypass_snapshot",
     "bypass_solved",
     "close_all_sessions",
     "get_available_engines",

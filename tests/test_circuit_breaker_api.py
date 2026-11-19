@@ -23,10 +23,17 @@ BOORU = "cbtest"
 class _Booru(http.server.BaseHTTPRequestHandler):
     blocked = True
     hits = 0
+    on_hit = None          # runs on the server thread after a hit is counted
+    unavailable = 0        # answer this many hits with a plain 503 first
 
     def do_GET(self):
         type(self).hits += 1
-        if type(self).blocked:
+        if type(self).on_hit is not None:
+            type(self).on_hit()
+        if type(self).unavailable > 0:
+            type(self).unavailable -= 1
+            status, body = 503, b"down"                 # transient, not a block
+        elif type(self).blocked:
             status, body = 403, b"forbidden"          # tiny 403 = CF block
         else:
             status, body = 200, b'[{"id": 1}]'
@@ -43,7 +50,7 @@ class _Booru(http.server.BaseHTTPRequestHandler):
 def booru(monkeypatch):
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Booru)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    _Booru.blocked, _Booru.hits = True, 0
+    _Booru.blocked, _Booru.hits, _Booru.on_hit, _Booru.unavailable = True, 0, None, 0
     base = f"http://127.0.0.1:{srv.server_port}"
 
     from ui import settings_view as settings
@@ -60,6 +67,7 @@ def booru(monkeypatch):
     m.bypass_data.pop(BOORU, None)
     cloudflare_bypasser._session_cache.pop(BOORU, None)
     yield base
+    _Booru.on_hit = None
     m.bypass_data.pop(BOORU, None)
     cloudflare_bypasser._session_cache.pop(BOORU, None)
     srv.shutdown()
@@ -191,3 +199,91 @@ def test_block_on_one_port_does_not_pause_another_booru_on_same_host(booru, monk
         srv.shutdown()
         import cloudflare_bypasser
         cloudflare_bypasser._session_cache.pop("cbtest2", None)
+
+
+# ── A block that was in flight while the user solved the challenge ─────
+# The solve runs inside the server handler, i.e. on another thread while
+# the request is outstanding, and the server then answers with the block
+# the stale request would have got (it carried the old cookies).
+
+def _solve_mid_request(cookies, ua="UA/solved", reset=True):
+    def solve():
+        _Booru.on_hit = None                    # once
+        store.save_bypass(BOORU, cookies, ua)   # as auto_solver / dialog do
+        if reset:
+            bypass_solved(BOORU)
+    _Booru.on_hit = solve
+
+
+def test_stale_block_after_solve_keeps_new_cookies(booru):
+    store.save_bypass(BOORU, {"cf_clearance": "OLD"}, "UA/old")
+    _solve_mid_request({"cf_clearance": "SOLVED"})
+    _blocked_search()                                   # user still sees the message
+    assert _Booru.hits == 1
+    assert store.get_cookies(BOORU) == {"cf_clearance": "SOLVED"}
+    assert store.get_user_agent(BOORU) == "UA/solved"
+
+
+def test_stale_block_after_solve_does_not_rearm_breaker(booru):
+    store.save_bypass(BOORU, {"cf_clearance": "OLD"}, "UA/old")
+    _solve_mid_request({"cf_clearance": "SOLVED"})
+    _blocked_search()
+    assert _Booru.hits == 1
+    assert not sess._circuit_is_open(booru)
+    _Booru.blocked = False
+    assert _search() == [{"id": 1}]                     # went out right away
+    assert _Booru.hits == 2
+
+
+def test_stale_block_in_paste_gap_keeps_pasted_cookies(booru):
+    # _apply_pasted saves 500 ms before _finalize calls bypass_solved.
+    store.save_bypass(BOORU, {"cf_clearance": "OLD"}, "UA/old")
+    _solve_mid_request({"cf_clearance": "PASTED"}, reset=False)
+    _blocked_search()
+    assert _Booru.hits == 1
+    assert store.get_cookies(BOORU) == {"cf_clearance": "PASTED"}
+    bypass_solved(BOORU)                                # _finalize
+    _Booru.blocked = False
+    assert _search() == [{"id": 1}]
+    assert _Booru.hits == 2
+
+
+def test_get_sync_stale_block_after_solve_does_not_rearm_breaker(booru):
+    # Thumbnail / media path: BypassSession.get_sync from a worker thread.
+    _solve_mid_request({"cf_clearance": "SOLVED"})
+    r = get_session(BOORU).get_sync(booru + "/thumb.jpg")
+    assert r.is_blocked and _Booru.hits == 1
+    assert not sess._circuit_is_open(booru)
+
+
+def test_block_without_solve_still_clears_and_opens(booru):
+    store.save_bypass(BOORU, {"cf_clearance": "OLD"}, "UA/old")
+    _blocked_search()
+    assert _Booru.hits == 1
+    assert store.get_cookies(BOORU) == {}
+    assert sess._circuit_is_open(booru)
+    _blocked_search()                                   # circuit-open, no request
+    assert _Booru.hits == 1
+
+
+def test_get_sync_block_without_solve_still_opens(booru):
+    r = get_session(BOORU).get_sync(booru + "/thumb.jpg")
+    assert r.is_blocked and _Booru.hits == 1
+    assert sess._circuit_is_open(booru)
+    get_session(BOORU).get_sync(booru + "/thumb.jpg")
+    assert _Booru.hits == 1
+
+
+def test_get_sync_httpx_fallback_keeps_start_generation(booru, monkeypatch):
+    # The sync engines fail transiently (solve lands meanwhile), then the
+    # httpx fallback runs as a nested get() and is blocked. That nested call
+    # must judge staleness from when get_sync started, not when it started.
+    s = get_session(BOORU)
+    monkeypatch.setattr(s, "_get_engine_order", lambda: ["urllib", "httpx"])
+    monkeypatch.setattr(sess, "_MAX_RETRIES", 2)
+    _Booru.unavailable = 2
+    _solve_mid_request({"cf_clearance": "SOLVED"})
+    r = s.get_sync(booru + "/thumb.jpg")
+    assert r.is_blocked and r.engine_used == "httpx"
+    assert _Booru.hits == 3                             # urllib x2 (503), httpx x1 (403)
+    assert not sess._circuit_is_open(booru)

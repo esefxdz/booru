@@ -88,6 +88,10 @@ def _host_of(url: str) -> str:
 # the asyncio thread and from worker threads (get_sync), hence the lock.
 _blocked_until: dict[tuple[str, int], float] = {}   # (host, port) -> monotonic deadline
 _blocked_lock = threading.Lock()
+# Bumped by reset_circuit (a solved challenge), per site. A request captures
+# it when it starts; if it changed by the time the request ends blocked, the
+# block is stale (sent without the new clearance) and must not re-arm.
+_solve_gen: dict[str, int] = {}                       # site_key(host) -> count
 
 
 def _circuit_key(url: str) -> tuple[str, int]:
@@ -102,8 +106,27 @@ def _circuit_key(url: str) -> tuple[str, int]:
     return ((u.hostname or "").lower(), port)
 
 
-def _open_circuit(url: str) -> None:
+def _solve_key(url: str) -> str:
+    from validation import site_key
+    host = _host_of(url)
+    return site_key(host) if host else ""
+
+
+def solve_generation(url: str) -> int:
+    """How many times the challenge was solved for *url*'s site."""
+    key = _solve_key(url)
     with _blocked_lock:
+        return _solve_gen.get(key, 0)
+
+
+def _open_circuit(url: str, solve_gen: Optional[int] = None) -> None:
+    """Open the breaker for *url*. With *solve_gen*, only if no challenge
+    was solved since the request that saw the block captured it."""
+    key = _solve_key(url) if solve_gen is not None else ""
+    with _blocked_lock:
+        if solve_gen is not None and _solve_gen.get(key, 0) != solve_gen:
+            log.debug("Not opening circuit for %s: solved since request started", _host_of(url))
+            return
         _blocked_until[_circuit_key(url)] = time.monotonic() + _BLOCK_COOLDOWN
 
 
@@ -133,6 +156,7 @@ def reset_circuit(site_url: str) -> None:
         return
     key = site_key(host)
     with _blocked_lock:
+        _solve_gen[key] = _solve_gen.get(key, 0) + 1
         for k in [k for k in _blocked_until if k[0] == host or site_key(k[0]) == key]:
             del _blocked_until[k]
 
@@ -141,6 +165,7 @@ def reset_all_circuits() -> None:
     """Close every breaker (used by the test suite)."""
     with _blocked_lock:
         _blocked_until.clear()
+        _solve_gen.clear()
 
 
 def _is_definitive(resp) -> bool:
@@ -382,6 +407,7 @@ class BypassSession:
         timeout: int = _DEFAULT_TIMEOUT,
         bypass_rate_limit: bool = False,
         only_engines: list[str] | None = None,
+        _solve_since: Optional[int] = None,
     ) -> BypassResponse:
         """
         GET with automatic engine failover and retry.
@@ -393,6 +419,8 @@ class BypassSession:
         the call, and a challenge opens a per-host circuit for
         _BLOCK_COOLDOWN seconds.
         """
+        # Captured first: this session's cookies predate any solve after it.
+        solve_gen = _solve_since if _solve_since is not None else solve_generation(url)
         self._check_loop()
 
         refused = _refuse_non_http(url)
@@ -455,7 +483,7 @@ class BypassSession:
                      round_no, _MAX_RETRIES, url, wait)
             await asyncio.sleep(wait)
 
-        return self._give_up(url, last_response)
+        return self._give_up(url, last_response, solve_gen)
 
     # ------------------------------------------------------------------
     # Retry policy helpers (shared by get and get_sync)
@@ -484,10 +512,11 @@ class BypassSession:
             return BypassResponse(b"", "", 403, url, None, "circuit-open")
         return None
 
-    def _give_up(self, url: str, last_response: Optional[BypassResponse]) -> BypassResponse:
+    def _give_up(self, url: str, last_response: Optional[BypassResponse],
+                 solve_gen: Optional[int] = None) -> BypassResponse:
         if last_response:
             if last_response.is_blocked:
-                _open_circuit(url)
+                _open_circuit(url, solve_gen)
             log.warning("All engines failed for %s, returning last response [%d]",
                         url, last_response.status_code)
             return last_response
@@ -512,6 +541,7 @@ class BypassSession:
         httpx on the shared event loop. Engines already tried are never
         re-run.
         """
+        solve_gen = solve_generation(url)
         refused = _refuse_non_http(url)
         if refused is not None:
             return refused
@@ -544,13 +574,13 @@ class BypassSession:
         if not definitive and "httpx" in engines:
             async_resp = self._run_on_shared_loop(
                 self.get(url, params=params, headers=headers, timeout=timeout,
-                         only_engines=["httpx"]),
+                         only_engines=["httpx"], _solve_since=solve_gen),
                 timeout,
             )
             if async_resp is not None and async_resp.status_code > 0:
                 return async_resp
 
-        return self._give_up(url, last_response)
+        return self._give_up(url, last_response, solve_gen)
 
     @staticmethod
     def _run_on_shared_loop(coro, timeout: int):

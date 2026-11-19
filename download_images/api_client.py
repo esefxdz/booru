@@ -62,6 +62,8 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
 
     # ── Send request ──────────────────────────────────────────────
     params = adapter.build_params(search_tags, limit, page, creds)
+    from cloudflare_bypasser import bypass_snapshot
+    stored_before = bypass_snapshot(settings.manager.active_booru)
     try:
         r = await fetch_fn(url, params=params)
 
@@ -82,9 +84,11 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
             booru = settings.manager.active_booru
             # "circuit-open" is synthetic: no request was sent, so it says
             # nothing about the stored clearance. Keep the cookies then.
+            # Nor if the user solved the challenge while this request was
+            # in flight: it went out without the new clearance.
             if getattr(r, "engine_used", None) != "circuit-open":
                 from cloudflare_bypasser import invalidate_session
-                invalidate_session(booru)
+                invalidate_session(booru, unless_changed_since=stored_before)
             raise CloudflareBlockError(
                 f"'{booru}' is behind Cloudflare protection. "
                 f"Right-click the booru icon -> Cloudflare tab -> "

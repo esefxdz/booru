@@ -13,6 +13,8 @@ to be updated.
 """
 
 from __future__ import annotations
+import copy
+import threading
 from typing import TYPE_CHECKING
 from ui import settings_view as settings
 
@@ -26,6 +28,10 @@ _DEFAULT_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/136.0.0.0 Safari/537.36"
 )
+
+# Saves come from the Qt thread (captcha flows), conditional clears from the
+# network thread; this makes compare-and-clear atomic against a save.
+_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -74,10 +80,11 @@ def save_bypass(booru_name: str, cookies: dict, user_agent: str) -> None:
     Both are required for the bypass to work: Cloudflare ties the clearance
     cookie to the exact UA fingerprint that solved the challenge.
     """
-    settings.manager.bypass_data[booru_name] = {
-        "cookies":    cookies,
-        "user_agent": user_agent,
-    }
+    with _lock:
+        settings.manager.bypass_data[booru_name] = {
+            "cookies":    cookies,
+            "user_agent": user_agent,
+        }
     settings.manager.save()
 
 
@@ -91,3 +98,22 @@ def clear_bypass(booru_name: str) -> None:
     """
     settings.manager.bypass_data.pop(booru_name, None)
     settings.manager.save()
+
+
+def snapshot(booru_name: str):
+    """A copy of what is stored for *booru_name* now (None if nothing)."""
+    with _lock:
+        return copy.deepcopy(settings.manager.bypass_data.get(booru_name))
+
+
+def clear_bypass_if_unchanged(booru_name: str, expected) -> bool:
+    """Clear the stored bypass only if it still equals *expected* (from
+    :func:`snapshot`). A block seen by a request that was sent before the
+    user solved the challenge must not delete the fresh clearance."""
+    with _lock:
+        current = settings.manager.bypass_data.get(booru_name)
+        if current != expected:
+            return False
+        settings.manager.bypass_data.pop(booru_name, None)
+    settings.manager.save()
+    return True
