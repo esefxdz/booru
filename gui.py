@@ -346,7 +346,7 @@ class BooruGui(QMainWindow):
         # UI updates
         self.server_bar.rebuild_list()
         if settings.manager.active_booru == name:
-            settings.manager.active_booru = fallback or "danbooru"
+            settings.manager.active_booru = fallback or "safebooru"
             settings.manager.save()
             self.server_bar.update_button_styles()
             self.sidebar.update_active_booru()
