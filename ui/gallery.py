@@ -28,6 +28,12 @@ from ui.pixmap_cache import PixmapLRU, DEFAULT_MAX_BYTES as PX_CACHE_DEFAULT
 from ui.tile_pool import TilePool
 from ui.gallery_layout import GalleryLayout
 import thumb_cache
+
+
+def _post_key(post) -> tuple:
+    """Identity of a post. Ids are only unique per booru, and the bookmarks
+    page mixes posts from several boorus."""
+    return (post.get("_booru") or "unknown", str(post.get("id")))
 import ui.animations as anims
 
 log = logging.getLogger(__name__)
@@ -311,16 +317,16 @@ class Gallery(QWidget):
         bookmarked_keys = db.bookmarked_keys(posts)
 
         for post in posts:
-            post_id = post.get("id")
-            if post_id in self._post_id_set:
+            key = _post_key(post)
+            if key in self._post_id_set:
                 continue
-            self._post_id_set.add(post_id)
+            self._post_id_set.add(key)
 
             idx = len(self._posts)
             self._posts.append(post)
-            self._post_id_to_idx[post_id] = idx
+            self._post_id_to_idx[key] = idx
             self._rects.append(QRect())
-            self._post_bookmarked[idx] = (post.get("_booru") or "unknown", str(post_id)) in bookmarked_keys
+            self._post_bookmarked[idx] = key in bookmarked_keys
             if idx not in self._aspect_ratios:
                 self._aspect_ratios[idx] = self._get_aspect_ratio(post)
 
@@ -329,13 +335,13 @@ class Gallery(QWidget):
     @pyqtSlot(bytes, dict, int)
     def add_item(self, safe_bytes: bytes, post: dict, idx: int):
         """Called when a thumbnail finishes downloading."""
-        post_id = post.get("id")
+        key = _post_key(post)
 
         # Pre-decode and cache the pixmap
         pixmap = self._decode_pixmap(safe_bytes)
-        self._px_cache.put(post_id, pixmap)
+        self._px_cache.put(key, pixmap)
 
-        post_idx = self._post_id_to_idx.get(post_id)
+        post_idx = self._post_id_to_idx.get(key)
         if post_idx is not None:
             self._post_bytes[post_idx] = safe_bytes
             slot_idx = self._tiles.post_to_slot.get(post_idx)
@@ -354,7 +360,7 @@ class Gallery(QWidget):
 
         # Fallback: post wasn't pre-registered
         self.prepare_skeletons([post])
-        post_idx = self._post_id_to_idx.get(post_id)
+        post_idx = self._post_id_to_idx.get(key)
         if post_idx is not None:
             self._post_bytes[post_idx] = safe_bytes
         self._update_viewport()
@@ -380,13 +386,21 @@ class Gallery(QWidget):
     def open_preview(self, post):
         self.main_app.open_preview(post)
 
-    def get_adjacent_post(self, post_id, direction: str = "next"):
+    def get_adjacent_post(self, post, direction: str = "next"):
         """Return the prev/next post dict, or None if at the boundary.
+
+        ``post`` is the current post dict. A bare id is still accepted, but
+        it is ambiguous when two boorus share an id: the first match wins.
 
         Used by the overlay for prev_post / next_post navigation so
         external code never touches ``_posts`` or ``_post_id_to_idx``.
         """
-        idx = self._post_id_to_idx.get(post_id)
+        if isinstance(post, dict):
+            idx = self._post_id_to_idx.get(_post_key(post))
+        else:
+            sid = str(post)
+            idx = next((i for i, p in enumerate(self._posts)
+                        if str(p.get("id")) == sid), None)
         if idx is None:
             return None
         target = idx - 1 if direction == "prev" else idx + 1
@@ -412,9 +426,8 @@ class Gallery(QWidget):
 
     def _on_star_clicked(self, post, star_btn):
         """Emit signal so gui.py handles the DB write."""
-        pid = post.get("id")
         # Toggle: figure out new state
-        post_idx = self._post_id_to_idx.get(pid)
+        post_idx = self._post_id_to_idx.get(_post_key(post))
         is_now_bookmarked = not self._post_bookmarked.get(post_idx, False)
         if post_idx is not None:
             self._post_bookmarked[post_idx] = is_now_bookmarked
@@ -423,9 +436,10 @@ class Gallery(QWidget):
 
     def _get_or_make_pixmap(self, post_idx: int) -> QPixmap | None:
         """Return the decoded QPixmap for a post, or None if not loaded."""
-        post_id = self._posts[post_idx].get("id") if post_idx < len(self._posts) else None
-        if post_id is None:
+        post = self._posts[post_idx] if post_idx < len(self._posts) else None
+        if post is None or post.get("id") is None:
             return None
+        post_id = _post_key(post)
 
         # Try L1 cache first
         cached = self._px_cache.get(post_id)
@@ -436,7 +450,7 @@ class Gallery(QWidget):
         safe_bytes = self._post_bytes.get(post_idx)
         if safe_bytes is None:
             # Try reloading from thumb_cache (L1 memory / L2 disk)
-            safe_bytes = thumb_cache.get(str(post_id))
+            safe_bytes = thumb_cache.get(f"{post_id[0]}:{post_id[1]}")
             if safe_bytes is not None:
                 self._post_bytes[post_idx] = safe_bytes
 

@@ -96,7 +96,7 @@ class MediaOverlay(QWidget):
         if not self.isVisible() or not self.post:
             return
         gallery = self.parent_gui.gallery
-        post = gallery.get_adjacent_post(self.post.get("id"), "prev")
+        post = gallery.get_adjacent_post(self.post, "prev")
         if post is not None:
             self.show_post(post)
 
@@ -104,7 +104,7 @@ class MediaOverlay(QWidget):
         if not self.isVisible() or not self.post:
             return
         gallery = self.parent_gui.gallery
-        post = gallery.get_adjacent_post(self.post.get("id"), "next")
+        post = gallery.get_adjacent_post(self.post, "next")
         if post is not None:
             self.show_post(post)
         else:
