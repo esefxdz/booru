@@ -223,3 +223,21 @@ def test_curl_cffi_stalled_download_times_out_and_leaves_no_file(slow_server, tm
     # libcurl averages speed over ~5 s, so a 1 s idle limit fires after ~7 s.
     assert time.monotonic() - t0 < 15          # the idle timeout fired; it did not hang
     assert list(tmp_path.iterdir()) == []      # no 5.jpg and no 5.jpg.part
+
+
+def test_urllib_without_app_proxy_ignores_system_proxy(server, tmp_path, monkeypatch):
+    import socket
+    from ui import settings_view as settings
+    monkeypatch.setattr(settings.manager, "proxy_url", "", raising=False)
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    dead = f"http://127.0.0.1:{s.getsockname()[1]}"
+    s.close()                                  # nothing listens there now
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        monkeypatch.setenv(var, dead)
+    for var in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(var, raising=False)
+    url = f"http://127.0.0.1:{server.server_port}/img.jpg"
+    dest = tmp_path / "img.jpg"
+    assert engines._download_urllib(url, dest, {"User-Agent": "t"})
+    assert dest.read_bytes() == b"IMAGEDATA" * 100

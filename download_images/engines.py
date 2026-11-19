@@ -103,6 +103,11 @@ def _download_urllib(url: str, dest: Path, headers: dict,
             log.error("urllib: proxy %r is not HTTP; choose another download engine", proxy.split("@")[-1])
             return False
         handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    else:
+        # No app proxy means direct. Without this, build_opener adds a default
+        # ProxyHandler that silently uses HTTP(S)_PROXY or the Windows
+        # registry (system) proxy instead.
+        handlers.append(urllib.request.ProxyHandler({}))
     opener = urllib.request.build_opener(*handlers)
     try:
         resp = opener.open(req, timeout=_TIMEOUT)
