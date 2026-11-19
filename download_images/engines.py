@@ -212,28 +212,35 @@ def _download_httpx(url: str, dest: Path, headers: dict,
 
 def _download_curl_cffi(url: str, dest: Path, headers: dict,
                         on_progress: Callable | None = None) -> bool:
-    """Download using ``curl_cffi`` with Chrome TLS impersonation."""
+    """Download using ``curl_cffi`` with Chrome TLS impersonation.
+
+    Streams to disk. In stream mode curl_cffi turns a float ``timeout`` into
+    a connect timeout plus an idle timeout (abort when under 1 byte/s for
+    ``timeout`` seconds) and sets no total limit, so a big file on a slow
+    but flowing connection finishes instead of being cut off at 60 s.
+    """
     from curl_cffi import requests as cffi_req
 
-    try:
-        proxy = _proxy_url()
-        r = cffi_req.get(url, headers=headers, impersonate="chrome136",
-                         timeout=_TIMEOUT, allow_redirects=True,
-                         proxies={"http": proxy, "https": proxy} if proxy else None)
-    except Exception as e:
-        if _is_tls_error(e):
-            log.error("curl_cffi: TLS certificate verification failed for %s: %s", url, e)
-            return False
-        raise
-
-    if r.status_code != 200:
-        log.warning("curl_cffi: HTTP %s for %s", r.status_code, url)
-        return False
-    content = r.content
-    with open(dest, "wb") as f:
-        f.write(content)
-    if on_progress:
-        on_progress(len(content), len(content))
+    proxy = _proxy_url()
+    with cffi_req.Session(impersonate="chrome136") as s:
+        try:
+            r = s.request("GET", url, headers=headers, timeout=_TIMEOUT, stream=True,
+                          allow_redirects=True,
+                          proxies={"http": proxy, "https": proxy} if proxy else None)
+        except Exception as e:
+            if _is_tls_error(e):
+                log.error("curl_cffi: TLS certificate verification failed for %s: %s", url, e)
+                return False
+            raise
+        try:
+            if r.status_code != 200:
+                log.warning("curl_cffi: HTTP %s for %s", r.status_code, url)
+                return False
+            total = int(r.headers.get("Content-Length", 0) or 0)
+            # iter_content ignores (and warns about) chunk_size.
+            _write_stream(dest, r.iter_content(), total, on_progress)
+        finally:
+            r.close()   # stops the transfer thread if we bail out early
     return True
 
 

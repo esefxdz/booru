@@ -151,3 +151,75 @@ def test_requests_session_is_per_thread():
         ids = set(pool.map(lambda _: id(engines._requests_session()), range(8)))
     assert len(ids) > 1
     engines.shutdown()
+
+
+# ── curl_cffi streams with an idle timeout, not a total one ─────────────
+class _Slow(http.server.BaseHTTPRequestHandler):
+    """/trickle: 12 x 100 bytes, one every 0.25 s (~3 s total, never idle).
+    /stall: headers + 100 of 1000 bytes, then silence until teardown."""
+    release = threading.Event()
+
+    def do_GET(self):
+        import time
+        self.send_response(200)
+        self.send_header("Content-Length", "1200" if self.path.startswith("/trickle") else "1000")
+        self.end_headers()
+        if self.path.startswith("/trickle"):
+            for _ in range(12):
+                self.wfile.write(b"t" * 100)
+                self.wfile.flush()
+                time.sleep(0.25)
+        else:
+            self.wfile.write(b"s" * 100)
+            self.wfile.flush()
+            _Slow.release.wait(30)
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture
+def slow_server(monkeypatch):
+    # 1 s, the finest curl_cffi allows (its idle time is ceil()'d seconds).
+    monkeypatch.setattr(engines, "_TIMEOUT", 1)
+    _Slow.release.clear()
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Slow)
+    srv.daemon_threads = True
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield srv
+    _Slow.release.set()
+    srv.shutdown()
+
+
+_needs_cffi = pytest.mark.skipif("curl_cffi" not in engines.get_available_engines(),
+                                 reason="curl_cffi not installed")
+
+
+@_needs_cffi
+def test_curl_cffi_slow_but_flowing_download_finishes(slow_server, tmp_path):
+    # Takes ~3 s with a 1 s timeout: the old total timeout cut it off.
+    url = f"http://127.0.0.1:{slow_server.server_port}/trickle.jpg"
+    dest = tmp_path / "t.jpg"
+    progress = []
+    assert engines._download_curl_cffi(url, dest, {"User-Agent": "t"},
+                                       lambda d, t: progress.append((d, t)))
+    assert dest.read_bytes() == b"t" * 1200
+    assert progress[-1] == (1200, 1200) and len(progress) > 1   # streamed, not one blob
+
+
+@_needs_cffi
+def test_curl_cffi_stalled_download_times_out_and_leaves_no_file(slow_server, tmp_path, monkeypatch):
+    import time
+    from download_images import image_downloader
+
+    class _Dl:
+        def get_file_url(self, post):
+            return f"http://127.0.0.1:{slow_server.server_port}/stall.jpg"
+
+    monkeypatch.setattr(image_downloader, "_build_headers", lambda post, url="": {"User-Agent": "t"})
+    t0 = time.monotonic()
+    ok = image_downloader.download_post({"id": 5}, tmp_path, _Dl(), engine="curl_cffi")
+    assert not ok
+    # libcurl averages speed over ~5 s, so a 1 s idle limit fires after ~7 s.
+    assert time.monotonic() - t0 < 15          # the idle timeout fired; it did not hang
+    assert list(tmp_path.iterdir()) == []      # no 5.jpg and no 5.jpg.part
