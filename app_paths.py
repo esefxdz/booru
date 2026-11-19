@@ -70,8 +70,19 @@ def choose_data_dir(candidate: Path, fallback: Path) -> tuple[Path, str]:
     return fallback, reason
 
 
+#: Environment override for the data folder (used by the test suite so it can
+#: never touch a developer's real data; also handy for a custom location).
+ENV_OVERRIDE = "BOORUBROWSER_DATA_DIR"
+
+
 @lru_cache(maxsize=1)
 def data_dir() -> Path:
+    override = os.environ.get(ENV_OVERRIDE)
+    if override:
+        path = Path(override)
+        path.mkdir(parents=True, exist_ok=True)
+        _chosen_reason[0] = f"{ENV_OVERRIDE} override"
+        return path
     path, reason = choose_data_dir(app_dir(), fallback_dir())
     _chosen_reason[0] = reason
     return path

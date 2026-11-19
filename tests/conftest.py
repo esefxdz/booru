@@ -6,9 +6,13 @@ the repository and are skipped so a plain ``pytest`` is safe and offline.
 """
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Before ANY app module is imported: every data file (settings, credentials,
+# bookmarks, caches) goes to a throwaway folder, never the real one.
+os.environ["BOORUBROWSER_DATA_DIR"] = tempfile.mkdtemp(prefix="booru-test-data-")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 collect_ignore = [

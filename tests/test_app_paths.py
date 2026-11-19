@@ -30,3 +30,11 @@ def test_temp_folder_falls_back(tmp_path):
 def test_write_probe_leaves_nothing(tmp_path):
     assert app_paths._is_writable(tmp_path)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_suite_never_uses_real_data_folder():
+    from ui.settings_view.manager import BASE_DIR
+    from ui.bookmarks_main import bookmarks_db
+    assert BASE_DIR != app_paths.app_dir()
+    assert "booru-test-data-" in str(BASE_DIR)
+    assert "booru-test-data-" in str(bookmarks_db._DB_FILE)
