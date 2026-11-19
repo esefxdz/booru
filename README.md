@@ -8,7 +8,8 @@ Go to [Releases](https://github.com/esefxdz/booru/releases) and grab the latest 
 
 ## What it does
 
-- Search 15+ boorus (Gelbooru, Danbooru, Safebooru, e621, and others) from one app
+- Gelbooru and Safebooru built in; add any site running Danbooru, Gelbooru, Moebooru
+  (yande.re, konachan), e621, Szurubooru, Philomena, Shimmie2 or Zerochan
 - Browse results in a scrollable gallery
 - View images, GIFs, and videos fullscreen
 - Download posts individually or in bulk
@@ -26,6 +27,14 @@ Most boorus sit behind Cloudflare. The app tries to get through automatically us
 - Smart folders (sort downloads by artist, character, etc.)
 - Per-site API keys for accounts
 
+## Your data
+
+Everything is stored next to the exe, so the folder is portable:
+`settings.json` (preferences), `custom_boorus.json` (sites you added),
+`bookmarks.db`, and `credentials.bin`. API keys and Cloudflare cookies in
+`credentials.bin` are encrypted with Windows DPAPI, which ties them to your
+Windows account: on another PC or account you'll need to log in again.
+
 ## Running from source
 
 ```
@@ -34,6 +43,15 @@ python main.py
 ```
 
 Python 3.12+. VLC or MPV recommended for video playback.
+
+## Tests
+
+```
+pip install -r requirements-dev.txt
+pytest
+```
+
+The suite runs offline and never touches your real settings or credentials.
 
 ## Building
 
@@ -49,12 +67,12 @@ Output is in `dist/`.
 ```
 cloudflare_bypasser/    HTTP engine chain + cookie persistence
 adapters/               API parsers per booru type
-boorus/                 Site URLs and configs
+boorus/                 Booru registry (built-ins + custom_boorus.json)
 download_images/        Search, thumbnails, download pipeline
 displayers/             Image viewer, video player, sidebar
 ui/                     Gallery, search bar, settings, autocomplete
 updater/                Checks GitHub releases for new versions
-tests/                  Unit tests
+tests/                  pytest suite
 ```
 
 More detail in [ARCHITECTURE.md](ARCHITECTURE.md) if you're reading the code.
