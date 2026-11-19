@@ -12,7 +12,7 @@ def _db(path):
     db = m.BookmarksDB.__new__(m.BookmarksDB)
     db.db_path = path
     db._conn = None
-    db._lock = threading.RLock()
+    db._lock = threading.Lock()
     db._init_db()
     return db
 
@@ -79,3 +79,81 @@ def test_old_exe_can_still_use_migrated_table(db):
     c.execute("INSERT OR REPLACE INTO bookmarks (id, booru, post_data) VALUES (?, ?, ?)",
               ("9", "gelbooru", json.dumps(P("gelbooru", 9))))
     assert c.execute("SELECT 1 FROM bookmarks WHERE id = ?", ("9",)).fetchone()
+
+
+class _FaultyConn:
+    """Connection proxy that raises when a statement contains `fail_on`."""
+
+    def __init__(self, conn, fail_on):
+        object.__setattr__(self, "_c", conn)
+        object.__setattr__(self, "fail_on", fail_on)
+
+    def execute(self, sql, *a):
+        if self.fail_on and self.fail_on in sql:
+            raise sqlite3.OperationalError("simulated: database is locked")
+        return self._c.execute(sql, *a)
+
+    def __getattr__(self, name):
+        return getattr(self._c, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._c, name, value)
+
+
+def _make_v1(path, n=3):
+    c = sqlite3.connect(path)
+    c.execute("CREATE TABLE bookmarks (id TEXT PRIMARY KEY, booru TEXT, post_data TEXT, "
+              "added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    for i in range(n):
+        c.execute("INSERT INTO bookmarks (id, booru, post_data) VALUES (?, 'gelbooru', ?)",
+                  (str(i), json.dumps(P("gelbooru", i))))
+    c.commit()
+    c.close()
+
+
+def _tables(conn):
+    return sorted(r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'"))
+
+
+def test_failed_migration_rolls_back_and_retries(tmp_path):
+    path = tmp_path / "bookmarks.db"
+    _make_v1(path)
+    conn = sqlite3.connect(path)
+    with pytest.raises(sqlite3.OperationalError):
+        m.BookmarksDB._migrate_to_composite_key(_FaultyConn(conn, "RENAME TO bookmarks_v1_backup"))
+    assert conn.isolation_level == ""   # restored
+    assert _tables(conn) == ["bookmarks"]   # no leftover bookmarks_v2
+    assert conn.execute("SELECT count(*) FROM bookmarks").fetchone()[0] == 3
+    conn.close()
+
+    db = _db(path)   # retry without the fault
+    pk = [r[1] for r in db._get_conn().execute("PRAGMA table_info(bookmarks)") if r[5]]
+    assert pk == ["booru", "id"]
+    assert len(db.get_all_bookmarks()) == 3
+
+
+def test_failed_migration_does_not_stop_startup(tmp_path, monkeypatch):
+    path = tmp_path / "bookmarks.db"
+    _make_v1(path)
+
+    def boom(conn):
+        raise sqlite3.OperationalError("simulated")
+    original = m.BookmarksDB._migrate_to_composite_key
+    monkeypatch.setattr(m.BookmarksDB, "_migrate_to_composite_key", staticmethod(boom))
+    db = _db(path)   # must not raise
+    assert _tables(db._get_conn()) == ["bookmarks"]
+    monkeypatch.setattr(m.BookmarksDB, "_migrate_to_composite_key", original)
+    db2 = _db(path)
+    assert len(db2.get_all_bookmarks()) == 3
+
+
+def test_leftover_v2_table_does_not_block_migration(tmp_path):
+    path = tmp_path / "bookmarks.db"
+    _make_v1(path)
+    c = sqlite3.connect(path)
+    c.execute("CREATE TABLE bookmarks_v2 (junk TEXT)")
+    c.commit()
+    c.close()
+    db = _db(path)
+    assert len(db.get_all_bookmarks()) == 3
+    assert "bookmarks_v2" not in _tables(db._get_conn())

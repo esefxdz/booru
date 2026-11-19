@@ -72,7 +72,13 @@ class BookmarksDB:
                     PRIMARY KEY (booru, id)
                 )
             ''')
-            self._migrate_to_composite_key(conn)
+            try:
+                self._migrate_to_composite_key(conn)
+            except Exception:
+                # Never let a failed migration stop the app from starting:
+                # keep using the v1 table and retry on the next start.
+                logging.exception("[bookmarks] Migration to a (booru, id) key failed; "
+                                  "keeping the old table, will retry next start")
 
     @staticmethod
     def _migrate_to_composite_key(conn):
@@ -84,24 +90,41 @@ class BookmarksDB:
         if pk == ["booru", "id"]:
             return
         logging.info("[bookmarks] Migrating bookmarks table to a (booru, id) key")
-        with conn:   # one transaction: all or nothing
-            conn.execute('''
-                CREATE TABLE bookmarks_v2 (
-                    booru TEXT NOT NULL DEFAULT 'unknown',
-                    id TEXT NOT NULL,
-                    post_data TEXT,
-                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (booru, id)
-                )
-            ''')
-            conn.execute('''
-                INSERT OR IGNORE INTO bookmarks_v2 (booru, id, post_data, added_at)
-                SELECT COALESCE(NULLIF(booru, ''), 'unknown'), id, post_data, added_at
-                FROM bookmarks
-            ''')
-            conn.execute("DROP TABLE IF EXISTS bookmarks_v1_backup")
-            conn.execute("ALTER TABLE bookmarks RENAME TO bookmarks_v1_backup")
-            conn.execute("ALTER TABLE bookmarks_v2 RENAME TO bookmarks")
+        # sqlite3 does not BEGIN before DDL, so `with conn:` cannot roll back
+        # CREATE TABLE. Manage the transaction explicitly instead.
+        previous = conn.isolation_level
+        conn.isolation_level = None
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # leftover from an older failed run
+                conn.execute("DROP TABLE IF EXISTS bookmarks_v2")
+                conn.execute('''
+                    CREATE TABLE bookmarks_v2 (
+                        booru TEXT NOT NULL DEFAULT 'unknown',
+                        id TEXT NOT NULL,
+                        post_data TEXT,
+                        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (booru, id)
+                    )
+                ''')
+                conn.execute('''
+                    INSERT OR IGNORE INTO bookmarks_v2 (booru, id, post_data, added_at)
+                    SELECT COALESCE(NULLIF(booru, ''), 'unknown'), id, post_data, added_at
+                    FROM bookmarks
+                ''')
+                conn.execute("DROP TABLE IF EXISTS bookmarks_v1_backup")
+                conn.execute("ALTER TABLE bookmarks RENAME TO bookmarks_v1_backup")
+                conn.execute("ALTER TABLE bookmarks_v2 RENAME TO bookmarks")
+                conn.execute("COMMIT")
+            except BaseException:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+                raise
+        finally:
+            conn.isolation_level = previous
 
     # Rows saved by very old versions have booru 'unknown'; they match any booru
     # so upgrading never makes an existing bookmark look un-bookmarked.
