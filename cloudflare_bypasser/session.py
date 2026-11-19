@@ -21,6 +21,7 @@ Users can lock to a specific engine via ``settings.manager.cf_bypass_method``.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import time
 from typing import Optional
@@ -504,11 +505,23 @@ class BypassSession:
             pass
         import async_loop
         try:
-            return async_loop.submit(coro).result(timeout=timeout + 10)
+            fut = async_loop.submit(coro)
         except RuntimeError:
-            # No global loop (e.g. tests, standalone tools): run it locally.
+            # submit() failed, so the coroutine was never scheduled. No global
+            # loop (e.g. tests, standalone tools): run it locally. During app
+            # shutdown do not start a throwaway loop.
+            if getattr(async_loop, "_SHUTTING_DOWN", False):
+                coro.close()
+                return None
             return asyncio.run(coro)
+        try:
+            return fut.result(timeout=timeout + 10)
+        except concurrent.futures.TimeoutError:
+            fut.cancel()
+            log.debug("async fallback timed out")
+            return None
         except Exception as e:
+            # Already awaited on the loop: never run it a second time.
             log.debug("async fallback failed: %s", e)
             return None
 
