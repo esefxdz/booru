@@ -108,8 +108,8 @@ class BulkThread(QThread):
                 task_id = f"bulk-{uuid.uuid4().hex[:8]}"
                 post["_bulk_task_id"] = task_id
                 try:
-                    self.downloader.download_file(task_id, post, folder)
-                    success += 1
+                    if self.downloader.download_file(task_id, post, folder):
+                        success += 1
                 except Exception:
                     import logging
                     logging.exception("BulkThread: download_file failed for post %s", post.get("id"))

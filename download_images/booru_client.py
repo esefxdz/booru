@@ -216,13 +216,14 @@ class BooruDownloader(QObject):
     #  Download orchestration (emits signals for progress UI)
     # ──────────────────────────────────────────────────────────────
 
-    def download_file(self, task_id: str, post: dict, folder, engine: str | None = None):
+    def download_file(self, task_id: str, post: dict, folder, engine: str | None = None) -> bool:
         """Download a single post's file to *folder*, emitting progress signals.
 
         This is the main entry point for per-post downloads.  It runs
         synchronously (callers should wrap in a thread) and emits
         ``download_started``, ``download_progress``, ``download_finished``
-        or ``download_failed`` as the transfer progresses.
+        or ``download_failed`` as the transfer progresses.  Returns True only if
+        the file was actually downloaded.
         """
         import uuid
         from download_images.image_downloader import download_post
@@ -243,10 +244,11 @@ class BooruDownloader(QObject):
             ok = download_post(post, folder, self, engine=engine, on_progress=_on_progress)
             if ok:
                 self.download_finished.emit(tid)
-            else:
-                self.download_failed.emit(tid, "Download engine returned failure")
+                return True
+            self.download_failed.emit(tid, "Download engine returned failure")
         except Exception as e:
             self.download_failed.emit(tid, str(e))
+        return False
 
     # ──────────────────────────────────────────────────────────────
     #  Cleanup
