@@ -70,6 +70,25 @@ _DECODE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
 # ║  to PIL (which raises "cannot identify image file").                ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 
+#: Refuse to decode previews bigger than this (40 Mpx ≈ 160 MB as RGBA).
+#: Real booru previews are well under 1 Mpx.
+MAX_THUMB_SOURCE_PIXELS = 40_000_000
+
+
+def _safe_preview_url(url: str, booru: str) -> str:
+    """Same rules as download URLs: resolve relative ones against the booru,
+    refuse anything that is not http(s)."""
+    if not url:
+        return ""
+    from validation import ValidationError, require_http_url
+    import boorus
+    try:
+        return require_http_url(url, boorus.REGISTRY.get(booru, {}).get("url"))
+    except ValidationError as e:
+        log.warning("[thumbnails] ignoring preview URL: %s", e)
+        return ""
+
+
 def _is_image(data: bytes | None) -> bool:
     """Return True only if *data* starts with a known image magic sequence."""
     if not data or len(data) < 4:
@@ -204,12 +223,10 @@ async def fetch_previews(
                 callback(cached, post, index)
             return
 
-        # 2. Resolve preview URL
-        url = adapter.get_preview_url(post)
+        # 2. Resolve preview URL: relative -> absolute on the booru, http(s) only
+        url = _safe_preview_url(adapter.get_preview_url(post), booru)
         if not url:
             return
-        if url.startswith("//"):
-            url = "https:" + url
 
         # 3. Network fetch (semaphore limits concurrent connections)
         #    Slot released immediately after bytes arrive → decode
@@ -228,7 +245,12 @@ async def fetch_previews(
 
         # 4. CPU decode + cache (outside semaphore — network keeps running)
         def _decode_and_cache() -> bytes:
-            img = Image.open(BytesIO(raw))
+            img = Image.open(BytesIO(raw))      # reads the header only
+            if img.width * img.height > MAX_THUMB_SOURCE_PIXELS:
+                # A tiny PNG can claim a huge canvas and decode to GBs of RAM.
+                raise ValueError(f"preview too large to decode ({img.width}x{img.height})")
+            size = settings.manager.thumbnail_size
+            img.draft("RGB", (size, size))      # JPEG: decode at reduced size
             img.thumbnail(
                 (settings.manager.thumbnail_size, settings.manager.thumbnail_size),
                 Image.LANCZOS,
