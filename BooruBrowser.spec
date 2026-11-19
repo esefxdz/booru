@@ -2,6 +2,7 @@
 from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = []
+hiddenimports += collect_submodules('adapters')
 hiddenimports += collect_submodules('boorus')
 hiddenimports += collect_submodules('cloudflare_bypasser')
 hiddenimports += collect_submodules('updater')
@@ -14,7 +15,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('boorus', 'boorus'), ('adapters', 'adapters'), ('ui/assets', 'ui/assets'), ('appico.png', '.'), ('updater', 'updater')],
+    datas=[('ui/assets', 'ui/assets'), ('appico.png', '.')],  # code packages are collected as modules
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -43,7 +44,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # UPX triggers antivirus false positives and can break Qt DLLs
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
