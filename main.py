@@ -42,6 +42,28 @@ def _setup_logging():
     ):
         logging.getLogger(noisy).setLevel(logging.ERROR)
 
+    # Lives on the GUI thread (this runs at import time on the main thread).
+    from PyQt6.QtCore import QObject, pyqtSignal
+
+    class _ErrorDialogBridge(QObject):
+        requested = pyqtSignal(str)
+
+    dialog_bridge = _ErrorDialogBridge()
+
+    def show_error_dialog(tb):
+        try:
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.setWindowTitle("Fatal Error")
+            msg.setText("The application encountered an unrecoverable error and must close.\n\n"
+                        f"Check the log at: {log_file or '(file logging unavailable)'}")
+            msg.setDetailedText(tb)
+            msg.exec()
+        except Exception:
+            logging.critical("Could not show error dialog", exc_info=True)
+
+    dialog_bridge.requested.connect(show_error_dialog)
+
     def handle_exception(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -49,17 +71,15 @@ def _setup_logging():
         
         logging.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
         
-        # Show a critical error dialog so the user knows what crashed
+        # Show a critical error dialog so the user knows what crashed.  Qt
+        # widgets may only be created on the GUI thread, and PyQt also calls
+        # this hook for exceptions raised on worker threads, so the dialog is
+        # requested through a signal: direct on the GUI thread, queued from
+        # any other thread.
         try:
             if QApplication.instance():
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
-                msg = QMessageBox()
-                msg.setIcon(QMessageBox.Icon.Critical)
-                msg.setWindowTitle("Fatal Error")
-                msg.setText("The application encountered an unrecoverable error and must close.\n\n"
-                            f"Check the log at: {log_file or '(file logging unavailable)'}")
-                msg.setDetailedText(tb)
-                msg.exec()
+                dialog_bridge.requested.emit(tb)
         except Exception:
             logging.critical("Could not show error dialog", exc_info=True)
 
