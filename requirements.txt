@@ -1,4 +1,12 @@
-httpx[http2]
+# Runtime dependencies
 PyQt6
 PyQt6-WebEngine
 Pillow
+httpx[http2]
+requests
+curl_cffi        # Chrome TLS impersonation (best Cloudflare results)
+cloudscraper     # JS-challenge engine in the bypass chain
+
+# Optional video backends (Settings > Media). Qt's built-in player works without them.
+# python-mpv     # needs libmpv-2.dll next to the exe / on PATH
+# python-vlc     # needs VLC installed

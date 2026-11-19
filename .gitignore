@@ -51,6 +51,14 @@ dist/
 publish/
 *.egg-info/
 *.spec
+!BooruBrowser.spec
+
+# User data written next to the app (never commit)
+custom_boorus.json
+custom_boorus.tmp
+credentials.tmp
+credentials.bin.unreadable-*
+*.part
 
 # Debug and Logs
 error.txt
@@ -63,7 +71,15 @@ cookies_debug.txt
 .DS_Store
 technical debt*.md
 technical_debt*.md
-tests/
+tests/__pycache__/
+# manual scripts that hit live sites (see tests/conftest.py)
+tests/test_api.py
+tests/test_bypasser.py
+tests/test_cdns.py
+tests/test_dialog.py
+tests/test_domains.py
+tests/test_gelbooru_videos.py
+tests/test_get.py
 generate_*.py
 replace_*.py
 CODEBASE_GUIDE.md
