@@ -253,6 +253,23 @@ ALLOWED_MEDIA_EXTS = frozenset({
 _POST_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 
 
+def _ambiguous_authority(url: str) -> bool:
+    r"""True for URLs whose host different parsers disagree on.
+
+    ``https://evil.example\@booru.com/`` is host ``booru.com`` to
+    urllib.parse but ``evil.example`` to urllib3 (requests, cloudscraper), so
+    a same-site check could pass while the request goes elsewhere. Legitimate
+    booru URLs never contain a backslash or ``user@`` credentials.
+    """
+    if "\\" in url:
+        return True
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return True
+    return "@" in (p.netloc or "") or p.username is not None or p.password is not None
+
+
 def require_http_url(url: str, base: Optional[str] = None) -> str:
     """Return *url* as an absolute http(s) URL, or raise ValidationError.
 
@@ -265,6 +282,8 @@ def require_http_url(url: str, base: Optional[str] = None) -> str:
     url = url.strip()
     if any(c in url for c in "\r\n\x00"):
         raise ValidationError("URL contains control characters")
+    if _ambiguous_authority(url):
+        raise ValidationError(f"Refusing ambiguous URL: {url[:80]!r}")
     if url.startswith("//"):
         url = "https:" + url
     elif base and not urlparse(url).scheme:
@@ -350,6 +369,8 @@ def site_key(host: str) -> str:
 
 def same_site(url: str, site_url: str) -> bool:
     """True if *url* belongs to the same registrable domain as *site_url*."""
+    if _ambiguous_authority(url or "") or _ambiguous_authority(site_url or ""):
+        return False
     try:
         a = urlparse(url or "").hostname
         b = urlparse(site_url or "").hostname

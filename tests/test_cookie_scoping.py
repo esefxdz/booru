@@ -136,3 +136,41 @@ def test_bypass_urllib_engine_works_and_scopes_redirects(servers):
     assert r is not None and r.status_code == 200
     assert _cookie_seen_by("127.0.0.1") == ["cf_clearance=secret"]
     assert _cookie_seen_by("127.0.0.2") == [None]
+
+
+# ── Bypass engines that use a requests-style cookie jar ─────────────────
+def _bypass_jar_engines():
+    from cloudflare_bypasser import engines as be
+    out = []
+    if be._HAS_REQUESTS:
+        out.append(("requests", be._try_requests_sync))
+    if be._HAS_CLOUDSCRAPER:
+        out.append(("cloudscraper", be._try_cloudscraper_sync))
+    return out
+
+
+@pytest.mark.parametrize("name,fn", _bypass_jar_engines())
+def test_bypass_jar_engines_drop_cookie_on_cross_site_redirect(servers, name, fn):
+    a, b = servers
+    _Recorder.redirect_to = f"http://127.0.0.2:{b}/final.png"
+    r = fn(f"http://127.0.0.1:{a}/redirect", None, {"User-Agent": "t"},
+           {"cf_clearance": "secret"}, "", 10)
+    assert r is not None and r.status_code == 200
+    assert _cookie_seen_by("127.0.0.1") == ["cf_clearance=secret"]
+    assert _cookie_seen_by("127.0.0.2") == [None], f"{name} leaked the cookie"
+
+
+@pytest.mark.parametrize("url", [
+    "https://evil.example\@gelbooru.com/x",      # urllib.parse: gelbooru.com, urllib3: evil.example
+    "https://user@gelbooru.com/x",
+    "https://gelbooru.com:443\@evil.example/",
+])
+def test_ambiguous_urls_refused_and_never_same_site(url):
+    assert v.same_site(url, "https://gelbooru.com") is False
+    with pytest.raises(v.ValidationError):
+        v.require_http_url(url)
+
+
+def test_session_never_sends_cookies_to_ambiguous_url():
+    s = BypassSession(cookies={"cf_clearance": "secret"}, site_url="https://gelbooru.com")
+    assert s._cookies_for("https://evil.example\@gelbooru.com/x") == {}

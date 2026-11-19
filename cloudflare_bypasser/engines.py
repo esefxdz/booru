@@ -343,6 +343,31 @@ def _try_curl_cffi_sync(
 # cloudscraper (sync)
 # ---------------------------------------------------------------------------
 
+def _set_site_scoped_cookies(jar, cookies: dict, url: str) -> None:
+    """Put *cookies* in a requests-style *jar*, bound to *url*'s site.
+
+    ``jar.update(dict)`` creates cookies with no domain, which http.cookiejar
+    sends to every host, so they followed redirects to third parties. Binding
+    them to ``.<registrable domain>`` keeps same-site CDN redirects working
+    and stops them anywhere else.
+    """
+    if not cookies:
+        return
+    import ipaddress
+    from urllib.parse import urlparse
+    from validation import site_key
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        return
+    try:
+        ipaddress.ip_address(host)
+        domain = host                      # IP address: that exact host only
+    except ValueError:
+        domain = "." + site_key(host)
+    for k, v in cookies.items():
+        jar.set(k, v, domain=domain, path="/")
+
+
 def _try_cloudscraper_sync(
     url: str,
     params: dict | None,
@@ -366,8 +391,7 @@ def _try_cloudscraper_sync(
         )
         scraper.headers.update(headers)
 
-        if cookies:
-            scraper.cookies.update(cookies)
+        _set_site_scoped_cookies(scraper.cookies, cookies, url)
 
         proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
@@ -463,8 +487,7 @@ def _try_requests_sync(
     try:
         session = _requests_lib.Session()
         session.headers.update(headers)
-        if cookies:
-            session.cookies.update(cookies)
+        _set_site_scoped_cookies(session.cookies, cookies, url)
 
         proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
