@@ -105,6 +105,15 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
         adapter_name = getattr(adapter, "api_type", "unknown")
 
         result = adapter.parse_response(r, site_data)
+        if isinstance(result, dict):
+            result = [result]          # some sites return a lone object for one hit
+        if isinstance(result, list):
+            # Everything downstream calls post.get(...): drop non-object entries
+            # from malformed/hostile responses instead of crashing on them.
+            dropped = sum(1 for p in result if not isinstance(p, dict))
+            if dropped:
+                logging.warning("[api_client] %s: dropped %d malformed post entries", booru_name, dropped)
+            result = [p for p in result if isinstance(p, dict)]
         if not isinstance(result, list):
             logging.warning(
                 "[api_client] %s/%s parse_response returned %s (expected list) — API may have changed",
