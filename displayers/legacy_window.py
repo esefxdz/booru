@@ -466,12 +466,26 @@ class DisplayerWindow(QMainWindow):
 # ║  Thin launcher used by gui.py when legacy mode is enabled.          ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 class UniversalViewer:
-    """Spawns the legacy PyQt6 displayer as a separate subprocess."""
+    """Opens the legacy displayer as a separate window in this process.
+
+    It used to spawn ``sys.executable -m displayers.legacy_window``. In the
+    one-file exe ``sys.executable`` is BooruBrowser.exe, which ignores -m, so
+    every click opened a second full copy of the app (writing the same data
+    files); the post JSON on the command line could also exceed Windows'
+    32 KB limit.
+    """
+    _open_windows: list = []     # keep references so windows aren't GC'd
+
     def __init__(self, parent_gui, post):
-        import subprocess
+        from PyQt6.QtCore import Qt
         file_url = parent_gui.downloader.get_file_url(post)
-        cmd = [sys.executable, "-m", "displayers.legacy_window", file_url, json.dumps(post)]
-        subprocess.Popen(cmd)
+        window = DisplayerWindow(post, file_url)
+        window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        UniversalViewer._open_windows.append(window)
+        window.destroyed.connect(
+            lambda *_: UniversalViewer._open_windows.remove(window)
+            if window in UniversalViewer._open_windows else None)
+        window.show()
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -138,3 +138,33 @@ def test_double_click_downloads_once_and_file_is_intact(tmp_path, monkeypatch):
     data = (tmp_path / "42.png").read_bytes()
     assert len(data) == 2000 and len(set(data)) == 1     # one stream, not a mix
     assert not list(tmp_path.glob("*.part"))
+
+
+def test_legacy_viewer_opens_in_process_not_a_new_app(monkeypatch):
+    import subprocess
+    from PyQt6.QtWidgets import QApplication
+    from displayers import legacy_window as lw
+    app = QApplication.instance() or QApplication([])
+
+    def no_spawn(*a, **k):
+        raise AssertionError("legacy viewer must not start a new process")
+
+    monkeypatch.setattr(subprocess, "Popen", no_spawn)
+
+    class _GUI:
+        class downloader:
+            @staticmethod
+            def get_file_url(post):
+                return "https://safebooru.org/images/1/x.png"
+
+    class _StandIn(lw.QMainWindow):        # real window would start a network fetch
+        def __init__(self, post, url):
+            super().__init__()
+
+    monkeypatch.setattr(lw, "DisplayerWindow", _StandIn)
+    lw.UniversalViewer(_GUI, {"id": 1, "_booru": "safebooru"})
+    assert len(lw.UniversalViewer._open_windows) == 1
+    lw.UniversalViewer._open_windows[0].close()
+    app.processEvents()
+    app.processEvents()
+    assert lw.UniversalViewer._open_windows == []
