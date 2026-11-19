@@ -49,10 +49,35 @@ class TestBypassResponseIsBlocked(unittest.TestCase):
         self.assertTrue(r.is_blocked)
 
     def test_403_short_body_blocked(self):
-        """Any 403 with body under 200 bytes is treated as a CF block (heuristic)."""
+        """A 403 with body under 200 bytes stops the engine chain (is_blocked),
+        but without Cloudflare markers it is not evidence of a challenge, so
+        it must not cost the user a stored clearance."""
         body = b"Access denied"
         r = BypassResponse(body, body.decode(), 403, "http://x.com", None, "curl_cffi", {})
         self.assertTrue(r.is_blocked)
+        self.assertFalse(r.is_cf_challenge)
+
+    def test_challenge_header_is_challenge(self):
+        r = BypassResponse(b"", "", 403, "http://x.com", None, "httpx", {},
+                           headers={"cf-mitigated": "challenge"})
+        self.assertTrue(r.is_cf_challenge)
+        self.assertTrue(r.is_blocked)
+
+    def test_challenge_header_on_200_is_not_challenge(self):
+        r = BypassResponse(b"ok", "ok", 200, "http://x.com", None, "httpx", {},
+                           headers={"cf-mitigated": "challenge"})
+        self.assertFalse(r.is_cf_challenge)
+
+    def test_markers_are_challenge(self):
+        body = b"<title>Just a moment...</title>"
+        r = BypassResponse(body, body.decode(), 503, "http://x.com", None, "curl_cffi", {})
+        self.assertTrue(r.is_cf_challenge)
+
+    def test_undecodable_403_blocked_but_not_challenge(self):
+        body = bytes(range(0x80, 0xf8))
+        r = BypassResponse(body, body.decode("latin-1"), 403, "http://x.com", None, "cloudscraper", {})
+        self.assertTrue(r.is_blocked)
+        self.assertFalse(r.is_cf_challenge)
 
     def test_403_large_body_not_cf(self):
         """A large 403 body without CF markers is a real server response."""

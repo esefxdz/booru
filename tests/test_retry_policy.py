@@ -11,7 +11,7 @@ from cloudflare_bypasser.session import BypassSession
 
 class _Counter(http.server.BaseHTTPRequestHandler):
     status = 403
-    body = b"forbidden"          # tiny 403 = treated as a block
+    body = b"forbidden"          # tiny 403: blocked, but not a CF challenge
     hits = 0
 
     def do_GET(self):
@@ -67,7 +67,14 @@ def _blocked_get(server, mode, body):
 @pytest.mark.parametrize("body", [b"forbidden", _CF_CHALLENGE], ids=["tiny-403", "big-html-cf-403"])
 def test_blocked_403_runs_each_engine_once_then_circuit_opens(server, mode, expected, body):
     s, r = _blocked_get(server, mode, body)
+    # Both kinds stop the chain and pause the host (is_blocked). Only the
+    # page with Cloudflare markers is evidence of a challenge, which is what
+    # lets api_client clear a stored cf_clearance. A 9-byte "forbidden" may
+    # be a CF firewall block or the site's own 403; either way another
+    # fingerprint is worth one try and the host should not be hammered, but
+    # it says nothing about the clearance, so it is no longer a challenge.
     assert r.is_blocked
+    assert r.is_cf_challenge == (body == _CF_CHALLENGE)
     # Exactly one round: a challenge is definitive, so no backoff rounds
     # (the old code ran 3 rounds: 24 hits async, 45 sync).
     assert _Counter.hits == expected, _Counter.hits

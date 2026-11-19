@@ -44,7 +44,8 @@ class BypassResponse:
     never holds a dangling reference to a closed socket/session.
     """
 
-    __slots__ = ("content", "text", "status_code", "url", "_json_data", "engine_used", "cookies")
+    __slots__ = ("content", "text", "status_code", "url", "_json_data", "engine_used", "cookies",
+                 "headers")
 
     def __init__(
         self,
@@ -55,6 +56,7 @@ class BypassResponse:
         json_data: object,
         engine_used: str = "unknown",
         cookies: dict | None = None,
+        headers: dict | None = None,
     ) -> None:
         self.content = content
         self.text = text
@@ -63,6 +65,8 @@ class BypassResponse:
         self._json_data = json_data
         self.engine_used = engine_used
         self.cookies = cookies or {}
+        # Response headers, keys lower-cased ({} when the engine gave none).
+        self.headers = headers or {}
 
     def json(self) -> object:
         if self._json_data is not None:
@@ -72,17 +76,23 @@ class BypassResponse:
 
     @property
     def is_blocked(self) -> bool:
-        """True when the response looks like a Cloudflare challenge page."""
+        """True when the site is refusing us: a Cloudflare challenge, or a
+        403 that may be a block (tiny or undecodable body).
+
+        This decides only "stop trying other engines and pause the host".
+        It is NOT evidence that a stored clearance is bad; see
+        :attr:`is_cf_challenge` for that.
+        """
         if self.status_code not in (403, 503, 429):
             return False
-
-        # Quick heuristic: 403 with tiny body is almost certainly a block
-        if self.status_code == 403 and len(self.content) < 200:
+        if self.is_cf_challenge:
             return True
 
-        # Check both decoded text and raw bytes (response may be brotli-compressed)
-        text_lower = self.text[:4000].lower() if self.text else ""
-        content_lower = self.content[:4000].lower() if self.content else b""
+        # A tiny 403 may be a Cloudflare firewall block ("error code: 1020")
+        # or the origin's own refusal; either way another fingerprint is
+        # worth one try and the host should not be hammered.
+        if self.status_code == 403 and len(self.content) < 200:
+            return True
 
         # Detect garbage / undecoded responses — some engines (cloudscraper)
         # return raw compressed bytes as "text" when Content-Encoding
@@ -92,26 +102,27 @@ class BypassResponse:
             if first_char not in '<{[{"':
                 return True
 
-        cf_markers_text = (
-            "cf-mitigated", "just a moment",
-            "challenge-platform", "challenges.cloudflare.com",
-            "checking your browser", "enable javascript",
-            "cf-chl-bypass", "cf-chl-out",
-            "turnstile", "cf_captcha",
-        )
-        cf_markers_bytes = (
-            b"cf-mitigated", b"just a moment",
-            b"challenge-platform", b"challenges.cloudflare.com",
-            b"checking your browser", b"enable javascript",
-            b"cf-chl-bypass", b"cf-chl-out",
-            b"turnstile", b"cf_captcha",
-        )
+        return False
 
-        for marker in cf_markers_text:
-            if marker in text_lower:
-                return True
-        for marker in cf_markers_bytes:
-            if marker in content_lower:
+    @property
+    def is_cf_challenge(self) -> bool:
+        """True only on positive evidence of a Cloudflare challenge page: the
+        ``cf-mitigated: challenge`` header or challenge markers in the body.
+
+        Callers clear the stored cf_clearance on this, so a plain site 403
+        (no evidence) must not trigger it.
+        """
+        if self.status_code not in (403, 503, 429):
+            return False
+        if str(self.headers.get("cf-mitigated", "")).strip().lower() == "challenge":
+            return True
+
+        # Check both decoded text and raw bytes (response may be brotli-compressed)
+        text_lower = self.text[:4000].lower() if self.text else ""
+        content_lower = self.content[:4000].lower() if self.content else b""
+
+        for marker in _CF_MARKERS:
+            if marker in text_lower or marker.encode() in content_lower:
                 return True
 
         if "cf-ray" in text_lower and ("challenge" in text_lower or "captcha" in text_lower):
@@ -124,6 +135,25 @@ class BypassResponse:
 
     def __repr__(self) -> str:
         return f"<BypassResponse [{self.status_code}] engine={self.engine_used} {self.url}>"
+
+
+_CF_MARKERS = (
+    "cf-mitigated", "just a moment",
+    "challenge-platform", "challenges.cloudflare.com",
+    "checking your browser", "enable javascript",
+    "cf-chl-bypass", "cf-chl-out",
+    "turnstile", "cf_captcha",
+)
+
+
+def _lower_headers(h) -> dict:
+    """Plain dict of response headers with lower-cased keys (any engine)."""
+    try:
+        if h is None:
+            return {}
+        return {str(k).lower(): str(v) for k, v in h.items()}
+    except Exception:
+        return {}
 
 
 # Keep backward compat alias
@@ -240,7 +270,8 @@ async def _try_curl_cffi(
                 json_data = None
 
             cookies_resp = _extract_cookies(resp)
-            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}", cookies_resp)
+            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}", cookies_resp,
+                            headers=_lower_headers(getattr(resp, "headers", None)))
 
             if status_code != 403:
                 return result
@@ -327,7 +358,8 @@ def _try_curl_cffi_sync(
                 json_data = None
 
             cookies_resp = _extract_cookies(resp)
-            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}", cookies_resp)
+            result = BypassResponse(content, text, status_code, final_url, json_data, f"curl_cffi/{target}", cookies_resp,
+                            headers=_lower_headers(getattr(resp, "headers", None)))
 
             if status_code != 403:
                 return result
@@ -424,7 +456,8 @@ def _try_cloudscraper_sync(
             json_data = None
 
         cookies_resp = _extract_cookies(resp)
-        return BypassResponse(content, text, status_code, final_url, json_data, "cloudscraper", cookies_resp)
+        return BypassResponse(content, text, status_code, final_url, json_data, "cloudscraper", cookies_resp,
+                            headers=_lower_headers(getattr(resp, "headers", None)))
     except Exception as e:
         log.debug("cloudscraper failed for %s: %s", url, e)
         return None
@@ -474,7 +507,8 @@ async def _try_httpx(
             json_data = None
 
         cookies_resp = _extract_cookies(resp)
-        return BypassResponse(content, text, status_code, final_url, json_data, "httpx", cookies_resp)
+        return BypassResponse(content, text, status_code, final_url, json_data, "httpx", cookies_resp,
+                            headers=_lower_headers(getattr(resp, "headers", None)))
     except Exception as e:
         log.debug("httpx failed for %s: %s", url, e)
         return None
@@ -520,7 +554,8 @@ def _try_requests_sync(
             json_data = None
 
         cookies_resp = _extract_cookies(resp)
-        return BypassResponse(content, text, status_code, final_url, json_data, "requests", cookies_resp)
+        return BypassResponse(content, text, status_code, final_url, json_data, "requests", cookies_resp,
+                            headers=_lower_headers(getattr(resp, "headers", None)))
     except Exception as e:
         log.debug("requests failed for %s: %s", url, e)
         return None
@@ -582,11 +617,13 @@ def _try_urllib_sync(
             except Exception:
                 json_data = None
         cookies_resp = _extract_cookies(resp)
-        return BypassResponse(content, text, status_code, final_url, json_data, "urllib", cookies_resp)
+        return BypassResponse(content, text, status_code, final_url, json_data, "urllib", cookies_resp,
+                            headers=_lower_headers(getattr(resp, "headers", None)))
     except urllib.error.HTTPError as e:
         content = e.read() if hasattr(e, "read") else b""
         text = content.decode("utf-8", errors="replace")
-        return BypassResponse(content, text, e.code, url, None, "urllib", {})
+        return BypassResponse(content, text, e.code, url, None, "urllib", {},
+                              headers=_lower_headers(getattr(e, "headers", None)))
     except Exception as e:
         log.debug("urllib failed for %s: %s", url, e)
         return None

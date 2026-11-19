@@ -20,24 +20,36 @@ from download_images.network import CloudflareBlockError
 BOORU = "cbtest"
 
 
+# What Cloudflare serves when it wants the challenge solved.
+_CHALLENGE = (b"<!DOCTYPE html><html><head><title>Just a moment...</title></head>"
+              b"<body>" + b"x" * 200 + b"<script src='/cdn-cgi/challenge-platform/h/b/"
+              b"orchestrate/chl_page/v1'></script></body></html>")
+
+
 class _Booru(http.server.BaseHTTPRequestHandler):
     blocked = True
     hits = 0
     on_hit = None          # runs on the server thread after a hit is counted
     unavailable = 0        # answer this many hits with a plain 503 first
+    # Answer a block with (status, body, extra headers). Default: a real
+    # Cloudflare challenge. Tests swap in other kinds of 403.
+    block = (403, _CHALLENGE, {"cf-mitigated": "challenge"})
 
     def do_GET(self):
         type(self).hits += 1
+        headers = {}
         if type(self).on_hit is not None:
             type(self).on_hit()
         if type(self).unavailable > 0:
             type(self).unavailable -= 1
             status, body = 503, b"down"                 # transient, not a block
         elif type(self).blocked:
-            status, body = 403, b"forbidden"          # tiny 403 = CF block
+            status, body, headers = type(self).block
         else:
             status, body = 200, b'[{"id": 1}]'
         self.send_response(status)
+        for k, v in headers.items():
+            self.send_header(k, v)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -51,6 +63,7 @@ def booru(monkeypatch):
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Booru)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     _Booru.blocked, _Booru.hits, _Booru.on_hit, _Booru.unavailable = True, 0, None, 0
+    _Booru.block = (403, _CHALLENGE, {"cf-mitigated": "challenge"})
     base = f"http://127.0.0.1:{srv.server_port}"
 
     from ui import settings_view as settings
@@ -287,3 +300,46 @@ def test_get_sync_httpx_fallback_keeps_start_generation(booru, monkeypatch):
     assert r.is_blocked and r.engine_used == "httpx"
     assert _Booru.hits == 3                             # urllib x2 (503), httpx x1 (403)
     assert not sess._circuit_is_open(booru)
+
+
+# ── Only a real challenge clears the stored clearance ───────────────────
+# An ordinary site 403 (tiny, no Cloudflare evidence) still stops the
+# engine chain and pauses the host, but must not wipe a valid cf_clearance.
+
+def test_plain_tiny_403_keeps_stored_clearance(booru):
+    _Booru.block = (403, b"forbidden", {})
+    store.save_bypass(BOORU, {"cf_clearance": "VALID"}, "UA/ok")
+    _blocked_search()                                   # still reported as blocked
+    assert _Booru.hits == 1
+    assert store.get_cookies(BOORU) == {"cf_clearance": "VALID"}
+    assert store.get_user_agent(BOORU) == "UA/ok"
+    assert sess._circuit_is_open(booru)                 # host still paused
+
+
+def test_challenge_header_alone_clears_stored_clearance(booru):
+    # cf-mitigated: challenge with a body that has no markers (urllib path:
+    # the 403 arrives as HTTPError, whose headers must be kept).
+    _Booru.block = (403, b"<html>" + b"x" * 300 + b"</html>", {"cf-mitigated": "challenge"})
+    store.save_bypass(BOORU, {"cf_clearance": "STALE"}, "UA/old")
+    _blocked_search()
+    assert store.get_cookies(BOORU) == {}
+
+
+def test_challenge_body_alone_clears_stored_clearance(booru):
+    _Booru.block = (403, _CHALLENGE, {})
+    store.save_bypass(BOORU, {"cf_clearance": "STALE"}, "UA/old")
+    _blocked_search()
+    assert store.get_cookies(BOORU) == {}
+
+
+@pytest.mark.parametrize("method", ["curl_cffi", "cloudscraper", "httpx", "requests", "urllib"])
+def test_every_engine_keeps_the_challenge_header(booru, method):
+    from cloudflare_bypasser.fingerprint import get_available_engines
+    if method not in get_available_engines():
+        pytest.skip(f"{method} not installed")
+    _Booru.block = (403, b"<html>" + b"x" * 300 + b"</html>", {"cf-mitigated": "challenge"})
+    s = sess.BypassSession(site_url=booru, method=method)
+    r = asyncio.run(s.get(booru + "/x"))
+    assert r.status_code == 403 and r.engine_used.startswith(method)
+    assert r.headers.get("cf-mitigated") == "challenge"
+    assert r.is_cf_challenge and r.is_blocked

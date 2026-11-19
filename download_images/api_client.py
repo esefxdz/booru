@@ -86,7 +86,11 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
             # nothing about the stored clearance. Keep the cookies then.
             # Nor if the user solved the challenge while this request was
             # in flight: it went out without the new clearance.
-            if getattr(r, "engine_used", None) != "circuit-open":
+            # Nor on a 403 that merely might be a block (tiny body, no
+            # challenge markers): an ordinary site 403 says nothing about
+            # the clearance either. Only a real challenge page clears it.
+            if (getattr(r, "engine_used", None) != "circuit-open"
+                    and getattr(r, "is_cf_challenge", False)):
                 from cloudflare_bypasser import invalidate_session
                 invalidate_session(booru, unless_changed_since=stored_before)
             raise CloudflareBlockError(
