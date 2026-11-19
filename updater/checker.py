@@ -98,6 +98,13 @@ class Updater(QObject):
         if not remote or not _is_newer(remote, __version__):
             return
         url = data.get("html_url", "")
+        # The button hands this to webbrowser.open(): only ever an https page
+        # on github.com, never another scheme / protocol handler.
+        from urllib.parse import urlparse
+        parsed = urlparse(url if isinstance(url, str) else "")
+        if parsed.scheme != "https" or parsed.hostname != "github.com":
+            log.warning("Ignoring update with unexpected release URL %r", url)
+            return
         notes = data.get("body", "")
         log.info("Update available: %s → %s", __version__, remote)
         self.update_available.emit(remote, url, notes)

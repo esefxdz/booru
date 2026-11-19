@@ -72,7 +72,16 @@ def _fetch_bytes(url, booru_name=None):
     if "User-Agent" not in headers:
         headers["User-Agent"] = settings.manager.get_user_agent()
 
-    res = httpx.get(url, headers=headers, cookies=cookies, follow_redirects=True, timeout=30)
+    # Same rules as the main app: http(s) only, booru cookies only to the
+    # booru's own site (as a header, which httpx drops on redirect), proxy on.
+    from validation import require_http_url, same_site
+    import boorus
+    url = require_http_url(url)
+    site_url = boorus.REGISTRY.get(booru_name or "", {}).get("url", "")
+    if cookies and same_site(url, site_url):
+        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
+    proxy = (getattr(settings.manager, "proxy_url", "") or "").strip() or None
+    res = httpx.get(url, headers=headers, follow_redirects=True, timeout=30, proxy=proxy)
     if res.status_code != 200:
         raise RuntimeError(f"HTTP {res.status_code} from {url}")
     return res.content

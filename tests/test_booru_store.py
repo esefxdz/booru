@@ -86,10 +86,21 @@ def test_tampered_store_entry_is_skipped(store):
     assert "evil" not in boorus.REGISTRY and "ok" in boorus.REGISTRY
 
 
-def test_corrupt_store_does_not_crash(store):
+def test_corrupt_store_is_preserved_not_overwritten(store):
     (store / "custom_boorus.json").write_text("{not json")
     boorus.load()
     assert "safebooru" in boorus.REGISTRY
+    boorus.add_booru("newone", GOOD)          # a later save must not destroy it
+    aside = list(store.glob("custom_boorus.json.unreadable-*"))
+    assert len(aside) == 1 and aside[0].read_text() == "{not json"
+
+
+def test_legacy_files_kept_if_store_write_fails(store, tmp_path, monkeypatch):
+    pkg = tmp_path / "pkg"
+    (pkg / "keepme.py").write_text('NAME = "keepme"' + chr(10) + 'URL = "https://k.example"' + chr(10))
+    monkeypatch.setattr(boorus, "_write_store", lambda s: False)
+    boorus.load()
+    assert (pkg / "keepme.py").exists(), "legacy file deleted although nothing was saved"
 
 
 def test_legacy_py_migrated_without_executing(store, tmp_path):

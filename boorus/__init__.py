@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -139,7 +140,13 @@ def _read_store() -> dict:
     try:
         raw = json.loads(STORE_FILE.read_text(encoding="utf-8"))
     except Exception:
-        log.exception("[boorus] %s is unreadable; ignoring it", STORE_FILE)
+        # Move it aside so the next save cannot overwrite the user's boorus.
+        aside = STORE_FILE.with_name(f"{STORE_FILE.name}.unreadable-{int(time.time())}")
+        try:
+            STORE_FILE.replace(aside)
+            log.error("[boorus] %s is unreadable; moved it to %s", STORE_FILE.name, aside.name)
+        except OSError:
+            log.exception("[boorus] %s is unreadable and could not be moved aside", STORE_FILE)
         return empty
     if not isinstance(raw, dict):
         return empty
@@ -191,12 +198,13 @@ def _parse_legacy_py(path: Path) -> tuple[str, dict] | None:
     return (name, data) if isinstance(name, str) else None
 
 
-def _migrate_legacy_py_files(store: dict) -> bool:
-    """Move user-generated ``boorus/*.py`` files into the JSON store.
+def _migrate_legacy_py_files(store: dict) -> list[Path]:
+    """Copy user-generated ``boorus/*.py`` entries into *store* (in memory).
 
-    Returns True if the store changed.
+    Returns the legacy files that were handled. The caller deletes them only
+    after the store has been written successfully.
     """
-    changed = False
+    handled: list[Path] = []
     for f in sorted(_PACKAGE_DIR.glob("*.py")):
         if f.name.startswith("_"):
             continue
@@ -212,20 +220,22 @@ def _migrate_legacy_py_files(store: dict) -> bool:
             continue
         if BUILTIN_BOORUS.get(name) != clean and store["boorus"].get(name) is None:
             store["boorus"][name] = clean
-            changed = True
-        try:
-            f.unlink()
-            log.info("[boorus] Migrated legacy booru file %s to %s", f.name, STORE_FILE.name)
-        except OSError:
-            log.warning("[boorus] Could not delete migrated legacy file %s", f)
-    return changed
+        handled.append(f)
+    return handled
 
 
 def load() -> None:
     """(Re)build REGISTRY from built-ins + the JSON store."""
     store = _read_store()
-    if not getattr(sys, "frozen", False) and _migrate_legacy_py_files(store):
-        _write_store(store)
+    if not getattr(sys, "frozen", False):
+        legacy = _migrate_legacy_py_files(store)
+        if legacy and _write_store(store):
+            for f in legacy:
+                try:
+                    f.unlink()
+                    log.info("[boorus] Migrated legacy booru file %s to %s", f.name, STORE_FILE.name)
+                except OSError:
+                    log.warning("[boorus] Could not delete migrated legacy file %s", f)
 
     REGISTRY.clear()
     removed = set(store["removed"])

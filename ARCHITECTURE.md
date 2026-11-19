@@ -83,7 +83,8 @@ controls every field of its API responses.
   on the booru's registrable domain (`validation.same_site`). This applies in
   BypassSession, the thumbnail client, downloads, and on urllib redirects.
 - **TLS** is always verified; there is no insecure retry.
-- **Proxy:** when set, API requests, thumbnails and downloads all use it.
+- **Proxy:** when set, API searches, thumbnails, viewer media and downloads
+  use it. Some helpers still connect directly (see Known gaps).
 
 ## Key Architectural Decisions
 
@@ -195,3 +196,11 @@ Engines whose library is missing are skipped; urllib always works.
 - Responses and downloads have no size cap.
 - Smart folders send tag names to Danbooru's API for categorisation, even
   when browsing another site.
+- These connect directly and ignore the proxy setting: tag categorizer
+  (Danbooru), tag autocomplete, add-booru auto-detect, favicon fetcher
+  (sends each booru's domain to icons.duckduckgo.com), update checker
+  (GitHub), session login, and the embedded WebEngine browser.
+- `validation.same_site` uses a small heuristic, not the Public Suffix List:
+  two sites on a shared host such as `*.github.io` count as the same site.
+- `gui.py` falls back to `"danbooru"` (no longer a built-in) when the last
+  booru is removed; settings load repairs this on next start.
