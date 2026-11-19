@@ -511,8 +511,15 @@ def _try_urllib_sync(
             query = urlencode(params)
             url = f"{url}?{query}" if "?" not in url else f"{url}&{query}"
 
-        cookie_jar = urllib.request.HTTPCookieProcessor()
-        handlers: list = [urllib.request.HTTPCookieProcessor(cookie_jar)]
+        import http.cookiejar
+        from validation import SameSiteRedirectHandler
+        # Was HTTPCookieProcessor(HTTPCookieProcessor()), which raised on every
+        # request, so this "always available" fallback never worked.
+        cookie_jar = http.cookiejar.CookieJar()
+        handlers: list = [
+            urllib.request.HTTPCookieProcessor(cookie_jar),
+            SameSiteRedirectHandler(),   # don't forward Cookie to other sites
+        ]
 
         if proxy_url:
             proxy_handler = urllib.request.ProxyHandler({

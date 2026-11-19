@@ -124,3 +124,15 @@ def test_thumb_client_scopes_cookies(servers, monkeypatch):
     assert r1 is not None and r2 is not None
     assert _cookie_seen_by("127.0.0.1") == ["cf_clearance=secret"]
     assert _cookie_seen_by("127.0.0.2") == [None]
+
+
+def test_bypass_urllib_engine_works_and_scopes_redirects(servers):
+    """The bypass urllib fallback used to raise on every request."""
+    from cloudflare_bypasser.engines import _try_urllib_sync
+    a, b = servers
+    _Recorder.redirect_to = f"http://127.0.0.2:{b}/final.png"
+    r = _try_urllib_sync(f"http://127.0.0.1:{a}/redirect", None, {"User-Agent": "t"},
+                         {"cf_clearance": "secret"}, "", 10)
+    assert r is not None and r.status_code == 200
+    assert _cookie_seen_by("127.0.0.1") == ["cf_clearance=secret"]
+    assert _cookie_seen_by("127.0.0.2") == [None]

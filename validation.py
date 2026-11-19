@@ -358,3 +358,28 @@ def same_site(url: str, site_url: str) -> bool:
     if not a or not b:
         return False
     return site_key(a) == site_key(b)
+
+
+import urllib.request as _urllib_request
+
+
+class SameSiteRedirectHandler(_urllib_request.HTTPRedirectHandler):
+    """urllib copies every header (Cookie, Authorization) to the redirect
+    target, whatever its host. Drop them when the redirect leaves the site,
+    and refuse redirects to non-http(s) schemes."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        try:
+            require_http_url(newurl)
+        except ValidationError:
+            return None
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and not same_site(newurl, req.full_url):
+            for h in ("Cookie", "Authorization"):
+                new.remove_header(h)
+                new.unredirected_hdrs.pop(h, None)
+            # Request stores header names .capitalize()d
+            for k in list(new.headers):
+                if k.lower() in ("cookie", "authorization"):
+                    del new.headers[k]
+        return new
