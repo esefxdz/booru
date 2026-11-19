@@ -148,6 +148,18 @@ class SettingsManager:
             logging.error(f"[settings] Failed to load sensitive data: {e}")
 
         self.validate()
+        self._reconcile_active_booru()
+
+    def _reconcile_active_booru(self):
+        """If the saved active booru no longer exists (e.g. a deleted custom
+        booru), switch to one that does instead of searching a URL-less entry."""
+        import boorus
+        if self.active_booru in boorus.REGISTRY:
+            return
+        fallback = next((b for b in self.booru_order if b in boorus.REGISTRY), None)             or next(iter(boorus.REGISTRY), "safebooru")
+        logging.warning("[settings] Active booru %r no longer exists; using %r",
+                        self.active_booru, fallback)
+        self.active_booru = fallback
 
     def validate(self):
         """Enforce sane bounds on numeric settings."""

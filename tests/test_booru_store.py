@@ -112,3 +112,19 @@ def test_malicious_legacy_py_rejected(store, tmp_path):
     (pkg / "evil.py").write_text('NAME = "evil"\nURL = "https://x\\";import os;\\""\n')
     boorus.load()
     assert "evil" not in boorus.REGISTRY
+
+
+def test_settings_fall_back_when_active_booru_missing(store, tmp_path):
+    import json
+    import sys
+    import ui.settings_view  # noqa: F401
+    mgr_mod = sys.modules["ui.settings_view.manager"]
+    mgr_mod._SETTINGS_FILE.write_text(json.dumps(
+        {"active_booru": "gelbooru_3", "booru_order": ["gelbooru_3", "safebooru"]}))
+    m = mgr_mod.manager
+    old = (m.active_booru, list(m.booru_order))
+    try:
+        m.load()
+        assert m.active_booru == "safebooru"
+    finally:
+        m.active_booru, m.booru_order = old
