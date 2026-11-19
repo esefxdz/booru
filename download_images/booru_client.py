@@ -22,6 +22,9 @@ from adapters import get_adapter
 
 from download_images.network import NetworkManager
 
+import logging
+log = logging.getLogger("booru_client")
+
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  BooruDownloader — thin composition layer                           ║
@@ -120,26 +123,30 @@ class BooruDownloader(QObject):
     #  Post field accessors (delegate to adapter)
     # ──────────────────────────────────────────────────────────────
 
+    def _safe_url(self, post: dict, url: str) -> str:
+        """Resolve a server-supplied URL against the post's booru and require
+        http(s). Returns "" for anything else (file:, data:, junk)."""
+        if not url:
+            return ""
+        from validation import ValidationError, require_http_url
+        base = boorus.REGISTRY.get(post.get("_booru") or settings.manager.active_booru, {}).get("url")
+        try:
+            return require_http_url(url, base)
+        except ValidationError as e:
+            log.warning("Ignoring unsafe URL for post %r: %s", post.get("id"), e)
+            return ""
+
     def get_preview_url(self, post: dict) -> str:
         """Resolve the thumbnail / preview URL for a post."""
-        url = self._get_adapter_for_post(post).get_preview_url(post)
-        if url and url.startswith("//"):
-            url = "https:" + url
-        return url or ""
+        return self._safe_url(post, self._get_adapter_for_post(post).get_preview_url(post))
 
     def get_sample_url(self, post: dict) -> str:
         """Resolve the sample (medium-res) URL for a post."""
-        url = self._get_adapter_for_post(post).get_sample_url(post)
-        if url and url.startswith("//"):
-            url = "https:" + url
-        return url or ""
+        return self._safe_url(post, self._get_adapter_for_post(post).get_sample_url(post))
 
     def get_file_url(self, post: dict) -> str:
         """Resolve the full-resolution file URL for a post."""
-        url = self._get_adapter_for_post(post).get_file_url(post)
-        if url and url.startswith("//"):
-            url = "https:" + url
-        return url or ""
+        return self._safe_url(post, self._get_adapter_for_post(post).get_file_url(post))
 
     def get_tag_list(self, post: dict) -> list:
         """Return the flat tag list for a post."""

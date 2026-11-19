@@ -311,7 +311,8 @@ class MediaViewer(QWidget):
                 from ui import settings_view as settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
-                path = tmp / f"view_{self.post.get('id')}.gif"
+                from validation import safe_media_path
+                path = safe_media_path(tmp, self.post.get('id'), "x.gif", prefix="view_")
                 path.write_bytes(data)
                 self._current_temp_path = str(path)
                 self.gif_ready.emit(str(path))
@@ -351,7 +352,6 @@ class MediaViewer(QWidget):
     def _load_video(self):
         site_data = self._get_site_data()
         url = _resolve_url(self.file_url, site_data)
-        ext = url.rsplit("?", 1)[0].split(".")[-1] or "mp4"
         cancel = self._cancel_event
 
         # ── Clean up previous temp file to prevent unbounded disk growth ──
@@ -365,7 +365,8 @@ class MediaViewer(QWidget):
                 from ui import settings_view as settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
-                path = tmp / f"view_{self.post.get('id')}.{ext}"
+                from validation import safe_media_path
+                path = safe_media_path(tmp, self.post.get('id'), url, prefix="view_", default_ext=".mp4")
                 path.write_bytes(data)
                 self._current_temp_path = str(path)
                 self.video_ready.emit(str(path))

@@ -64,6 +64,19 @@ from cloudflare_bypasser.fingerprint import (  # noqa: E402, F401
 from cloudflare_bypasser.engines import _Response  # noqa: E402, F401
 
 
+def _refuse_non_http(url) -> Optional[BypassResponse]:
+    """Return a status-0 response for anything that is not an absolute
+    http(s) URL. Server-supplied URLs reach this layer, and urllib/curl
+    would otherwise open file:// and similar schemes."""
+    from validation import ValidationError, require_http_url
+    try:
+        require_http_url(url)
+        return None
+    except ValidationError as e:
+        log.warning("Refusing request: %s", e)
+        return BypassResponse(b"", "", 0, str(url), None, "refused")
+
+
 class BypassSession:
     """
     Multi-engine HTTP session with automatic failover.
@@ -263,6 +276,10 @@ class BypassSession:
         """
         self._check_loop()
 
+        refused = _refuse_non_http(url)
+        if refused is not None:
+            return refused
+
         if not bypass_rate_limit and getattr(settings.manager, "use_rate_limit", False):
             if self._rate_limit_lock is None:
                 self._rate_limit_lock = asyncio.Lock()
@@ -344,6 +361,10 @@ class BypassSession:
         back to the full async engine chain only when httpx HTTP/2 is needed
         or when locked to an async-only engine.
         """
+        refused = _refuse_non_http(url)
+        if refused is not None:
+            return refused
+
         merged_headers = self._build_headers(headers)
 
         engines = self._get_engine_order()

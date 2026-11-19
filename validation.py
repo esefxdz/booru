@@ -229,3 +229,86 @@ def sanitize_tag_list(tags: str) -> str:
         tags = tags[:1000]
 
     return tags
+
+# ---------------------------------------------------------------------------
+# Server-supplied data: URLs, post ids, file extensions
+# ---------------------------------------------------------------------------
+# Everything below handles values that come from a booru's API response.
+# A malicious or compromised server controls them, so they are forced into a
+# known-safe shape before being used in a request or a file path.
+
+import hashlib as _hashlib
+import os as _os
+from pathlib import Path as _Path
+from urllib.parse import urljoin as _urljoin
+
+#: Extensions we are willing to write to disk. Anything else becomes ".bin"
+#: so a server cannot make us write e.g. ``.bat``, ``.exe`` or ``.lnk``.
+ALLOWED_MEDIA_EXTS = frozenset({
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp", ".jxl",
+    ".mp4", ".webm", ".mkv", ".mov", ".m4v",
+    ".zip",  # Danbooru ugoira
+})
+
+_POST_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
+
+
+def require_http_url(url: str, base: Optional[str] = None) -> str:
+    """Return *url* as an absolute http(s) URL, or raise ValidationError.
+
+    Protocol-relative (``//host/x``) and relative (``/x``, ``x``) URLs are
+    resolved against *base* when given. Rejects ``file:``, ``data:`` and any
+    other scheme, which urllib, mpv and VLC would otherwise happily open.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise ValidationError("URL is empty")
+    url = url.strip()
+    if any(c in url for c in "\r\n\x00"):
+        raise ValidationError("URL contains control characters")
+    if url.startswith("//"):
+        url = "https:" + url
+    elif base and not urlparse(url).scheme:
+        url = _urljoin(base.rstrip("/") + "/", url)
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValidationError(f"Refusing non-http(s) URL: {url[:80]!r}")
+    return url
+
+
+def safe_post_id(post_id) -> str:
+    """Return a filename-safe form of a server-supplied post id.
+
+    Ordinary ids (digits, or short alphanumeric hashes) are kept as-is.
+    Anything else (path separators, "..", empty) is replaced with a stable
+    hash so it can never contain a path separator.
+    """
+    s = str(post_id if post_id is not None else "").strip()
+    if _POST_ID_RE.match(s):
+        return s
+    return "id_" + _hashlib.sha256(s.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def media_extension(url: str, default: str = ".jpg") -> str:
+    """Return the lowercased, allow-listed extension of *url*'s path.
+
+    No extension -> *default*. An extension not in ALLOWED_MEDIA_EXTS -> ".bin".
+    """
+    path = urlparse(url or "").path
+    ext = _os.path.splitext(path)[1].lower()
+    if not ext:
+        return default
+    return ext if ext in ALLOWED_MEDIA_EXTS else ".bin"
+
+
+def safe_media_path(folder, post_id, url: str, prefix: str = "", default_ext: str = ".jpg") -> _Path:
+    """Build ``folder / f"{prefix}{id}{ext}"`` and prove it stays in *folder*.
+
+    Raises ValidationError if the result would escape *folder* (it cannot with
+    the sanitising above, but this is the last line of defence).
+    """
+    folder = _Path(folder)
+    name = f"{prefix}{safe_post_id(post_id)}{media_extension(url, default_ext)}"
+    dest = folder / name
+    if dest.resolve().parent != folder.resolve():
+        raise ValidationError(f"Refusing to write outside {folder}: {name!r}")
+    return dest

@@ -11,7 +11,6 @@
 
 import logging
 import sys
-import os
 import json
 import threading
 
@@ -231,8 +230,8 @@ class DisplayerWindow(QMainWindow):
                 # Use the global settings manager instead of a hardcoded "files" folder
                 dl_dir = settings.manager.get_download_dir()
                 dl_dir.mkdir(parents=True, exist_ok=True)
-                ext = os.path.splitext(self.file_url.split("?")[0])[1] or ".jpg"
-                path = dl_dir / f"{self.post_id}{ext}"
+                from validation import safe_media_path
+                path = safe_media_path(dl_dir, self.post_id, self.file_url)
                 data = _fetch_bytes(self.file_url)
                 path.write_bytes(data)
                 self.dl_btn.setText("Downloaded")
@@ -308,7 +307,8 @@ class DisplayerWindow(QMainWindow):
                 from ui import settings_view as settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
-                path = tmp / f"view_{self.post_id}.gif"
+                from validation import safe_media_path
+                path = safe_media_path(tmp, self.post_id, "x.gif", prefix="view_")
                 path.write_bytes(data)
                 self.gif_ready.emit(str(path))
             except Exception as e:

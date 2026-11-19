@@ -13,7 +13,6 @@ Public API:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Callable
 
@@ -67,9 +66,16 @@ def download_post(
         log.warning("No file URL for post %s", post.get("id"))
         return False
 
-    ext = os.path.splitext(url.split("?")[0])[1] or ".jpg"
-    post_id = str(post.get("id", "unknown"))
-    dest = folder / f"{post_id}{ext}"
+    from validation import ValidationError, require_http_url, safe_media_path
+
+    post_id = post.get("id", "unknown")
+    try:
+        url = require_http_url(url)
+        # id and extension come from the server: never trust them in a path.
+        dest = safe_media_path(folder, post_id, url)
+    except ValidationError as e:
+        log.warning("Refusing download for post %r: %s", post_id, e)
+        return False
 
     # Skip if already downloaded
     if dest.exists() and dest.stat().st_size > 0:
@@ -89,16 +95,20 @@ def download_post(
     log.info("Downloading post %s via %s -> %s", post_id, engine, dest.name)
 
     fn = ENGINE_FNS[engine]
+    # Write to a .part file and rename on success, so an interrupted download
+    # never leaves a truncated file that the "already exists" check would keep.
+    part = dest.with_name(dest.name + ".part")
     try:
-        ok = fn(url, dest, headers, on_progress)
-        if ok:
+        ok = fn(url, part, headers, on_progress)
+        if ok and part.exists() and part.stat().st_size > 0:
+            part.replace(dest)
             log.info("Downloaded: %s (%s bytes)", dest.name, dest.stat().st_size)
-        else:
-            dest.unlink(missing_ok=True)
-            log.warning("Download returned False for %s", url)
-        return ok
+            return True
+        part.unlink(missing_ok=True)
+        log.warning("Download failed or empty for %s", url)
+        return False
     except Exception as e:
-        dest.unlink(missing_ok=True)
+        part.unlink(missing_ok=True)
         log.error("Download error (%s) for post %s: %s", engine, post_id, e)
         return False
 

@@ -94,7 +94,9 @@ def get_download_folder(post: dict, downloader) -> Path:
     if not folder_name and tags:
         tag_join = "_".join(tags[:5])
         if len(tag_join) > 60:
-            tag_join = tag_join[:57] + "..."
+            # No "..." suffix: validate_directory_name rejects ".." (traversal
+            # guard), which silently sent every truncated name to "unsorted".
+            tag_join = tag_join[:60].rstrip("._ ")
         folder_name = tag_join
 
     # ── Sanitize and create directory ─────────────────────────────
