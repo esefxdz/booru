@@ -1,53 +1,135 @@
 """
-credentials.py — Simple credential storage.
+credentials.py — Local storage for API keys, tokens and bypass/session cookies.
 
-Stores API credentials in plain text for simplicity and reliability.
-Not encrypted, but acceptable risk for local desktop app.
+Format
+------
+``credentials.bin`` (next to settings.json) holds one JSON object.
+
+* On Windows it is encrypted with DPAPI (``CryptProtectData``), the same
+  mechanism browsers use: only the same Windows user account can decrypt
+  it, and another program running as you still can. The file starts with
+  ``DPAPI1:``.
+* Files written by older versions are XOR-obfuscated with a key derived
+  from the MAC address + username (reversible by anyone who reads this
+  code) or plain JSON. They are read once and rewritten as DPAPI.
+
+Because DPAPI is tied to the Windows account, copying the app folder to
+another PC/account means saved logins have to be entered again. The old
+XOR scheme had the same limitation (its key included the MAC address).
+
+If the file cannot be decrypted it is renamed to
+``credentials.bin.unreadable-<timestamp>`` and an error is logged, instead
+of being silently overwritten with an empty store.
 """
+import base64
+import ctypes
+import hashlib
+import json
 import logging
 import os
-import json
+import sys
+import time
 import uuid
-import hashlib
-import base64
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
+
+_DPAPI_PREFIX = "DPAPI1:"
+_ENTROPY = b"BooruBrowser credentials v1"
+
+
+class CredentialReadError(Exception):
+    """credentials.bin exists but could not be decrypted/parsed."""
+
+
+# ---------------------------------------------------------------------------
+# DPAPI (Windows) via ctypes — no pywin32 dependency
+# ---------------------------------------------------------------------------
+
+class _DataBlob(ctypes.Structure):
+    _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+
+def _blob(data: bytes) -> "_DataBlob":
+    buf = ctypes.create_string_buffer(data, len(data))
+    blob = _DataBlob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    blob._buf = buf  # keep the buffer alive as long as the blob
+    return blob
+
+
+def _dpapi(data: bytes, protect: bool) -> bytes:
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    src, entropy, out = _blob(data), _blob(_ENTROPY), _DataBlob()
+    CRYPTPROTECT_UI_FORBIDDEN = 0x1
+    fn = crypt32.CryptProtectData if protect else crypt32.CryptUnprotectData
+    ok = fn(ctypes.byref(src), None, ctypes.byref(entropy), None, None,
+            CRYPTPROTECT_UI_FORBIDDEN, ctypes.byref(out))
+    if not ok:
+        raise OSError(f"DPAPI {'protect' if protect else 'unprotect'} failed (error {ctypes.GetLastError()})")
+    try:
+        return ctypes.string_at(out.pbData, out.cbData)
+    finally:
+        kernel32.LocalFree(out.pbData)
+
+
+def _have_dpapi() -> bool:
+    return sys.platform == "win32"
+
+
+# ---------------------------------------------------------------------------
+# Legacy XOR obfuscation (read-only migration; also the non-Windows fallback)
+# ---------------------------------------------------------------------------
 
 def _get_machine_key() -> bytes:
     mac = str(uuid.getnode())
     user = os.environ.get("USERNAME", os.environ.get("USER", "unknown"))
-    salt = f"{mac}_{user}".encode()
-    return hashlib.sha256(salt).digest()
+    return hashlib.sha256(f"{mac}_{user}".encode()).digest()
+
+
+def _xor(data: bytes) -> bytes:
+    key = _get_machine_key()
+    return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+
+
+# ---------------------------------------------------------------------------
+# Encode / decode
+# ---------------------------------------------------------------------------
 
 def _encrypt(data: str) -> str:
-    key = _get_machine_key()
-    encrypted = bytearray()
-    for i, b in enumerate(data.encode('utf-8')):
-        encrypted.append(b ^ key[i % len(key)])
-    return base64.b64encode(encrypted).decode('utf-8')
+    raw = data.encode("utf-8")
+    if _have_dpapi():
+        return _DPAPI_PREFIX + base64.b64encode(_dpapi(raw, protect=True)).decode("ascii")
+    # Non-Windows: obfuscation only. The app targets Windows.
+    return base64.b64encode(_xor(raw)).decode("ascii")
+
 
 def _decrypt(data: str) -> str:
-    try:
-        if not data: return "{}"
-        # Try to parse as JSON directly first (in case it's legacy plaintext)
-        try:
-            json.loads(data)
-            return data
-        except json.JSONDecodeError:
-            pass
-            
-        key = _get_machine_key()
-        encrypted_bytes = base64.b64decode(data.encode('utf-8'))
-        decrypted = bytearray()
-        for i, b in enumerate(encrypted_bytes):
-            decrypted.append(b ^ key[i % len(key)])
-        return decrypted.decode('utf-8')
-    except Exception:
+    """Return the JSON text stored in *data*. Raises CredentialReadError."""
+    data = (data or "").strip()
+    if not data:
         return "{}"
+    try:
+        if data.startswith(_DPAPI_PREFIX):
+            if not _have_dpapi():
+                raise CredentialReadError("DPAPI-encrypted file cannot be read on this OS")
+            text = _dpapi(base64.b64decode(data[len(_DPAPI_PREFIX):]), protect=False).decode("utf-8")
+        else:
+            try:                     # legacy plaintext JSON
+                json.loads(data)
+                return data
+            except json.JSONDecodeError:
+                pass
+            text = _xor(base64.b64decode(data)).decode("utf-8")   # legacy XOR
+        json.loads(text)
+        return text
+    except CredentialReadError:
+        raise
+    except Exception as e:
+        raise CredentialReadError(str(e)) from e
 
 
 class CredentialManager:
-    """Simple credential storage using encrypted local JSON file."""
+    """Credential storage in a DPAPI-encrypted local JSON file."""
 
     @staticmethod
     def _get_credentials_file() -> Path:
@@ -74,51 +156,74 @@ class CredentialManager:
             cred_file.write_text(_encrypt("{}"))
 
     def _load_credentials(self) -> Dict[str, Any]:
-        """Load credentials from file, migrating from legacy %APPDATA% location if needed."""
+        """Load credentials, migrating legacy locations/formats if needed.
+
+        Never returns {} for a file that exists but is unreadable: that file
+        is moved aside first so the next save cannot destroy it.
+        """
+        cred_file = self._get_credentials_file()
+
+        # One-time migration from the legacy %APPDATA% location / JSON file.
+        if not cred_file.exists():
+            legacy_bin = self._get_legacy_credentials_file()
+            legacy_json = cred_file.with_name("credentials.json")
+            if legacy_bin.exists():
+                try:
+                    cred_file.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copy2(legacy_bin, cred_file)
+                    legacy_bin.unlink(missing_ok=True)
+                    logging.info("[credentials] Migrated credentials.bin from %APPDATA%")
+                except Exception as me:
+                    logging.warning("[credentials] Could not migrate legacy credentials.bin: %s", me)
+            elif legacy_json.exists():
+                try:
+                    data = json.loads(legacy_json.read_text(encoding="utf-8"))
+                    self._save_credentials(data)
+                    legacy_json.unlink()
+                    return data
+                except Exception as e:
+                    logging.warning("[credentials] Could not migrate credentials.json: %s", e)
+
+        if not cred_file.exists():
+            return {}
+
+        raw = cred_file.read_text(encoding="utf-8")
         try:
-            cred_file = self._get_credentials_file()
-
-            # One-time migration: if the portable file doesn't exist yet but the
-            # old %APPDATA% file does, copy it over so the user doesn't lose data.
-            if not cred_file.exists():
-                legacy_bin = self._get_legacy_credentials_file()
-                legacy_json = cred_file.with_name("credentials.json")
-                if legacy_bin.exists():
-                    try:
-                        cred_file.parent.mkdir(parents=True, exist_ok=True)
-                        import shutil
-                        shutil.copy2(legacy_bin, cred_file)
-                        legacy_bin.unlink(missing_ok=True)
-                        logging.info("[credentials] Migrated credentials.bin from %APPDATA%")
-                    except Exception as me:
-                        logging.warning("[credentials] Could not migrate legacy credentials.bin: %s", me)
-                elif legacy_json.exists():
-                    try:
-                        data = json.loads(legacy_json.read_text())
-                        self._save_credentials(data)
-                        legacy_json.unlink()
-                        return data
-                    except Exception:
-                        pass
-
-            if cred_file.exists():
-                return json.loads(_decrypt(cred_file.read_text()))
-            return {}
-        except Exception as e:
-            logging.error(f"[credentials] Failed to load credentials: {e}")
+            data = json.loads(_decrypt(raw))
+            if not isinstance(data, dict):
+                raise CredentialReadError("credentials file is not a JSON object")
+        except CredentialReadError as e:
+            aside = cred_file.with_name(f"{cred_file.name}.unreadable-{int(time.time())}")
+            try:
+                cred_file.replace(aside)
+                logging.error(
+                    "[credentials] Could not decrypt %s (%s). Moved it to %s; "
+                    "saved logins must be entered again.", cred_file.name, e, aside.name)
+            except OSError:
+                logging.exception("[credentials] Could not decrypt or move aside %s", cred_file)
+                raise
             return {}
 
+        # Upgrade legacy XOR/plaintext files to DPAPI in place.
+        if _have_dpapi() and not raw.lstrip().startswith(_DPAPI_PREFIX):
+            try:
+                self._save_credentials(data)
+                logging.info("[credentials] Upgraded credentials.bin to DPAPI encryption")
+            except Exception:
+                logging.exception("[credentials] Could not upgrade credentials.bin to DPAPI")
+        return data
 
     def _save_credentials(self, credentials: Dict[str, Any]):
-        """Save credentials to file."""
-        try:
-            cred_file = self._get_credentials_file()
-            cred_file.parent.mkdir(parents=True, exist_ok=True)
-            encrypted = _encrypt(json.dumps(credentials))
-            cred_file.write_text(encrypted)
-        except Exception as e:
-            logging.error(f"[credentials] Failed to save credentials: {e}")
-            raise
+        """Encrypt and atomically write credentials to disk."""
+        cred_file = self._get_credentials_file()
+        cred_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cred_file.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(_encrypt(json.dumps(credentials)))
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(cred_file)
 
     def set_credential(self, booru: str, user_id: str, api_key: str) -> bool:
         """

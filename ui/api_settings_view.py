@@ -287,7 +287,7 @@ class APISettingsView(QWidget):
     # │  _save_api  — reads credential fields (which differ per engine) │
     # │  sanitises them via the validation module, and stores them      │
     # │  in settings. Szurubooru writes to AUTH_TOKENS; all others use  │
-    # │  set_credential which encrypts using the OS keychain.          │
+    # │  set_credential (DPAPI-encrypted credentials.bin).             │
     # └──────────────────────────────────────────────────────────────────┘
     def _save_api(self):
         if self.api_type == "szurubooru":

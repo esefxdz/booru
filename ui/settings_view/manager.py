@@ -4,7 +4,7 @@ settings/manager.py — Unified configuration and settings management.
 SettingsManager singleton + static constants.
 User preferences persisted to settings.json in the app root directory
 so the application is 100 % portable (“unzip and run”).
-Credentials stored securely using system keyring.
+Secrets (API keys, tokens, bypass cookies) live in credentials.bin (DPAPI).
 """
 import logging
 import json
@@ -123,7 +123,7 @@ class SettingsManager:
             else:
                 data.setdefault("thumbnail_res", 720)
 
-        # --- Migration: plaintext credentials → secure keyring storage ---
+        # --- Migration: plaintext credentials → encrypted credentials.bin ---
         if "credentials" in data:
             logging.info("[settings] Migrating plaintext credentials to secure storage...")
             try:
@@ -180,7 +180,7 @@ class SettingsManager:
         self.validate()
         # These keys contain live session cookies, CF bypass tokens, and auth
         # headers.  They must never be written to the plaintext settings.json
-        # file — store them via CredentialManager / keyring instead.
+        # file — they go to credentials.bin via CredentialManager instead.
         _SENSITIVE_KEYS = {"bypass_data", "session_keys", "auth_tokens"}
         
         try:

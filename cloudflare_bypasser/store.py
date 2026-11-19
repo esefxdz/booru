@@ -8,7 +8,7 @@ truth for per-booru Cloudflare clearance cookies and the User-Agent that was
 active when the CAPTCHA was solved.
 
 Keeping all persistence logic here means that if the storage backend ever
-changes (e.g. encrypting bypass_data with the keyring), only this file needs
+changes, only this file needs
 to be updated.
 """
 
