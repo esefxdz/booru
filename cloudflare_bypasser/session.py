@@ -236,6 +236,11 @@ class BypassSession:
         self._rate_limit_lock = None
         self._cookie_jar = {}
         self._cffi_winner: str | None = None
+        # Requests in flight, and whether get_session has replaced us. A
+        # replaced session is closed once its last request finishes.
+        self._state_lock = threading.Lock()
+        self._inflight = 0
+        self._retired = False
 
     # ------------------------------------------------------------------
     # Loop-aware client invalidation
@@ -288,9 +293,64 @@ class BypassSession:
         if self._httpx_client is not None:
             await self._httpx_client.aclose()
             self._httpx_client = None
-        for s in self._cffi_sessions.values():
-            s.close()
+        sessions = list(self._cffi_sessions.values())
         self._cffi_sessions.clear()
+        for s in sessions:
+            r = s.close()                 # curl_cffi AsyncSession.close is async
+            if asyncio.iscoroutine(r):
+                await r
+        self._close_sync_sessions()
+
+    def _close_sync_sessions(self) -> None:
+        sessions = list(self._cffi_sync_sessions.values())
+        self._cffi_sync_sessions.clear()
+        for s in sessions:
+            try:
+                s.close()
+            except Exception:
+                log.debug("closing curl_cffi sync session failed", exc_info=True)
+
+    def retire(self) -> None:
+        """get_session replaced or dropped this session: release its clients.
+
+        Another thread may still be mid-request on it (a thumbnail or media
+        worker, or the event loop), and closing a curl handle under a running
+        transfer is unsafe. So the close happens now only if nothing is in
+        flight, otherwise when the last in-flight request returns.
+        """
+        with self._state_lock:
+            self._retired = True
+            idle = self._inflight == 0
+        if idle:
+            self._release()
+
+    def _enter(self) -> None:
+        with self._state_lock:
+            self._inflight += 1
+
+    def _leave(self) -> None:
+        with self._state_lock:
+            self._inflight -= 1
+            release = self._retired and self._inflight == 0
+        if release:
+            self._release()
+
+    def _release(self) -> None:
+        """Close everything without blocking: sync sessions here, async
+        clients on the loop they belong to."""
+        self._close_sync_sessions()
+        loop = getattr(self, "_loop_ref", None)
+        if loop is None or (self._httpx_client is None and not self._cffi_sessions):
+            return
+        if loop.is_closed():
+            self._httpx_client = None
+            self._cffi_sessions.clear()
+            return
+        try:
+            fut = asyncio.run_coroutine_threadsafe(self.close(), loop)
+            fut.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
+        except RuntimeError:
+            log.debug("could not schedule close of a replaced session", exc_info=True)
 
     # ------------------------------------------------------------------
     # Header construction
@@ -399,7 +459,15 @@ class BypassSession:
     # Async interface
     # ------------------------------------------------------------------
 
-    async def get(
+    async def get(self, *args, **kwargs) -> BypassResponse:
+        """See :meth:`_get`."""
+        self._enter()
+        try:
+            return await self._get(*args, **kwargs)
+        finally:
+            self._leave()
+
+    async def _get(
         self,
         url: str,
         params: dict | None = None,
@@ -527,7 +595,15 @@ class BypassSession:
     # Sync interface
     # ------------------------------------------------------------------
 
-    def get_sync(
+    def get_sync(self, *args, **kwargs) -> BypassResponse:
+        """See :meth:`_get_sync`."""
+        self._enter()
+        try:
+            return self._get_sync(*args, **kwargs)
+        finally:
+            self._leave()
+
+    def _get_sync(
         self,
         url: str,
         params: dict | None = None,

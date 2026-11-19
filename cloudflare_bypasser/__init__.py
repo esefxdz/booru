@@ -87,9 +87,10 @@ def get_session(booru_name: str) -> BypassSession:
         old_fp, session = existing
         if old_fp == fp:
             return session
-        # Fingerprint changed — discard old session (resources are
-        # cleaned up at shutdown via close_all_sessions).
+        # Fingerprint changed: replace the old session and release its
+        # clients (once any request still running on it has finished).
         log.debug("get_session: invalidating cached session for %s (fp changed)", booru_name)
+        _retire(session)
 
     from ui import settings_view as settings
     import boorus
@@ -103,6 +104,20 @@ def get_session(booru_name: str) -> BypassSession:
     _session_cache[booru_name] = (fp, session)
     log.debug("get_session: new cached session for %s", booru_name)
     return session
+
+
+def _retire(session) -> None:
+    try:
+        session.retire()
+    except Exception:
+        log.debug("retiring a replaced session failed", exc_info=True)
+
+
+def _drop(booru_name: str) -> None:
+    """Remove *booru_name*'s cached session and release it."""
+    entry = _session_cache.pop(booru_name, None)
+    if entry is not None:
+        _retire(entry[1])
 
 
 _UNSET = object()
@@ -125,14 +140,14 @@ def invalidate_session(booru_name: str, unless_changed_since=_UNSET) -> None:
     elif not _store.clear_bypass_if_unchanged(booru_name, unless_changed_since):
         log.debug("invalidate_session: %s re-solved since request started; keeping it", booru_name)
         return
-    _session_cache.pop(booru_name, None)
+    _drop(booru_name)
 
 
 def bypass_solved(booru_name: str) -> None:
     """The user (or the auto-solver) just passed the challenge and the new
     cookies are already saved: drop the cached session WITHOUT touching the
     store, and reopen the host so the next request goes out."""
-    _session_cache.pop(booru_name, None)
+    _drop(booru_name)
     import boorus
     _reset_circuit(boorus.REGISTRY.get(booru_name, {}).get("url", ""))
 
