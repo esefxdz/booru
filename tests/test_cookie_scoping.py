@@ -161,9 +161,9 @@ def test_bypass_jar_engines_drop_cookie_on_cross_site_redirect(servers, name, fn
 
 
 @pytest.mark.parametrize("url", [
-    "https://evil.example\@gelbooru.com/x",      # urllib.parse: gelbooru.com, urllib3: evil.example
+    r"https://evil.example\@gelbooru.com/x",      # urllib.parse: gelbooru.com, urllib3: evil.example
     "https://user@gelbooru.com/x",
-    "https://gelbooru.com:443\@evil.example/",
+    r"https://gelbooru.com:443\@evil.example/",
 ])
 def test_ambiguous_urls_refused_and_never_same_site(url):
     assert v.same_site(url, "https://gelbooru.com") is False
@@ -173,4 +173,90 @@ def test_ambiguous_urls_refused_and_never_same_site(url):
 
 def test_session_never_sends_cookies_to_ambiguous_url():
     s = BypassSession(cookies={"cf_clearance": "secret"}, site_url="https://gelbooru.com")
-    assert s._cookies_for("https://evil.example\@gelbooru.com/x") == {}
+    assert s._cookies_for(r"https://evil.example\@gelbooru.com/x") == {}
+
+
+# ── session cookies adopted only from same-site final URLs ─────────────
+def test_remember_cookies_ignores_third_party_final_hop():
+    from cloudflare_bypasser.engines import BypassResponse
+    s = BypassSession(site_url="https://gelbooru.com")
+    hop = BypassResponse(b"", "", 200, "https://tracker.example/x", None, "t", {"planted": "1"})
+    s._remember_cookies("https://gelbooru.com/index.php", hop)
+    assert "planted" not in s._merged_cookies
+    ok = BypassResponse(b"", "", 200, "https://img3.gelbooru.com/x", None, "t", {"fine": "1"})
+    s._remember_cookies("https://gelbooru.com/index.php", ok)
+    assert s._merged_cookies.get("fine") == "1"
+
+
+# ── programmatic login ──────────────────────────────────────────────────
+class _Login(http.server.BaseHTTPRequestHandler):
+    seen: list = []
+    mode = "ok"
+    other = ""
+
+    def _rec(self, body=b""):
+        _Login.seen.append((self.headers.get("Host").split(":")[0], self.command, self.path,
+                            self.headers.get("Cookie"), body))
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self._rec(body)
+        if _Login.mode == "307-offsite":
+            self.send_response(307)
+            self.send_header("Location", _Login.other + "/steal")
+        else:
+            self.send_response(302)
+            self.send_header("Location", "/index.php?page=account")
+            self.send_header("Set-Cookie", "PHPSESSID=good; Path=/")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self):
+        self._rec()
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture
+def login_servers():
+    srvs = []
+    for _ in range(2):
+        srv = http.server.ThreadingHTTPServer(("0.0.0.0", 0), _Login)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        srvs.append(srv)
+    _Login.seen = []
+    _Login.other = f"http://127.0.0.2:{srvs[1].server_port}"
+    yield f"http://127.0.0.1:{srvs[0].server_port}"
+    for s in srvs:
+        s.shutdown()
+
+
+def test_login_never_reposts_password_offsite(login_servers):
+    from adapters.session_login import perform_login
+    _Login.mode = "307-offsite"
+    out = asyncio.run(perform_login(login_servers, "gelbooru", "alice", "hunter2"))
+    assert out == {}
+    assert all(host == "127.0.0.1" for host, *_ in _Login.seen), _Login.seen
+
+
+def test_login_same_site_redirect_and_harvest(login_servers):
+    from adapters.session_login import perform_login
+
+    class _BS:
+        user_agent = "UA"
+        cookies = {"cf_clearance": "secret"}
+
+    _Login.mode = "ok"
+    out = asyncio.run(perform_login(login_servers, "gelbooru", "alice", "hunter2", _BS()))
+    assert out == {"PHPSESSID": "good"}
+    assert _Login.seen[0][3] == "cf_clearance=secret"     # sent on our own POST
+
+
+def test_login_refuses_plain_http_to_public_host():
+    from adapters.session_login import perform_login
+    assert asyncio.run(perform_login("http://example.com", "gelbooru", "a", "b")) == {}

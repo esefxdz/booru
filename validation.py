@@ -367,6 +367,18 @@ def site_key(host: str) -> str:
     return ".".join(labels[-2:])
 
 
+def is_private_host(host: str) -> bool:
+    """True for localhost / loopback / LAN addresses (self-hosted boorus)."""
+    host = (host or "").strip().lower().rstrip(".")
+    if host in ("localhost",) or host.endswith(".local") or host.endswith(".lan"):
+        return True
+    try:
+        ip = _ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local
+
+
 def same_site(url: str, site_url: str) -> bool:
     """True if *url* belongs to the same registrable domain as *site_url*."""
     if _ambiguous_authority(url or "") or _ambiguous_authority(site_url or ""):

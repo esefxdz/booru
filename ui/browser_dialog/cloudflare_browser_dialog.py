@@ -31,6 +31,7 @@ class CloudflareBrowserDialog(InAppBrowser):
     def __init__(self, url, booru_name, parent=None):
         super().__init__(url, f"Cloudflare Bypass — {booru_name}", parent)
         self.booru_name = booru_name
+        self._site_url = url
         self._captured = False
         self._found_cookies = {}
 
@@ -219,6 +220,12 @@ class CloudflareBrowserDialog(InAppBrowser):
 
     def _on_cookie_added(self, cookie):
         if self._captured:
+            return
+        # Ad/analytics frames (or another site's cf_clearance) must not end
+        # up stored under this booru's name.
+        from validation import same_site
+        domain = cookie.domain().lstrip(".")
+        if not domain or not same_site(f"https://{domain}/", self._site_url):
             return
         name = cookie.name().data().decode()
         value = cookie.value().data().decode()

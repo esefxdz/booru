@@ -94,6 +94,10 @@ class CloudflareAutoSolver(QObject):
     def _on_cookie_added(self, cookie) -> None:
         if self._captured:
             return
+        from validation import same_site
+        domain = cookie.domain().lstrip(".")
+        if not domain or not same_site(f"https://{domain}/", self._url):
+            return    # third-party frame: not this booru's cookie
         name = cookie.name().data().decode()
         value = cookie.value().data().decode()
         self._found_cookies[name] = value

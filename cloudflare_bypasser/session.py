@@ -295,9 +295,16 @@ class BypassSession:
         return {}
 
     def _remember_cookies(self, url: str, resp) -> None:
-        """Keep response cookies only when they came from the booru's site."""
+        """Keep response cookies only when they came from the booru's site.
+
+        Both the requested URL and the final URL after redirects must be
+        same-site: resp.cookies reflects the last hop, so a redirect through
+        a third-party host could otherwise plant its cookies here.
+        """
         from validation import same_site
-        if resp.cookies and self.site_url and same_site(url, self.site_url):
+        final_url = str(getattr(resp, "url", "") or url)
+        if (resp.cookies and self.site_url and same_site(url, self.site_url)
+                and same_site(final_url, self.site_url)):
             self._cookie_jar.update(resp.cookies)
 
     # ------------------------------------------------------------------

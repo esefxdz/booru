@@ -121,41 +121,57 @@ async def perform_login(
 
     url = site_url + path
 
+    from validation import is_private_host, same_site
+    from urllib.parse import urljoin, urlparse
+    parsed_site = urlparse(site_url)
+    if parsed_site.scheme != "https" and not is_private_host(parsed_site.hostname or ""):
+        logging.error("[session_login] Refusing to send a password over plain http to %s",
+                      parsed_site.hostname)
+        return {}
+
     # Build headers — merge bypass session cookies/UA if available
     headers = {
         "User-Agent": settings.manager.get_user_agent(),
         "Referer": site_url + "/",
     }
-    client_cookies = None
     if bypass_session is not None:
         headers["User-Agent"] = bypass_session.user_agent
         if bypass_session.cookies:
-            client_cookies = bypass_session.cookies
+            # As a header on our own request only; a client-level jar would
+            # send these domain-less cookies to every redirect target.
+            headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in bypass_session.cookies.items())
+
+    def _on_site(cookie_domain: str) -> bool:
+        d = (cookie_domain or "").lstrip(".")
+        return bool(d) and same_site(f"https://{d}/", site_url)
 
     try:
-        async with httpx.AsyncClient(
-            headers=headers,
-            cookies=client_cookies,
-            follow_redirects=True,
-            timeout=15.0,
-        ) as client:
+        async with httpx.AsyncClient(headers=headers, follow_redirects=False,
+                                     timeout=15.0) as client:
             if cfg.get("method", "POST") == "POST":
                 r = await client.post(url, data=fields, params=params)
             else:
                 r = await client.get(url, params={**params, **fields})
 
-            # Harvest cookies from the response + the client's cookie jar
+            # Follow redirects by hand: same site only, and never re-POST
+            # the credentials (httpx would for 307/308).
+            for _ in range(5):
+                if not r.is_redirect:
+                    break
+                nxt = urljoin(str(r.url), r.headers.get("location", ""))
+                if not same_site(nxt, site_url):
+                    logging.warning("[session_login] Not following login redirect to %s",
+                                    urlparse(nxt).hostname)
+                    break
+                client.headers.pop("Cookie", None)   # the jar carries site cookies now
+                r = await client.get(nxt)
+
+            # Harvest only the booru's own session cookies
             harvested = {}
             target_names = set(get_session_cookie_names(api_type))
-
-            for cookie in r.cookies.jar:
-                if cookie.name in target_names and cookie.value:
-                    harvested[cookie.name] = cookie.value
-
             for cookie in client.cookies.jar:
-                if cookie.name in target_names and cookie.value:
+                if cookie.name in target_names and cookie.value and _on_site(cookie.domain):
                     harvested[cookie.name] = cookie.value
-
             return harvested
 
     except Exception as e:
