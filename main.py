@@ -11,21 +11,18 @@ import download_images.thumb_client as thumb_client
 
 def _setup_logging():
     """Wire up rotating file logs so crashes are diagnosable in packaged builds."""
-    if getattr(sys, 'frozen', False):
-        log_dir = Path(os.path.dirname(sys.executable))
-    else:
-        log_dir = Path(os.path.dirname(os.path.abspath(__file__)))
-
-    log_file = log_dir / "error.txt"
-
-    handler = RotatingFileHandler(
-        log_file,
-        maxBytes=5 * 1024 * 1024,
-        backupCount=3,
-        encoding="utf-8",
-    )
-    
-    handlers = [handler]
+    from app_paths import data_dir
+    log_file = data_dir() / "error.txt"
+    handlers = []
+    try:
+        handlers.append(RotatingFileHandler(
+            log_file,
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        ))
+    except OSError:
+        pass  # never let logging setup stop the app from starting
     if sys.stdout is not None and sys.stderr is not None:
         handlers.append(logging.StreamHandler())
 
@@ -69,6 +66,11 @@ _setup_logging()
 
 # ── Write a startup marker so we can confirm logging works ────────
 logging.info("BooruBrowser starting (frozen=%s)", getattr(sys, 'frozen', False))
+try:
+    from app_paths import data_dir, data_dir_reason
+    logging.info("Data folder: %s (%s)", data_dir(), data_dir_reason())
+except Exception:
+    logging.exception("Could not determine data folder")
 
 # ── Catch Qt-level messages (C++ crashes, qFatal, etc.) ──────────
 # These bypass Python's exception system and would otherwise kill the
@@ -189,7 +191,14 @@ if __name__ == "__main__":
     except Exception:
         import traceback
         import sys
-        with open("FATAL_CRASH.txt", "w", encoding="utf-8") as f:
+        try:
+            from app_paths import data_dir
+            crash_file = data_dir() / "FATAL_CRASH.txt"
+        except Exception:
+            import tempfile
+            from pathlib import Path
+            crash_file = Path(tempfile.gettempdir()) / "BooruBrowser_FATAL_CRASH.txt"
+        with open(crash_file, "w", encoding="utf-8") as f:
             f.write("Application failed to start entirely!\n")
             traceback.print_exc(file=f)
         sys.exit(1)

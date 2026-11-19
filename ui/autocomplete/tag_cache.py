@@ -28,9 +28,8 @@ def _conn() -> sqlite3.Connection:
         if not _DB_PATH.exists() and _LEGACY_DB.exists():
             try:
                 _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(_LEGACY_DB, _DB_PATH)
-                _LEGACY_DB.unlink(missing_ok=True)
-                logging.info("[autocomplete] Migrated tag_cache.db from %%APPDATA%%")
+                shutil.copy2(_LEGACY_DB, _DB_PATH)   # copy, keep the original
+                logging.info("[autocomplete] Copied tag_cache.db from %APPDATA% (original kept)")
             except Exception as e:
                 logging.warning("[autocomplete] Could not migrate legacy tag_cache.db: %s", e)
 

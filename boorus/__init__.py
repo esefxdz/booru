@@ -57,10 +57,9 @@ _PACKAGE_DIR = Path(__file__).resolve().parent
 
 
 def _app_dir() -> Path:
-    """Directory that holds settings.json (next to the exe, or the repo root)."""
-    if getattr(sys, "frozen", False):
-        return Path(os.path.dirname(sys.executable)).resolve()
-    return _PACKAGE_DIR.parent
+    """Directory that holds settings.json (see app_paths.data_dir)."""
+    from app_paths import data_dir
+    return data_dir()
 
 
 # Module-level so tests can point it at a temp dir.

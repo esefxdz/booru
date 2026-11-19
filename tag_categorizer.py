@@ -80,9 +80,8 @@ class TagCategorizer:
         if not self.cache_file.exists() and self._legacy_cache_file.exists():
             try:
                 self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(self._legacy_cache_file, self.cache_file)
-                self._legacy_cache_file.unlink(missing_ok=True)
-                logging.info("[categorizer] Migrated tag_cache.json from %%APPDATA%%")
+                shutil.copy2(self._legacy_cache_file, self.cache_file)   # copy, keep the original
+                logging.info("[categorizer] Copied tag_cache.json from %APPDATA% (original kept)")
             except Exception as e:
                 logging.warning("[categorizer] Could not migrate legacy tag_cache.json: %s", e)
 

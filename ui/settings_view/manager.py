@@ -15,13 +15,11 @@ from credentials import migrate_from_settings, get_sensitive, set_sensitive_many
 from updater.version import __version__ as VERSION
 
 # --- STATIC CONSTANTS ---
-import sys
 import threading
 import time
-if getattr(sys, 'frozen', False):
-    BASE_DIR = Path(os.path.dirname(sys.executable)).resolve()
-else:
-    BASE_DIR = Path(__file__).resolve().parent.parent.parent
+from app_paths import data_dir
+# Next to the exe when that folder is usable, else %LOCALAPPDATA%\BooruBrowser.
+BASE_DIR = data_dir()
 SEARCH_LIMIT = 50
 TIMEOUT = 30.0
 DOWNLOAD_DIR = BASE_DIR / "files"
