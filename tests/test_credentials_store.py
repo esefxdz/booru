@@ -61,3 +61,33 @@ def test_sensitive_blobs_roundtrip(mgr):
     blob = {"danbooru": {"cookies": {"cf_clearance": "v" * 3000}, "user_agent": "UA"}}
     assert m.set_sensitive("_bypass_data", blob)
     assert m.get_sensitive("_bypass_data") == blob
+
+
+def test_concurrent_saves_lose_nothing(mgr, caplog):
+    """3 threads x 60 read-modify-write saves of different keys: every
+    thread's last value must survive and no save may fail."""
+    import threading
+    m, _ = mgr
+    errors = []
+
+    def worker(i):
+        for n in range(60):
+            if not m.set_sensitive(f"k{i}", {"n": n}):
+                errors.append((i, n))
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert all(m.get_sensitive(f"k{i}") == {"n": 59} for i in range(3))
+    assert "Failed to save" not in caplog.text
+
+
+def test_set_sensitive_many_single_write(mgr):
+    m, f = mgr
+    assert c.set_sensitive_many is not None
+    assert m.set_sensitive_many({"_a": {"x": 1}, "_b": {"y": 2}})
+    assert m.get_sensitive("_a") == {"x": 1} and m.get_sensitive("_b") == {"y": 2}
+    assert not list(f.parent.glob("*.tmp")), "temp files left behind"

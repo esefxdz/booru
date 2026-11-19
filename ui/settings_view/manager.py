@@ -11,11 +11,12 @@ import json
 import os
 import shutil
 from pathlib import Path
-from credentials import migrate_from_settings, get_sensitive, set_sensitive, get_credential, set_credential
+from credentials import migrate_from_settings, get_sensitive, set_sensitive_many, get_credential, set_credential
 from updater.version import __version__ as VERSION
 
 # --- STATIC CONSTANTS ---
 import sys
+import threading
 if getattr(sys, 'frozen', False):
     BASE_DIR = Path(os.path.dirname(sys.executable)).resolve()
 else:
@@ -43,6 +44,10 @@ _LEGACY_SETTINGS_DIR = Path(
     or (Path.home() / ".config")
 ) / "BooruBrowser"
 _LEGACY_SETTINGS_FILE = _LEGACY_SETTINGS_DIR / "settings.json"
+
+
+# Serialises saves from the GUI thread and the asyncio thread.
+_SAVE_LOCK = threading.RLock()
 
 
 class SettingsManager:
@@ -195,32 +200,29 @@ class SettingsManager:
         # file — they go to credentials.bin via CredentialManager instead.
         _SENSITIVE_KEYS = {"bypass_data", "session_keys", "auth_tokens"}
         
-        try:
-            set_sensitive("_bypass_data", self.bypass_data)
-            set_sensitive("_session_keys", self.session_keys)
-            set_sensitive("_auth_tokens", self.auth_tokens)
-        except Exception as e:
-            logging.error(f"[settings] Failed to save sensitive data: {e}")
-            
-        data = {
-            k: v for k, v in self.__dict__.items()
-            if not k.startswith("_") and k not in _SENSITIVE_KEYS
-        }
-        return self._raw_save(data)
+        with _SAVE_LOCK:
+            # One credentials.bin write for all three (was three separate
+            # read-modify-write cycles that could interleave).
+            set_sensitive_many({
+                "_bypass_data": self.bypass_data,
+                "_session_keys": self.session_keys,
+                "_auth_tokens": self.auth_tokens,
+            })
+            data = {
+                k: v for k, v in self.__dict__.items()
+                if not k.startswith("_") and k not in _SENSITIVE_KEYS
+            }
+            return self._raw_save(data)
 
     def _raw_save(self, data):
-        """Low-level save — writes a dict to the settings JSON file."""
+        """Low-level save — atomically writes a dict to settings.json."""
+        from fileutil import atomic_write_text
         try:
-            _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
-            tmp = _SETTINGS_FILE.with_suffix(".tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            tmp.replace(_SETTINGS_FILE)
+            with _SAVE_LOCK:
+                atomic_write_text(_SETTINGS_FILE, json.dumps(data, indent=2))
             return True
         except Exception as e:
-            logging.info(f"[settings] Could not save settings: {e}")
+            logging.error(f"[settings] Could not save settings: {e}")
             return False
 
 

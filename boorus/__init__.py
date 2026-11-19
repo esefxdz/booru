@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -33,6 +34,9 @@ from urllib.parse import urlparse
 log = logging.getLogger("boorus")
 
 REGISTRY: dict = {}
+
+# Guards read-modify-write of custom_boorus.json and REGISTRY rebuilds.
+_LOCK = threading.RLock()
 
 BUILTIN_BOORUS: dict[str, dict] = {
     "gelbooru": {
@@ -132,6 +136,15 @@ def validate_entry(name: str, data: dict) -> dict:
 # Persistence
 # ---------------------------------------------------------------------------
 
+def _locked_store(fn):
+    def wrapper(*args, **kwargs):
+        with _LOCK:
+            return fn(*args, **kwargs)
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
+
+
 def _read_store() -> dict:
     """Return ``{"boorus": {...}, "removed": [...]}``. Never raises."""
     empty = {"boorus": {}, "removed": []}
@@ -156,14 +169,9 @@ def _read_store() -> dict:
 
 
 def _write_store(store: dict) -> bool:
+    from fileutil import atomic_write_text
     try:
-        STORE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = STORE_FILE.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(store, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        tmp.replace(STORE_FILE)
+        atomic_write_text(STORE_FILE, json.dumps(store, indent=2))
         return True
     except Exception:
         log.exception("[boorus] Failed to write %s", STORE_FILE)
@@ -224,6 +232,7 @@ def _migrate_legacy_py_files(store: dict) -> list[Path]:
     return handled
 
 
+@_locked_store
 def load() -> None:
     """(Re)build REGISTRY from built-ins + the JSON store."""
     store = _read_store()
@@ -265,6 +274,7 @@ def add_booru(name: str, data: dict) -> dict:
     return clean
 
 
+@_locked_store
 def write_booru_file(name: str) -> bool:
     """Persist REGISTRY[name] to the JSON store.
 
@@ -292,6 +302,7 @@ def write_booru_file(name: str) -> bool:
     return _write_store(store)
 
 
+@_locked_store
 def remove_booru(name: str) -> str | None:
     """Remove a booru and persist that. Returns a fallback booru name or None."""
     REGISTRY.pop(name, None)

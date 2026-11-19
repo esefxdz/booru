@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -35,6 +36,21 @@ from typing import Any, Dict, Optional
 
 _DPAPI_PREFIX = "DPAPI1:"
 _ENTROPY = b"BooruBrowser credentials v1"
+
+
+# One lock for every read-modify-write of credentials.bin. Saves happen on the
+# GUI thread and on the asyncio thread (e.g. clearing a Cloudflare bypass);
+# without this, concurrent saves silently dropped each other's changes.
+_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    def wrapper(*args, **kwargs):
+        with _LOCK:
+            return fn(*args, **kwargs)
+    wrapper.__name__ = fn.__name__
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
 
 
 class CredentialReadError(Exception):
@@ -155,6 +171,7 @@ class CredentialManager:
         if not cred_file.exists():
             cred_file.write_text(_encrypt("{}"))
 
+    @_locked
     def _load_credentials(self) -> Dict[str, Any]:
         """Load credentials, migrating legacy locations/formats if needed.
 
@@ -216,15 +233,10 @@ class CredentialManager:
 
     def _save_credentials(self, credentials: Dict[str, Any]):
         """Encrypt and atomically write credentials to disk."""
-        cred_file = self._get_credentials_file()
-        cred_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cred_file.with_suffix(".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(_encrypt(json.dumps(credentials)))
-            f.flush()
-            os.fsync(f.fileno())
-        tmp.replace(cred_file)
+        from fileutil import atomic_write_text
+        atomic_write_text(self._get_credentials_file(), _encrypt(json.dumps(credentials)))
 
+    @_locked
     def set_credential(self, booru: str, user_id: str, api_key: str) -> bool:
         """
         Store API credentials.
@@ -250,6 +262,7 @@ class CredentialManager:
             logging.error(f"[credentials] Failed to store credentials for {booru}: {e}")
             return False
 
+    @_locked
     def get_credential(self, booru: str) -> Optional[Dict[str, str]]:
         """
         Retrieve API credentials.
@@ -267,6 +280,7 @@ class CredentialManager:
             logging.error(f"[credentials] Failed to retrieve credentials for {booru}: {e}")
             return None
 
+    @_locked
     def delete_credential(self, booru: str) -> bool:
         """
         Delete stored credentials for a booru site.
@@ -287,6 +301,7 @@ class CredentialManager:
             logging.error(f"[credentials] Failed to delete credentials for {booru}: {e}")
             return False
 
+    @_locked
     def list_boorus_with_credentials(self) -> list[str]:
         """
         Get list of booru sites that have stored credentials.
@@ -301,6 +316,7 @@ class CredentialManager:
             logging.exception("[credentials] Failed to list credentials")
             return []
 
+    @_locked
     def get_sensitive(self, key: str) -> dict:
         try:
             return self._load_credentials().get(key, {})
@@ -308,6 +324,7 @@ class CredentialManager:
             logging.exception("[credentials] Failed to read sensitive data %s", key)
             return {}
 
+    @_locked
     def set_sensitive(self, key: str, data: dict) -> bool:
         try:
             self._ensure_file_exists()
@@ -319,6 +336,20 @@ class CredentialManager:
             logging.error(f"[credentials] Failed to save sensitive data {key}: {e}")
             return False
 
+    @_locked
+    def set_sensitive_many(self, items: Dict[str, dict]) -> bool:
+        """Store several sensitive blobs in one read-modify-write."""
+        try:
+            self._ensure_file_exists()
+            credentials = self._load_credentials()
+            credentials.update(items)
+            self._save_credentials(credentials)
+            return True
+        except Exception as e:
+            logging.error(f"[credentials] Failed to save sensitive data {sorted(items)}: {e}")
+            return False
+
+    @_locked
     def migrate_from_settings(self, settings_credentials: Dict[str, Any]) -> None:
         """
         Migrate credentials from settings.json to separate credentials file.
@@ -374,3 +405,8 @@ def get_sensitive(key: str) -> dict:
 def set_sensitive(key: str, data: dict) -> bool:
     """Store sensitive data dict securely."""
     return _credential_manager.set_sensitive(key, data)
+
+
+def set_sensitive_many(items: Dict[str, dict]) -> bool:
+    """Store several sensitive data dicts in a single write."""
+    return _credential_manager.set_sensitive_many(items)
