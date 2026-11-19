@@ -39,10 +39,7 @@ def _isolate_user_data(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(boorus, "STORE_FILE", data / "custom_boorus.json")
     monkeypatch.setattr(credentials.CredentialManager, "_get_credentials_file",
                         staticmethod(lambda: data / "credentials.v2.bin"))
-    monkeypatch.setattr(credentials.CredentialManager, "_get_legacy_credentials_file",
-                        staticmethod(lambda: data / "legacy_credentials.bin"))
     import ui.settings_view  # noqa: F401  (the package re-exports an instance named 'manager')
     settings_manager = sys.modules["ui.settings_view.manager"]
     monkeypatch.setattr(settings_manager, "_SETTINGS_FILE", data / "settings.json")
-    monkeypatch.setattr(settings_manager, "_LEGACY_SETTINGS_FILE", data / "legacy_settings.json")
     yield

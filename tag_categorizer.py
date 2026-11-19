@@ -1,12 +1,11 @@
 import logging
-import os
 import json
 import httpx
 import threading
 import time
-from pathlib import Path
 import shutil
 
+from app_paths import legacy_appdata_dir
 from ui.settings_view.manager import BASE_DIR
 
 # ── Offline meta-tag knowledge base ──────────────────────────────────────
@@ -70,7 +69,7 @@ CAT_MAP = {
 class TagCategorizer:
     def __init__(self):
         self.cache_file = BASE_DIR / "tag_cache.json"
-        self._legacy_cache_file = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "tag_cache.json"
+        self._legacy_cache_file = legacy_appdata_dir() / "tag_cache.json"
         self.cache = {}
         self._load_cache()
         self._lock = threading.Lock()

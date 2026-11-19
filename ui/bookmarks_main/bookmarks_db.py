@@ -1,15 +1,12 @@
-import os
 import shutil
 import json
 import sqlite3
 import logging
 import threading
-from pathlib import Path
 
+from app_paths import legacy_appdata_dir
 from ui.settings_view.manager import BASE_DIR
 _DB_FILE = BASE_DIR / "bookmarks.db"
-# Legacy path — only used for one-time migration
-_LEGACY_DB = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "bookmarks.db"
 
 class BookmarksDB:
     def __init__(self):
@@ -22,16 +19,17 @@ class BookmarksDB:
 
     def _migrate_legacy_db(self):
         """One-time: copy bookmarks.db from %APPDATA% to the app folder."""
-        if not self.db_path.exists() and _LEGACY_DB.exists():
+        legacy = legacy_appdata_dir() / "bookmarks.db"
+        if not self.db_path.exists() and legacy.exists():
             try:
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
                 # Copy (never move) so the original survives, and bring the
                 # WAL/SHM sidecars so recent writes are not lost.
                 for suffix in ("-wal", "-shm"):
-                    side = _LEGACY_DB.with_name(_LEGACY_DB.name + suffix)
+                    side = legacy.with_name(legacy.name + suffix)
                     if side.exists():
                         shutil.copy2(side, self.db_path.with_name(self.db_path.name + suffix))
-                shutil.copy2(_LEGACY_DB, self.db_path)
+                shutil.copy2(legacy, self.db_path)
                 logging.info("[bookmarks] Copied bookmarks.db from %APPDATA% (original kept)")
             except Exception as e:
                 logging.warning("[bookmarks] Could not migrate legacy bookmarks.db: %s", e)

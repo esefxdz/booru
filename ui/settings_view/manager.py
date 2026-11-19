@@ -8,7 +8,6 @@ Secrets (API keys, tokens, bypass cookies) live in credentials.bin (DPAPI).
 """
 import logging
 import json
-import os
 import shutil
 from pathlib import Path
 from credentials import migrate_from_settings, get_sensitive, set_sensitive_many, get_credential, set_credential
@@ -17,7 +16,7 @@ from updater.version import __version__ as VERSION
 # --- STATIC CONSTANTS ---
 import threading
 import time
-from app_paths import data_dir
+from app_paths import data_dir, legacy_appdata_dir
 # Next to the exe when that folder is usable, else %LOCALAPPDATA%\BooruBrowser.
 BASE_DIR = data_dir()
 SEARCH_LIMIT = 50
@@ -34,16 +33,6 @@ DEFAULT_HEADERS = {
 # can be copied to a USB stick or another machine and retain all config.
 _SETTINGS_DIR  = BASE_DIR
 _SETTINGS_FILE = _SETTINGS_DIR / "settings.json"
-
-# Legacy path used before the portability refactor — checked on startup
-# so existing users don’t lose their settings.
-_LEGACY_SETTINGS_DIR = Path(
-    os.environ.get("APPDATA")
-    or os.environ.get("XDG_CONFIG_HOME")
-    or (Path.home() / ".config")
-) / "BooruBrowser"
-_LEGACY_SETTINGS_FILE = _LEGACY_SETTINGS_DIR / "settings.json"
-
 
 # Serialises saves from the GUI thread and the asyncio thread.
 _SAVE_LOCK = threading.RLock()
@@ -100,12 +89,13 @@ class SettingsManager:
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
         # One-time migration from legacy %APPDATA% location
-        if not _SETTINGS_FILE.exists() and _LEGACY_SETTINGS_FILE.exists():
+        legacy = legacy_appdata_dir() / "settings.json"
+        if not _SETTINGS_FILE.exists() and legacy.exists():
             try:
-                shutil.copy2(_LEGACY_SETTINGS_FILE, _SETTINGS_FILE)
+                shutil.copy2(legacy, _SETTINGS_FILE)
                 logging.info(
                     "[settings] Migrated settings from %s → %s",
-                    _LEGACY_SETTINGS_FILE, _SETTINGS_FILE,
+                    legacy, _SETTINGS_FILE,
                 )
             except Exception as e:
                 logging.warning("[settings] Could not migrate legacy settings: %s", e)

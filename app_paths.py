@@ -88,6 +88,20 @@ def data_dir() -> Path:
     return path
 
 
+def legacy_appdata_dir() -> Path:
+    """Where pre-portable versions kept data; read only for one-time migration.
+
+    Under the ENV_OVERRIDE sandbox this is ``<override>/legacy_appdata`` so
+    migration code can never read (or delete) the real ``%APPDATA%`` files.
+    Evaluated on every call so it follows the environment.
+    """
+    if os.environ.get(ENV_OVERRIDE):
+        return data_dir() / "legacy_appdata"
+    base = os.environ.get("APPDATA") or os.environ.get("XDG_CONFIG_HOME") or str(
+        Path.home() / ".config")
+    return Path(base) / APP_NAME
+
+
 _chosen_reason = ["not chosen yet"]
 
 

@@ -8,16 +8,13 @@ queries like "girl" can match "1girl" without a network round-trip.
 Populated automatically from network autocomplete results.
 """
 import sqlite3
-import os
 import threading
 import shutil
 import logging
-from pathlib import Path
 
+from app_paths import legacy_appdata_dir
 from ui.settings_view.manager import BASE_DIR
 _DB_PATH = BASE_DIR / "tag_cache.db"
-# Legacy path — only used for one-time migration
-_LEGACY_DB = Path(os.environ.get("APPDATA", ".")) / "BooruBrowser" / "tag_cache.db"
 
 _local = threading.local()
 
@@ -25,10 +22,11 @@ _local = threading.local()
 def _conn() -> sqlite3.Connection:
     """Return a thread-local SQLite connection (one per thread)."""
     if not hasattr(_local, "conn") or _local.conn is None:
-        if not _DB_PATH.exists() and _LEGACY_DB.exists():
+        legacy = legacy_appdata_dir() / "tag_cache.db"
+        if not _DB_PATH.exists() and legacy.exists():
             try:
                 _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(_LEGACY_DB, _DB_PATH)   # copy, keep the original
+                shutil.copy2(legacy, _DB_PATH)   # copy, keep the original
                 logging.info("[autocomplete] Copied tag_cache.db from %APPDATA% (original kept)")
             except Exception as e:
                 logging.warning("[autocomplete] Could not migrate legacy tag_cache.db: %s", e)

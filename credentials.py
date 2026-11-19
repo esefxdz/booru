@@ -163,8 +163,8 @@ class CredentialManager:
     @staticmethod
     def _get_legacy_credentials_file() -> Path:
         """Pre-portable %APPDATA% location — only read for one-time migration."""
-        appdata = os.environ.get("APPDATA", ".")
-        return Path(appdata) / "BooruBrowser" / CredentialManager.LEGACY_NAME
+        from app_paths import legacy_appdata_dir
+        return legacy_appdata_dir() / CredentialManager.LEGACY_NAME
 
     def _legacy_sources(self) -> list[Path]:
         cred_file = self._get_credentials_file()
