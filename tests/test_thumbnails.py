@@ -62,3 +62,12 @@ def test_relative_preview_resolved_against_booru():
 def test_file_scheme_preview_never_fetched():
     requested, got = _run("file:///C:/Windows/win.ini", _png(10, 10))
     assert requested == [] and got == []
+
+
+def test_huge_jpeg_is_shrunk_by_draft_not_refused():
+    buf = BytesIO()
+    Image.new("RGB", (8000, 6000), (10, 120, 200)).save(buf, format="JPEG", quality=50)
+    big = buf.getvalue()            # 48 Mpx, over the cap before draft
+    requested, got = _run("https://safebooru.org/thumbnails/4/big.jpg", big)
+    assert requested and len(got) == 1
+    assert Image.open(BytesIO(got[0])).width <= 300

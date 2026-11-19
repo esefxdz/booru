@@ -246,11 +246,12 @@ async def fetch_previews(
         # 4. CPU decode + cache (outside semaphore — network keeps running)
         def _decode_and_cache() -> bytes:
             img = Image.open(BytesIO(raw))      # reads the header only
-            if img.width * img.height > MAX_THUMB_SOURCE_PIXELS:
-                # A tiny PNG can claim a huge canvas and decode to GBs of RAM.
-                raise ValueError(f"preview too large to decode ({img.width}x{img.height})")
             size = settings.manager.thumbnail_size
             img.draft("RGB", (size, size))      # JPEG: decode at reduced size
+            # Cap the size we will actually decode (after draft), so a huge
+            # JPEG fallback still gets a tile but a PNG "bomb" is refused.
+            if img.width * img.height > MAX_THUMB_SOURCE_PIXELS:
+                raise ValueError(f"preview too large to decode ({img.width}x{img.height})")
             img.thumbnail(
                 (settings.manager.thumbnail_size, settings.manager.thumbnail_size),
                 Image.LANCZOS,
