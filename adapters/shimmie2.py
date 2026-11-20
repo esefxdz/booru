@@ -1,7 +1,3 @@
-"""
-shimmie2.py - Adapter for Shimmie2-based sites.
-Older booru engine with simpler JSON/HTML APIs.
-"""
 from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
@@ -64,8 +60,6 @@ class Shimmie2Adapter(BaseAdapter):
             return tags
         return []
 
-    # ##################################################################
-    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         return {
             "artist": [],
@@ -74,7 +68,6 @@ class Shimmie2Adapter(BaseAdapter):
             "meta": [],
             "general": self.get_tags(post),
         }
-    # ##################################################################
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")

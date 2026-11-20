@@ -1,6 +1,3 @@
-"""
-szurubooru.py - Adapter for Szurubooru (modern booru engine).
-"""
 from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
@@ -63,8 +60,6 @@ class SzurubooruAdapter(BaseAdapter):
             return result
         return []
 
-    # ##################################################################
-    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         tags = post.get("tags", [])
         res = {"artist": [], "character": [], "copyright": [], "meta": [], "general": []}
@@ -83,7 +78,6 @@ class SzurubooruAdapter(BaseAdapter):
             else:
                 res["general"].append(name)
         return res
-    # ##################################################################
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")

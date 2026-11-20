@@ -40,17 +40,10 @@ class FileDownloadMixin:
         headers: dict | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
     ) -> BypassResponse:
-        """Fetch *url* into the file *dest* without holding it in memory.
+        """Fetch *url* into *dest* via ``<dest>.part``, so *dest* is never partial.
 
-        curl_cffi streams in chunks; in stream mode its float ``timeout`` is
-        a connect timeout plus an idle timeout (no total cap), so a slow but
-        flowing transfer finishes. Data goes to ``<dest>.part`` and is
-        renamed only when complete, so *dest* never holds a partial file.
-        Anything the streaming path cannot settle (curl_cffi missing, a
-        non-200 answer, a transport error) goes through :meth:`get_sync`
-        (circuit breaker, retries, other engines) and its body is written
-        out. Returns a BypassResponse; on 200 ``content`` is empty, the data
-        being in *dest*.
+        Streaming curl_cffi's timeout is connect plus idle (no total cap). Anything it cannot
+        settle falls back to get_sync. On 200 the returned ``content`` is empty (data is in *dest*).
         """
         self._enter()
         try:

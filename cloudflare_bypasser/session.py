@@ -1,22 +1,4 @@
-"""
-cloudflare_bypasser/session.py — Multi-engine HTTP session orchestrator.
-
-``BypassSession`` wires together browser identity (fingerprint.py) and
-engine implementations (engines.py) into a single call with automatic
-failover and retry.
-
-Priority chain in ``auto`` mode (each request tries in order until one succeeds):
-  1. curl_cffi     — Chrome TLS impersonation (beats JA3 fingerprinting)
-  2. cloudscraper  — JS challenge solver with browser UA rotation
-  3. httpx         — HTTP/2 with browser-grade headers (beats basic WAFs)
-  4. requests      — Battle-tested fallback with session cookies
-  5. urllib        — stdlib last resort (always available)
-
-Every layer adds realistic browser metadata (Sec-Fetch-*, Accept-Language,
-DNT, etc.) so Cloudflare's heuristic scoring sees a real browser.
-
-Users can lock to a specific engine via ``settings.manager.cf_bypass_method``.
-"""
+"""BypassSession: HTTP requests with engine failover, retry and a per-host circuit breaker."""
 
 from __future__ import annotations
 
@@ -64,12 +46,7 @@ from cloudflare_bypasser.file_download import FileDownloadMixin
 log = logging.getLogger("cloudflare_bypasser")
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                        BypassSession                                ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-
-# Re-export public symbols from the sub-modules so existing importers
-# (e.g. __init__.py, section_network.py) don't break.
+# Re-exported for importers of this module.
 from cloudflare_bypasser.fingerprint import (  # noqa: E402, F401
     BYPASS_METHOD_LABELS,
 )
@@ -77,8 +54,7 @@ from cloudflare_bypasser.engines import _Response  # noqa: E402, F401
 
 
 #: Most engine calls one get()/get_sync() makes, retries and get_sync's
-#: httpx fallback included (was up to 24-45 network requests for one blocked
-#: URL). It counts engine calls, not requests: curl_cffi may send a second
+#: httpx fallback included. It counts engine calls, not requests: curl_cffi may send a second
 #: fingerprint on a 403 within one call.
 _MAX_ENGINE_ATTEMPTS = 8
 def _is_definitive(resp) -> bool:
@@ -87,29 +63,9 @@ def _is_definitive(resp) -> bool:
 
 
 class BypassSession(FileDownloadMixin):
-    """
-    Multi-engine HTTP session with automatic failover.
+    """Multi-engine HTTP session. Cookies go only to hosts on *site_url*'s site.
 
-    Parameters
-    ----------
-    user_agent : str
-        The User-Agent string.  When captured from the WebEngine CAPTCHA flow,
-        this must match exactly or CF will reject the clearance cookie.
-    cookies : dict
-        Cookies to send (including cf_clearance).
-    proxy_url : str
-        Optional proxy URL (http/https/socks5).
-    site_url : str
-        The booru's base URL. Cookies are only attached to requests whose
-        host is on the same registrable domain; other hosts (third-party
-        CDNs, anything a server points us at) get none.
-    site_url : str
-        The booru's base URL. Cookies are only attached to requests whose
-        host is on the same registrable domain; other hosts (third-party
-        CDNs, anything a server points us at) get none.
-    method : str
-        Which bypass engine to use.  ``"auto"`` tries all in priority order.
-        Any other value from :data:`BYPASS_METHODS` locks to that engine.
+    *user_agent* must match the one that solved the challenge or CF rejects cf_clearance.
     """
 
     def __init__(
@@ -122,7 +78,6 @@ class BypassSession(FileDownloadMixin):
     ) -> None:
         self.user_agent = user_agent or _DEFAULT_UA
         self.cookies = cookies or {}
-        # Cookies are only sent to URLs on the same site as this booru.
         self.site_url = site_url
         self.proxy_url = proxy_url
         self.method = method if method in BYPASS_METHODS else "auto"
@@ -142,10 +97,6 @@ class BypassSession(FileDownloadMixin):
         self._inflight = 0
         self._retired = False
 
-    # ------------------------------------------------------------------
-    # Loop-aware client invalidation
-    # ------------------------------------------------------------------
-
     def _check_loop(self):
         """Invalidate cached clients if the event loop has changed."""
         try:
@@ -157,10 +108,6 @@ class BypassSession(FileDownloadMixin):
                 self._loop_ref = current_loop
         except RuntimeError:
             pass
-
-    # ------------------------------------------------------------------
-    # Warmup
-    # ------------------------------------------------------------------
 
     async def warmup(self, base_url: str, timeout: int = _DEFAULT_TIMEOUT) -> dict:
         """Visit the site homepage to establish cookies and a Referer chain."""
@@ -183,10 +130,6 @@ class BypassSession(FileDownloadMixin):
             self._cookie_jar.update(resp.cookies)
             log.debug("warmup_sync captured %d cookies from %s", len(resp.cookies), base_url)
         return dict(self._cookie_jar)
-
-    # ------------------------------------------------------------------
-    # Cleanup
-    # ------------------------------------------------------------------
 
     async def close(self):
         """Close any persistent underlying clients."""
@@ -211,12 +154,9 @@ class BypassSession(FileDownloadMixin):
                 log.debug("closing curl_cffi sync session failed", exc_info=True)
 
     def retire(self) -> None:
-        """get_session replaced or dropped this session: release its clients.
+        """Release clients now if idle, else when the last in-flight request returns.
 
-        Another thread may still be mid-request on it (a thumbnail or media
-        worker, or the event loop), and closing a curl handle under a running
-        transfer is unsafe. So the close happens now only if nothing is in
-        flight, otherwise when the last in-flight request returns.
+        Closing a curl handle under a running transfer is unsafe.
         """
         with self._state_lock:
             self._retired = True
@@ -252,10 +192,6 @@ class BypassSession(FileDownloadMixin):
         except RuntimeError:
             log.debug("could not schedule close of a replaced session", exc_info=True)
 
-    # ------------------------------------------------------------------
-    # Header construction
-    # ------------------------------------------------------------------
-
     def _build_headers(self, extra_headers: dict | None = None) -> dict:
         """Merge browser baseline headers with the session UA and any extras."""
         h = dict(_BROWSER_HEADERS)
@@ -263,10 +199,6 @@ class BypassSession(FileDownloadMixin):
         if extra_headers:
             h.update(extra_headers)
         return h
-
-    # ------------------------------------------------------------------
-    # Engine dispatch
-    # ------------------------------------------------------------------
 
     def _get_engine_order(self) -> list[str]:
         """Return the list of engines to try, respecting user's method choice."""
@@ -323,10 +255,6 @@ class BypassSession(FileDownloadMixin):
             )
         return None
 
-    # ------------------------------------------------------------------
-    # Cookie helpers
-    # ------------------------------------------------------------------
-
     @property
     def _merged_cookies(self) -> dict:
         """Stored cookies + warmup/response accumulated cookies."""
@@ -343,21 +271,15 @@ class BypassSession(FileDownloadMixin):
         return {}
 
     def _remember_cookies(self, url: str, resp) -> None:
-        """Keep response cookies only when they came from the booru's site.
+        """Keep response cookies only if both the request and final URL are same-site.
 
-        Both the requested URL and the final URL after redirects must be
-        same-site: resp.cookies reflects the last hop, so a redirect through
-        a third-party host could otherwise plant its cookies here.
+        resp.cookies reflects the last hop, so a third-party redirect could plant cookies.
         """
         from core.validation import same_site
         final_url = str(getattr(resp, "url", "") or url)
         if (resp.cookies and self.site_url and same_site(url, self.site_url)
                 and same_site(final_url, self.site_url)):
             self._cookie_jar.update(resp.cookies)
-
-    # ------------------------------------------------------------------
-    # Async interface
-    # ------------------------------------------------------------------
 
     async def get(self, *args, **kwargs) -> BypassResponse:
         """See :meth:`_get`."""
@@ -378,18 +300,10 @@ class BypassSession(FileDownloadMixin):
         _solve_since: Optional[int] = None,
         _max_attempts: Optional[int] = None,
     ) -> BypassResponse:
-        """
-        GET with automatic engine failover and retry.
+        """GET with engine failover, at most _MAX_ENGINE_ATTEMPTS engine calls.
 
-        In ``auto`` mode, tries curl_cffi → cloudscraper → httpx → requests
-        → urllib, at most _MAX_ENGINE_ATTEMPTS engine calls in total.
-        The first good answer is returned at once; that includes an
-        ordinary 4xx that is not a block. A block (Cloudflare challenge or a
-        possible block, see BypassResponse.is_blocked) lets the remaining
-        engines of the current round try once each, then no further round
-        runs. Whole rounds are retried (with backoff) only when every
-        failure was transient (no response, 5xx). A block left at the end
-        opens a per-host circuit for _BLOCK_COOLDOWN seconds.
+        Returns the first good answer (an ordinary 4xx counts). A block ends the round;
+        rounds retry only after transient failures. A block left at the end opens the host circuit.
         """
         if _max_attempts is None:
             _max_attempts = _MAX_ENGINE_ATTEMPTS
@@ -423,7 +337,6 @@ class BypassSession(FileDownloadMixin):
         if open_resp is not None:
             return open_resp
 
-        # In auto mode, try the previously successful engine first
         engines = list(only_engines) if only_engines else self._get_engine_order()
         if (not only_engines and self.method == "auto" and self._successful_engine
                 and self._successful_engine in engines):
@@ -459,10 +372,6 @@ class BypassSession(FileDownloadMixin):
 
         return self._give_up(url, last_response, solve_gen)
 
-    # ------------------------------------------------------------------
-    # Retry policy helpers (shared by get and get_sync)
-    # ------------------------------------------------------------------
-
     def _accept(self, engine: str, url: str, resp) -> bool:
         """Record and accept a good response."""
         if not (resp and not resp.is_blocked and 0 < resp.status_code < 500):
@@ -497,10 +406,6 @@ class BypassSession(FileDownloadMixin):
         log.error("Total failure for %s — no engine could reach the server", url)
         return BypassResponse(b"", "", 0, url, None, "none")
 
-    # ------------------------------------------------------------------
-    # Sync interface
-    # ------------------------------------------------------------------
-
     def get_sync(self, *args, **kwargs) -> BypassResponse:
         """See :meth:`_get_sync`."""
         self._enter()
@@ -516,14 +421,7 @@ class BypassSession(FileDownloadMixin):
         headers: dict | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
     ) -> BypassResponse:
-        """Synchronous wrapper.
-
-        Tries the sync engines (curl_cffi, cloudscraper, requests, urllib),
-        then, only if every one failed transiently and httpx is enabled,
-        httpx on the shared event loop. The fallback gets only what is left
-        of the _MAX_ENGINE_ATTEMPTS budget (none after two full rounds of
-        the four sync engines).
-        """
+        """Sync engines first; httpx on the shared loop only after transient failures, within the attempt budget."""
         solve_gen = solve_generation(url)
         refused = _refuse_non_http(url)
         if refused is not None:
@@ -582,9 +480,7 @@ class BypassSession(FileDownloadMixin):
         try:
             fut = async_loop.submit(coro)
         except RuntimeError:
-            # submit() failed, so the coroutine was never scheduled. No global
-            # loop (e.g. tests, standalone tools): run it locally. During app
-            # shutdown do not start a throwaway loop.
+            # Never scheduled: no global loop (tests, tools). Not during shutdown.
             if getattr(async_loop, "_SHUTTING_DOWN", False):
                 coro.close()
                 return None
@@ -596,7 +492,6 @@ class BypassSession(FileDownloadMixin):
             log.debug("async fallback timed out")
             return None
         except Exception as e:
-            # Already awaited on the loop: never run it a second time.
             log.debug("async fallback failed: %s", e)
             return None
 
@@ -623,10 +518,6 @@ class BypassSession(FileDownloadMixin):
                 url, params, headers, self._cookies_for(url), self.proxy_url, timeout,
             )
         return None
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
 
     def with_extra_cookies(self, extra: dict) -> "BypassSession":
         """Return a *new* session that merges extra cookies into the jar."""

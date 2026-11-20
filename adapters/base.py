@@ -1,9 +1,4 @@
-"""
-base.py - Base adapter interface for all booru APIs.
-
-Provides the BaseAdapter contract, a NormalizedPost dataclass for
-standardized output, and helpers for pagination / rating normalization.
-"""
+"""BaseAdapter contract and the NormalizedPost dataclass."""
 from dataclasses import dataclass, field
 
 
@@ -22,7 +17,6 @@ class NormalizedPost:
     _booru: str = ""
 
 
-# Rating aliases produced by different engines → canonical value
 _RATING_MAP = {
     "s": "safe", "safe": "safe", "general": "safe", "g": "safe",
     "q": "questionable", "questionable": "questionable", "suggestive": "questionable",
@@ -42,24 +36,17 @@ class BaseAdapter:
     api_type: str = "base"
     label: str = "Base Adapter"
 
-    # -- Pagination style (overridden per-engine) --------------------------
-    #    "page1"  → 1-indexed page numbers (Danbooru, Moebooru, e621, …)
-    #    "pid"    → offset = page * limit   (Gelbooru DAPI, html_scraper)
-    #    "offset" → raw offset              (Szurubooru)
+    # "page1": 1-indexed page; "pid": page index; "offset": page * limit.
     pagination_style: str = "page1"
 
     def get_pagination_params(self, page_index: int, limit: int) -> dict:
-        """Convert a 0-based page_index into engine-specific params.
-        The controller only ever passes page_index; the adapter does the math.
-        """
+        """Convert a 0-based page_index into engine-specific params."""
         if self.pagination_style == "pid":
             return {"pid": page_index}
         elif self.pagination_style == "offset":
             return {"offset": page_index * limit}
         else:  # "page1" (default)
             return {"page": page_index + 1}
-
-    # -- Core interface (must be overridden) --------------------------------
 
     def build_url(self, site_data: dict) -> str:
         """Build the API endpoint URL."""
@@ -89,7 +76,6 @@ class BaseAdapter:
         """Extract list of tags from post."""
         raise NotImplementedError
 
-    # -- Normalization helpers (opt-in) ------------------------------------
 
     def get_rating(self, post: dict) -> str:
         """Normalize rating string to safe|questionable|explicit|unknown."""

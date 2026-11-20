@@ -1,7 +1,3 @@
-"""
-philomena.py - Adapter for Philomena-based sites (MLP boorus).
-Covers: Derpibooru, Ponerpics, etc.
-"""
 from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
@@ -67,8 +63,6 @@ class PhilomenaAdapter(BaseAdapter):
             return result
         return []
 
-    # ##################################################################
-    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         tags = self.get_tags(post)
         cats = {"artist": [], "character": [], "copyright": [], "meta": [], "general": []}
@@ -80,7 +74,6 @@ class PhilomenaAdapter(BaseAdapter):
             else:
                 cats["general"].append(t)
         return cats
-    # ##################################################################
 
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:

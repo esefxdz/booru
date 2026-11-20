@@ -1,27 +1,10 @@
-"""
-adapters/session_login.py
-
-Session-based login support for boorus that require cookies instead of API keys.
-
-Most booru engines share nearly identical login patterns — this module centralises
-that logic so per-site adapters only need to declare what's different.
-
-Login flow:
-  1. Caller provides username + password
-  2. We POST to the site's login endpoint
-  3. We harvest the session cookie from the response
-  4. Caller stores the cookie value in settings.manager.session_keys[booru]
-  5. downloader._get_client_args() injects it into every subsequent request
-"""
+"""Programmatic session login for boorus that use cookies instead of API keys."""
 
 import logging
 import httpx
 from core import settings
 
 
-# ---------------------------------------------------------------------------
-# Cookie name mapping: which cookie does each api_type use?
-# ---------------------------------------------------------------------------
 SESSION_COOKIE_NAMES: dict[str, list[str]] = {
     "gelbooru":   ["PHPSESSID"],
     "shimmie2":   ["shm_session", "PHPSESSID"],
@@ -34,7 +17,6 @@ SESSION_COOKIE_NAMES: dict[str, list[str]] = {
     "html_scraper": ["PHPSESSID"],
 }
 
-# Login path and POST field names per api_type
 _LOGIN_CONFIGS: dict[str, dict] = {
     "gelbooru": {
         "path": "/index.php",
@@ -94,16 +76,10 @@ async def perform_login(
     password: str,
     bypass_session=None,  # Optional BypassSession for CF-protected login pages
 ) -> dict[str, str]:
-    """
-    Attempts a programmatic login (POST credentials) and returns a dict of
-    {cookie_name: cookie_value} for any session cookies found in the response.
+    """POST the credentials and return {cookie_name: value} for the session cookies found.
 
-    If *bypass_session* is provided (a :class:`BypassSession`), its cookies
-    (including cf_clearance) and User-Agent are injected so the login request
-    passes through Cloudflare protection.
-
-    Returns an empty dict on failure.
-    Falls back gracefully — the caller should use InAppBrowser if this returns empty.
+    *bypass_session* supplies cf_clearance and the User-Agent for Cloudflare-protected logins.
+    Returns {} on failure.
     """
     cfg = _LOGIN_CONFIGS.get(api_type)
     if not cfg:
@@ -113,7 +89,6 @@ async def perform_login(
     params = cfg.get("params", {})
     raw_fields = cfg.get("fields", {})
 
-    # Substitute username/password into field values
     fields = {
         k: v.replace("{username}", username).replace("{password}", password)
         for k, v in raw_fields.items()
@@ -129,7 +104,6 @@ async def perform_login(
                       parsed_site.hostname)
         return {}
 
-    # Build headers — merge bypass session cookies/UA if available
     headers = {
         "User-Agent": settings.manager.get_user_agent(),
         "Referer": site_url + "/",
@@ -172,7 +146,6 @@ async def perform_login(
                 client.headers.pop("Cookie", None)   # the jar carries site cookies now
                 r = await client.get(nxt)
 
-            # Harvest only the booru's own session cookies
             harvested = {}
             target_names = set(get_session_cookie_names(api_type))
             for cookie in client.cookies.jar:

@@ -1,16 +1,4 @@
-"""
-cloudflare_bypasser/store.py
-
-Bypass-data persistence layer.
-
-Reads and writes to ``settings.manager.bypass_data`` — the single source of
-truth for per-booru Cloudflare clearance cookies and the User-Agent that was
-active when the CAPTCHA was solved.
-
-Keeping all persistence logic here means that if the storage backend ever
-changes, only this file needs
-to be updated.
-"""
+"""Per-booru Cloudflare clearance cookies and User-Agent, stored in settings.manager.bypass_data."""
 
 from __future__ import annotations
 import copy
@@ -19,8 +7,7 @@ from typing import TYPE_CHECKING
 from core import settings
 
 if TYPE_CHECKING:
-    # Avoid a circular import at module load time; settings is always present
-    # at runtime because main.py initialises it first.
+    # Deferred to avoid a circular import.
     pass
 
 _DEFAULT_UA = (
@@ -34,17 +21,8 @@ _DEFAULT_UA = (
 _lock = threading.Lock()
 
 
-# ---------------------------------------------------------------------------
-# Read helpers
-# ---------------------------------------------------------------------------
-
 def get_bypass_data(booru_name: str) -> dict:
-    """
-    Return the stored bypass dictionary for *booru_name*.
-
-    Returns an empty dict when nothing is stored so callers can always use
-    ``.get()`` safely without a fallback check.
-    """
+    """Stored bypass dict for *booru_name*, or {}."""
     return settings.manager.bypass_data.get(booru_name) or {}
 
 
@@ -69,17 +47,8 @@ def has_active_bypass(booru_name: str) -> bool:
     return bool(data.get("cf_clearance") or data.get("cookies"))
 
 
-# ---------------------------------------------------------------------------
-# Write helpers
-# ---------------------------------------------------------------------------
-
 def save_bypass(booru_name: str, cookies: dict, user_agent: str) -> None:
-    """
-    Persist captured *cookies* and *user_agent* for *booru_name*.
-
-    Both are required for the bypass to work: Cloudflare ties the clearance
-    cookie to the exact UA fingerprint that solved the challenge.
-    """
+    """Persist both: Cloudflare ties the clearance cookie to the UA that solved it."""
     with _lock:
         settings.manager.bypass_data[booru_name] = {
             "cookies":    cookies,
@@ -89,13 +58,7 @@ def save_bypass(booru_name: str, cookies: dict, user_agent: str) -> None:
 
 
 def clear_bypass(booru_name: str) -> None:
-    """
-    Remove all stored bypass data for *booru_name*.
-
-    Call this when:
-    - The user manually clears the bypass in the settings dialog.
-    - A request fails with 403/429 (the clearance has expired).
-    """
+    """Remove all stored bypass data for *booru_name*."""
     settings.manager.bypass_data.pop(booru_name, None)
     settings.manager.save()
 
@@ -107,9 +70,7 @@ def snapshot(booru_name: str):
 
 
 def clear_bypass_if_unchanged(booru_name: str, expected) -> bool:
-    """Clear the stored bypass only if it still equals *expected* (from
-    :func:`snapshot`). A block seen by a request that was sent before the
-    user solved the challenge must not delete the fresh clearance."""
+    """Clear only if the data still equals *expected* (a snapshot), so a stale block keeps a fresh clearance."""
     with _lock:
         current = settings.manager.bypass_data.get(booru_name)
         if current != expected:

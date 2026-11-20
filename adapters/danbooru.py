@@ -1,7 +1,3 @@
-"""
-danbooru.py - Adapter for Danbooru-based sites.
-Covers: Danbooru, SafebooruDonmai
-"""
 from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
@@ -42,9 +38,7 @@ class DanbooruAdapter(BaseAdapter):
         return post.get("large_file_url") or post.get("file_url") or ""
 
     def get_tags(self, post: dict) -> list:
-        # Danbooru splits tags across category-specific fields.  The old
-        # code only read tag_string_general, silently dropping artist,
-        # character, copyright, and meta tags.
+        # Tags are split across per-category fields.
         tag_fields = (
             "tag_string_general", "tag_string_artist", "tag_string_character",
             "tag_string_copyright", "tag_string_meta",
@@ -56,8 +50,6 @@ class DanbooruAdapter(BaseAdapter):
                 all_tags.extend(val.replace(",", " ").split())
         return all_tags
 
-    # ##################################################################
-    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         def split(field):
             return post.get(field, "").replace(",", " ").split()
@@ -68,7 +60,6 @@ class DanbooruAdapter(BaseAdapter):
             "meta": split("tag_string_meta"),
             "general": split("tag_string_general"),
         }
-    # ##################################################################
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")

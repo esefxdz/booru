@@ -1,22 +1,6 @@
-"""
-boorus/__init__.py
+"""Booru registry: built-ins plus user entries from custom_boorus.json, all validated.
 
-Booru registry. Exposes ``REGISTRY``: ``{name: {url, api_path, post_key, api_type}}``.
-
-Storage model
--------------
-* Built-in boorus are plain data in ``BUILTIN_BOORUS`` below.
-* Everything the user changes (custom boorus, engine overrides on a built-in,
-  removed built-ins) lives in ``custom_boorus.json`` next to ``settings.json``.
-
-Boorus used to be stored as generated ``.py`` files inside this package and
-imported at startup. That let a crafted URL in "Add booru" execute code, and in
-the packaged exe the package folder is a temp dir, so custom boorus were lost
-on exit. Legacy ``.py`` files are migrated once by *parsing* them with ``ast``
-(never importing them) and then deleted.
-
-Every entry is validated before it is stored or loaded, so callers (the Qt UI
-today, an HTTP API later) cannot put arbitrary data in the registry.
+Legacy generated .py boorus are migrated by parsing with ast, never importing (code execution).
 """
 from __future__ import annotations
 
@@ -69,10 +53,6 @@ STORE_FILE: Path = _app_dir() / "custom_boorus.json"
 class BooruValidationError(ValueError):
     """Raised when a booru entry fails validation."""
 
-
-# ---------------------------------------------------------------------------
-# Validation
-# ---------------------------------------------------------------------------
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,63}$")
 _API_PATH_RE = re.compile(r"^/[A-Za-z0-9_\-./]*$")
@@ -131,10 +111,6 @@ def validate_entry(name: str, data: dict) -> dict:
     return {"url": url, "api_path": api_path, "post_key": post_key, "api_type": api_type}
 
 
-# ---------------------------------------------------------------------------
-# Persistence
-# ---------------------------------------------------------------------------
-
 def _locked_store(fn):
     def wrapper(*args, **kwargs):
         with _LOCK:
@@ -178,11 +154,7 @@ def _write_store(store: dict) -> bool:
 
 
 def _parse_legacy_py(path: Path) -> tuple[str, dict] | None:
-    """Read NAME/URL/... literals from an old generated booru .py file.
-
-    Uses ``ast`` so a malicious file is never executed. Anything that is not a
-    plain ``NAME = <literal>`` assignment is ignored.
-    """
+    """Read NAME/URL/... literals from an old booru .py file; only plain literal assignments."""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except Exception:
@@ -206,11 +178,7 @@ def _parse_legacy_py(path: Path) -> tuple[str, dict] | None:
 
 
 def _migrate_legacy_py_files(store: dict) -> list[Path]:
-    """Copy user-generated ``boorus/*.py`` entries into *store* (in memory).
-
-    Returns the legacy files that were handled. The caller deletes them only
-    after the store has been written successfully.
-    """
+    """Copy legacy ``boorus/*.py`` entries into *store*; the caller deletes the returned files after saving."""
     handled: list[Path] = []
     for f in sorted(_PACKAGE_DIR.glob("*.py")):
         if f.name.startswith("_"):
@@ -257,15 +225,8 @@ def load() -> None:
             log.warning("[boorus] Skipping invalid stored booru '%s': %s", name, e)
 
 
-# ---------------------------------------------------------------------------
-# Public API (kept compatible with the old .py-file based helpers)
-# ---------------------------------------------------------------------------
-
 def add_booru(name: str, data: dict) -> dict:
-    """Validate, register and persist a booru. Returns the stored entry.
-
-    Raises BooruValidationError on invalid input, OSError if it cannot be saved.
-    """
+    """Validate, register and persist a booru. Raises BooruValidationError or OSError."""
     clean = validate_entry(name, data)
     REGISTRY[name] = clean
     if not write_booru_file(name):
@@ -275,11 +236,7 @@ def add_booru(name: str, data: dict) -> dict:
 
 @_locked_store
 def write_booru_file(name: str) -> bool:
-    """Persist REGISTRY[name] to the JSON store.
-
-    The name is historical (boorus used to be .py files); callers mutate
-    REGISTRY and then call this. Invalid entries are refused and not written.
-    """
+    """Persist REGISTRY[name] to the JSON store; invalid entries are refused."""
     data = REGISTRY.get(name)
     if not data:
         log.warning("[boorus] write_booru_file: '%s' not in REGISTRY", name)

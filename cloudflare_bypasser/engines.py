@@ -1,16 +1,4 @@
-"""
-cloudflare_bypasser/engines.py — HTTP engine implementations.
-
-Each ``_try_*`` function attempts a single HTTP request using a specific
-engine (curl_cffi, cloudscraper, httpx, requests, urllib).  They all
-return ``BypassResponse | None`` and never raise — failures are logged
-and swallowed so the orchestrator can try the next engine.
-
-Also contains ``BypassResponse`` (the immutable response wrapper) and
-``_extract_cookies`` (cross-engine cookie extraction).
-
-Extracted from session.py so the orchestrator stays thin.
-"""
+"""Single-request HTTP engines (``_try_*``) and the BypassResponse wrapper. Engines never raise."""
 
 from __future__ import annotations
 
@@ -36,15 +24,8 @@ from core.validation import redact_secrets as _redact
 log = logging.getLogger("cloudflare_bypasser")
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                         BypassResponse                              ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-
 class BypassResponse:
-    """
-    Immutable response wrapper.  All data is captured eagerly so the caller
-    never holds a dangling reference to a closed socket/session.
-    """
+    """Immutable response; data is captured eagerly so no socket stays referenced."""
 
     __slots__ = ("content", "text", "status_code", "url", "_json_data", "engine_used", "cookies",
                  "headers")
@@ -78,27 +59,17 @@ class BypassResponse:
 
     @property
     def is_blocked(self) -> bool:
-        """True when the site is refusing us: a Cloudflare challenge, or a
-        403 that may be a block (tiny or undecodable body).
-
-        This decides only "stop trying other engines and pause the host".
-        It is NOT evidence that a stored clearance is bad; see
-        :attr:`is_cf_challenge` for that.
-        """
+        """True on a challenge or a possible 403 block. Not proof the clearance is bad; see is_cf_challenge."""
         if self.status_code not in (403, 503, 429):
             return False
         if self.is_cf_challenge:
             return True
 
-        # A tiny 403 may be a Cloudflare firewall block ("error code: 1020")
-        # or the origin's own refusal; either way another fingerprint is
-        # worth one try and the host should not be hammered.
+        # Tiny 403: Cloudflare firewall block ("error code: 1020") or the origin's refusal.
         if self.status_code == 403 and len(self.content) < 200:
             return True
 
-        # Detect garbage / undecoded responses — some engines (cloudscraper)
-        # return raw compressed bytes as "text" when Content-Encoding
-        # (brotli/gzip) fails to decode.
+        # Undecoded body (cloudscraper returns raw compressed bytes as text on decode failure).
         if self.status_code == 403 and len(self.text) > 50:
             first_char = self.text.strip()[0] if self.text.strip() else ''
             if first_char not in '<{[{"':
@@ -108,18 +79,13 @@ class BypassResponse:
 
     @property
     def is_cf_challenge(self) -> bool:
-        """True only on positive evidence of a Cloudflare challenge page: the
-        ``cf-mitigated: challenge`` header or challenge markers in the body.
-
-        Callers clear the stored cf_clearance on this, so a plain site 403
-        (no evidence) must not trigger it.
-        """
+        """True only on positive evidence (header or body markers); callers clear cf_clearance on it."""
         if self.status_code not in (403, 503, 429):
             return False
         if str(self.headers.get("cf-mitigated", "")).strip().lower() == "challenge":
             return True
 
-        # Check both decoded text and raw bytes (response may be brotli-compressed)
+        # Raw bytes too: the body may be brotli-compressed.
         text_lower = self.text[:4000].lower() if self.text else ""
         content_lower = self.content[:4000].lower() if self.content else b""
 
@@ -158,18 +124,12 @@ def _lower_headers(h) -> dict:
         return {}
 
 
-# Keep backward compat alias
 _Response = BypassResponse
 
-
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                      Cookie extraction                              ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 
 def _extract_cookies(resp) -> dict:
     """Extract a plain dict of cookies from any HTTP response object."""
     try:
-        # curl_cffi, requests, cloudscraper, httpx all support .cookies
         if hasattr(resp, "cookies"):
             jar = resp.cookies
             if hasattr(jar, "get_dict"):
@@ -178,7 +138,7 @@ def _extract_cookies(resp) -> dict:
                 return {str(k): str(v) for k, v in jar.items()}
             if isinstance(jar, dict):
                 return {str(k): str(v) for k, v in jar.items()}
-        # urllib / stdlib — parse Set-Cookie header
+        # urllib: parse Set-Cookie.
         if hasattr(resp, "headers"):
             raw = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie") or ""
             if raw:
@@ -196,14 +156,6 @@ def _extract_cookies(resp) -> dict:
         log.debug("cookie extraction failed: %s", e)
     return {}
 
-
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                    Engine implementations                           ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-
-# ---------------------------------------------------------------------------
-# curl_cffi (async)
-# ---------------------------------------------------------------------------
 
 async def _try_curl_cffi(
     url: str,
@@ -289,10 +241,6 @@ async def _try_curl_cffi(
     return last_err
 
 
-# ---------------------------------------------------------------------------
-# curl_cffi (sync)
-# ---------------------------------------------------------------------------
-
 def _try_curl_cffi_sync(
     url: str,
     params: dict | None,
@@ -376,10 +324,6 @@ def _try_curl_cffi_sync(
 
     return last_err
 
-
-# ---------------------------------------------------------------------------
-# cloudscraper (sync)
-# ---------------------------------------------------------------------------
 
 def _set_site_scoped_cookies(jar, cookies: dict, url: str) -> None:
     """Put *cookies* in a requests-style *jar*, bound to *url*'s site.
@@ -465,10 +409,6 @@ def _try_cloudscraper_sync(
         return None
 
 
-# ---------------------------------------------------------------------------
-# httpx (async)
-# ---------------------------------------------------------------------------
-
 async def _try_httpx(
     url: str,
     params: dict | None,
@@ -516,10 +456,6 @@ async def _try_httpx(
         return None
 
 
-# ---------------------------------------------------------------------------
-# requests (sync)
-# ---------------------------------------------------------------------------
-
 def _try_requests_sync(
     url: str,
     params: dict | None,
@@ -563,10 +499,6 @@ def _try_requests_sync(
         return None
 
 
-# ---------------------------------------------------------------------------
-# urllib (sync)
-# ---------------------------------------------------------------------------
-
 def _try_urllib_sync(
     url: str,
     params: dict | None,
@@ -585,8 +517,6 @@ def _try_urllib_sync(
 
         import http.cookiejar
         from core.validation import SameSiteRedirectHandler
-        # Was HTTPCookieProcessor(HTTPCookieProcessor()), which raised on every
-        # request, so this "always available" fallback never worked.
         cookie_jar = http.cookiejar.CookieJar()
         handlers: list = [
             urllib.request.HTTPCookieProcessor(cookie_jar),
@@ -600,10 +530,7 @@ def _try_urllib_sync(
             })
             handlers.append(proxy_handler)
         else:
-            # No app proxy means a direct connection. Without this,
-            # build_opener adds a default ProxyHandler that picks up
-            # HTTP(S)_PROXY and the Windows registry proxy, unlike the
-            # other engines given proxies=None.
+            # No app proxy means direct: otherwise build_opener picks up env/registry proxies.
             handlers.append(urllib.request.ProxyHandler({}))
 
         opener = urllib.request.build_opener(*handlers)

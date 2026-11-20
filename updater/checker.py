@@ -1,10 +1,4 @@
-"""
-updater/checker.py — Checks GitHub Releases for a newer version.
-
-Runs in a background QThread.  Emits ``update_available`` if the latest
-GitHub release tag is greater than the local version.  Designed for a
-portable app — no binary replacement, just notification + link.
-"""
+"""Background check of the latest GitHub release against the local version."""
 
 from __future__ import annotations
 
@@ -19,18 +13,10 @@ from updater.version import __version__
 
 log = logging.getLogger("updater")
 
-# ── Default check URL — your GitHub Releases API ──────────────────
-# Format: https://api.github.com/repos/OWNER/REPO/releases/latest
-# Returns JSON with "tag_name", "html_url", "body", etc.
 _DEFAULT_RELEASES_URL = "https://api.github.com/repos/esefxdz/booru/releases/latest"
 
-# ── HTTP timeout (seconds) ────────────────────────────────────────
 _TIMEOUT = 10
 
-
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  Worker thread                                                      ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 
 class _CheckThread(QThread):
     """Fetch the latest release tag from GitHub in a background thread."""
@@ -56,22 +42,8 @@ class _CheckThread(QThread):
             self.finished.emit(None)
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  Public updater                                                     ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-
 class Updater(QObject):
-    """
-    Non-blocking update checker for a portable GitHub-distributed app.
-
-    Usage::
-
-        updater = Updater(parent)
-        updater.update_available.connect(
-            lambda ver, url, notes: print(f"New version: {ver}")
-        )
-        updater.check()
-    """
+    """Non-blocking update checker; emits ``update_available`` when a newer release exists."""
 
     update_available = pyqtSignal(str, str, str)  # version, download_url, notes
 
@@ -81,15 +53,13 @@ class Updater(QObject):
         self._thread: _CheckThread | None = None
 
     def check(self) -> None:
-        """Start a background update check.  No-op if already running."""
+        """Start a background check; no-op if one is running."""
         if self._thread is not None and self._thread.isRunning():
             return
         self._thread = _CheckThread(self._releases_url)
         self._thread.finished.connect(self._on_result)
         self._thread.finished.connect(self._thread.deleteLater)
         self._thread.start()
-
-    # ── Internal ──────────────────────────────────────────────────
 
     def _on_result(self, data: dict | None) -> None:
         if data is None:
@@ -109,10 +79,6 @@ class Updater(QObject):
         log.info("Update available: %s → %s", __version__, remote)
         self.update_available.emit(remote, url, notes)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _tag_to_version(tag: str) -> str:
     """Strip a leading 'v' from a release tag, e.g. 'v1.2.0' → '1.2.0'."""

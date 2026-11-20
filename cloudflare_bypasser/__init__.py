@@ -1,19 +1,4 @@
-"""
-cloudflare_bypasser/__init__.py
-
-Public API for the Cloudflare bypass engine.
-
-Usage:
-    from cloudflare_bypasser import get_session
-    session = get_session("danbooru")
-    resp = await session.get("https://danbooru.donmai.us/posts.json", params={...})
-
-The engine automatically tries curl_cffi → cloudscraper → httpx → requests
-→ urllib, with retry and exponential backoff.  It never returns None — even
-total failure gives a BypassResponse with status_code=0.
-
-Users can lock to a specific engine via settings → Network → Bypass Method.
-"""
+"""Public API of the Cloudflare bypass engine: cached per-booru sessions."""
 
 from __future__ import annotations
 import logging
@@ -30,23 +15,10 @@ from cloudflare_bypasser.session import (
 from cloudflare_bypasser.circuit_breaker import reset_circuit as _reset_circuit
 from cloudflare_bypasser import store as _store
 
-# Ensure the logger exists so consumers can configure it
 log = logging.getLogger("cloudflare_bypasser")
 
 
-# ---------------------------------------------------------------------------
-# Session cache — one long-lived BypassSession per booru
-# ---------------------------------------------------------------------------
-# Before this cache, every call to get_session() created a brand-new
-# BypassSession (and with it, a new curl_cffi.AsyncSession + TLS handshake).
-# Callers like media_viewer._fetch_bytes() would create a session, use it
-# once, and discard it — throwing away accumulated cookies and forcing a
-# fresh TLS handshake on every image load.
-#
-# Now sessions are cached by booru name with a fingerprint that captures
-# cookies, UA, proxy, and bypass method.  When any of those change (e.g.
-# after a new CF bypass), the fingerprint mismatches and a fresh session
-# replaces the stale one automatically.
+# One session per booru, replaced when its fingerprint (cookies, UA, proxy, method) changes.
 
 _session_cache: dict[str, tuple[str, BypassSession]] = {}
 
@@ -64,31 +36,15 @@ def _session_fingerprint(booru_name: str) -> str:
     return f"{ua}|{cookie_part}|{proxy}|{method}|{site}"
 
 
-# ---------------------------------------------------------------------------
-# Public helpers
-# ---------------------------------------------------------------------------
-
 def get_session(booru_name: str) -> BypassSession:
-    """
-    Return a long-lived :class:`BypassSession` for *booru_name*.
-
-    Sessions are cached per booru and automatically replaced when cookies,
-    User-Agent, proxy, or bypass method change.  Callers should NOT close
-    the returned session — it is managed by this module and cleaned up at
-    shutdown via :func:`close_all_sessions`.
-
-    Always returns a valid session with at least one working engine
-    (urllib is always available).  Callers should never need to guard
-    against None.
-    """
+    """Return the cached session for *booru_name*. Callers must not close it."""
     fp = _session_fingerprint(booru_name)
     existing = _session_cache.get(booru_name)
     if existing is not None:
         old_fp, session = existing
         if old_fp == fp:
             return session
-        # Fingerprint changed: replace the old session and release its
-        # clients (once any request still running on it has finished).
+        # Release the old session's clients once its in-flight requests finish.
         log.debug("get_session: invalidating cached session for %s (fp changed)", booru_name)
         _retire(session)
 
@@ -124,17 +80,14 @@ _UNSET = object()
 
 
 def bypass_snapshot(booru_name: str):
-    """Opaque token for what is stored for *booru_name* right now. Take it
-    before sending a request; pass it to :func:`invalidate_session`."""
+    """Opaque token of the stored bypass data; pass it to :func:`invalidate_session`."""
     return _store.snapshot(booru_name)
 
 
 def invalidate_session(booru_name: str, unless_changed_since=_UNSET) -> None:
-    """Clear stored bypass data AND the cached session for *booru_name*.
+    """Clear stored bypass data and the cached session for *booru_name*.
 
-    With *unless_changed_since* (a :func:`bypass_snapshot`), do nothing if
-    the stored data changed since then: the user solved the challenge while
-    the failing request was in flight, so the block is stale."""
+    With *unless_changed_since*, do nothing if the data changed since (a stale block)."""
     if unless_changed_since is _UNSET:
         _store.clear_bypass(booru_name)
     elif not _store.clear_bypass_if_unchanged(booru_name, unless_changed_since):
@@ -161,10 +114,6 @@ async def close_all_sessions():
             log.debug("close_all_sessions: error closing session", exc_info=True)
     _session_cache.clear()
 
-
-# ---------------------------------------------------------------------------
-# Expose key types
-# ---------------------------------------------------------------------------
 
 __all__ = [
     "BypassSession",

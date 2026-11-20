@@ -1,7 +1,3 @@
-"""
-gelbooru.py - Adapter for Gelbooru-based sites.
-Covers: Gelbooru, Safebooru, Rule34, xBooru, RealBooru, HypnoHub, etc.
-"""
 from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
@@ -67,8 +63,6 @@ class GelbooruAdapter(BaseAdapter):
             return [str(t).replace(",", "") for t in tags]
         return []
 
-    # ##################################################################
-    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         tags = self.get_tags(post)
         cats = {"artist": [], "character": [], "copyright": [], "meta": [], "general": []}
@@ -85,7 +79,6 @@ class GelbooruAdapter(BaseAdapter):
             else:
                 cats["general"].append(t)
         return cats
-    # ##################################################################
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")

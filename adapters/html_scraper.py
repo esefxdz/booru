@@ -1,7 +1,4 @@
-"""
-html_scraper.py - HTML scraper fallback for Gelbooru-like sites.
-Used as a fallback when JSON API fails.
-"""
+"""HTML scraper fallback for Gelbooru-like sites."""
 from urllib.parse import quote as _urlquote
 import re
 from .base import BaseAdapter
@@ -77,8 +74,6 @@ class HtmlScraperAdapter(BaseAdapter):
         tags = post.get("tags", "")
         return tags.replace(",", " ").split() if tags else []
 
-    # ##################################################################
-    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         return {
             "artist": [],
@@ -87,7 +82,6 @@ class HtmlScraperAdapter(BaseAdapter):
             "meta": [],
             "general": self.get_tags(post),
         }
-    # ##################################################################
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")

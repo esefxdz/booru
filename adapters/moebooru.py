@@ -1,7 +1,3 @@
-"""
-moebooru.py - Adapter for Moebooru-based sites.
-Covers: Yande.re, Konachan, older Danbooru forks
-"""
 from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
@@ -45,8 +41,6 @@ class MoebooruAdapter(BaseAdapter):
         tags = post.get("tags", "")
         return tags.replace(",", " ").split() if tags else []
 
-    # ##################################################################
-    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         return {
             "artist": [],
@@ -55,7 +49,6 @@ class MoebooruAdapter(BaseAdapter):
             "meta": [],
             "general": self.get_tags(post),
         }
-    # ##################################################################
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")

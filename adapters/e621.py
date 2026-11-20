@@ -1,7 +1,3 @@
-"""
-e621.py - Adapter for e621 / e926 (furry boorus).
-Covers: e621.net, e926.net (with nested JSON structure and species tags)
-"""
 from urllib.parse import quote as _urlquote
 import logging
 from .base import BaseAdapter
@@ -57,8 +53,6 @@ class E621Adapter(BaseAdapter):
             return result
         return []
 
-    # ##################################################################
-    # Used by the downloader to determine the smart folder name (artist/character/etc)
     def get_categorized_tags(self, post: dict) -> dict:
         tag_obj = post.get("tags", {})
         if not isinstance(tag_obj, dict):
@@ -70,7 +64,6 @@ class E621Adapter(BaseAdapter):
             "meta": tag_obj.get("meta", []),
             "general": tag_obj.get("general", []) + tag_obj.get("species", []),
         }
-    # ##################################################################
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")
