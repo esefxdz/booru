@@ -8,7 +8,7 @@ and handles keyboard shortcuts for navigation.
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QWidget, QHBoxLayout
-from ui import colors
+from ui.style import colors
 
 from displayers.media_viewer import MediaViewer
 from displayers.sidebar import OverlaySidebar

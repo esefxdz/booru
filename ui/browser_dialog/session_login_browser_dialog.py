@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QPushButton
 from PyQt6.QtCore import QTimer
 
 from ui.browser_dialog.in_app_browser import InAppBrowser
-from ui import colors
+from ui.style import colors
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

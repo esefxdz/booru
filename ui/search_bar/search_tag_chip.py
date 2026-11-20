@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 from PyQt6.QtCore import Qt, pyqtSignal
-from ui import colors
-from ui.icons import Icons
+from ui.style import colors
+from ui.style.icons import Icons
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                        CLASS: SearchTagChip                         ║

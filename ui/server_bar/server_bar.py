@@ -3,7 +3,7 @@ from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QCursor
 from core import settings
 import boorus
-from ui.icons import Icons
+from ui.style.icons import Icons
 from ui.server_bar.booru_button import BooruButton
 from ui.modals import AddBooruDialog
 
@@ -12,7 +12,7 @@ from ui.modals import AddBooruDialog
 # ║  The left-most vertical sidebar (Discord style). Manages the list   ║
 # ║  of booru site icons, bookmark/home buttons, and reordering logic.  ║
 # ╚══════════════════════════════════════════════════════════════════════╝
-from ui import colors
+from ui.style import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                         CLASS: ServerBar                            ║

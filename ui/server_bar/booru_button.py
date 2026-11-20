@@ -2,13 +2,13 @@ from PyQt6.QtWidgets import QPushButton
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QCursor, QIcon
 from core import settings
-from ui.icons import Icons
+from ui.style.icons import Icons
 from ui.server_bar.favicon_fetcher import FaviconFetcher
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                   CLASS: BooruButton                                 ║
 # ║  A QPushButton that represents a booru site in the sidebar.          ║
-from ui import colors
+from ui.style import colors
 import ui.animations as anims
 from cloudflare_bypasser import store as cf_store
 

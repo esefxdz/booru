@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QListWidget, QGraphicsDropShadowEffect
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
-from ui import colors
+from ui.style import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  CLASS: AutocompleteList                                            ║

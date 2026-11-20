@@ -103,7 +103,7 @@ class NavigationManager(QObject):
                 w.deleteLater()
                 break
 
-        from ui.api_settings_view import APISettingsView
+        from ui.views.api_settings_view import APISettingsView
         view = APISettingsView(parent, name)
         self._stack.addWidget(view)
         self._stack.setCurrentWidget(view)

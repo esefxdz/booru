@@ -23,7 +23,7 @@ from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtGui import QCursor, QDesktopServices
 from PyQt6.QtCore import QUrl
 
-from ui import colors
+from ui.style import colors
 
 _log = logging.getLogger(__name__)
 

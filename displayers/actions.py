@@ -10,7 +10,7 @@ import threading
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QApplication
 from PyQt6.QtCore import QTimer
 
-from ui import colors
+from ui.style import colors
 from core import settings
 
 

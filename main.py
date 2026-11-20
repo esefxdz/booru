@@ -135,7 +135,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView as _WEV  # noqa: F401
 from core import settings
 from ui.main_window import BooruGui
 
-import ui.colors as colors
+from ui.style import colors
 
 # ── Main Entry ──────────────────────────────────────────────
 

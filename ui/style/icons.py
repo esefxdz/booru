@@ -3,7 +3,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtSvg import QSvgRenderer
 
 
-from ui import colors
+from ui.style import colors
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

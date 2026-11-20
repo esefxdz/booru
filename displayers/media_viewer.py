@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
 from core import settings
 import boorus
-from ui import colors
+from ui.style import colors
 
 
 # ══════════════════════════════════════════════════════════════════════

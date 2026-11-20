@@ -3,7 +3,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from ui.search_bar.search_tag_chip import SearchTagChip
 from ui.autocomplete import AutocompleteList, AutocompleteHandler
 
-from ui import colors
+from ui.style import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                        CLASS: BooruSearchBar                        ║

@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
 from displayers.details import FileDetails
 from displayers.actions import ActionButtons
 from displayers.post_displayer_tags import ClickableTagsDropdown
-from ui import colors
+from ui.style import colors
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

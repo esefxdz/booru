@@ -13,8 +13,8 @@ from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QCursor
 
 from core import settings
-from ui import colors
-from ui.icons import Icons
+from ui.style import colors
+from ui.style.icons import Icons
 import ui.animations as anims
 from ui.settings_view.section_display import DisplaySection
 from ui.settings_view.section_media import MediaSection

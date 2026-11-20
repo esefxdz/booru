@@ -26,25 +26,25 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QIcon
 
-from ui import colors
+from ui.style import colors
 from core import settings
 import boorus
 import boorus as boorus_mod
 from download_images import BooruDownloader
 from ui.controller import AppController
 from displayers.overlay import MediaOverlay
-from ui.sidebar import Sidebar
-from ui.gallery import Gallery
-from ui.tag_panel import TagPanel
+from ui.widgets.sidebar import Sidebar
+from ui.gallery.gallery import Gallery
+from ui.widgets.tag_panel import TagPanel
 from ui.search_bar import BooruSearchBar
 from ui.server_bar import ServerBar
-from ui.blacklist_view import BlacklistView
-from ui.favorites_view import FavoritesView
-from ui.download_window import DownloadWindow
-from ui.downloads_view import DownloadsView
+from ui.views.blacklist_view import BlacklistView
+from ui.views.favorites_view import FavoritesView
+from ui.views.download_window import DownloadWindow
+from ui.views.downloads_view import DownloadsView
 from ui.settings_view import SettingsView
-from ui.cheat_sheet import CheatSheetView
-from ui.navigation import NavigationManager
+from ui.views.cheat_sheet import CheatSheetView
+from ui.widgets.navigation import NavigationManager
 from ui.hotkeys import HotkeyManager
 from ui.windows_utils import apply_dark_title_bar
 from storage.bookmarks_db import db

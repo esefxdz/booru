@@ -4,7 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QRect
 
-from ui import gallery as gallery_mod
+from ui.gallery import gallery as gallery_mod
 from storage import bookmarks_db
 
 

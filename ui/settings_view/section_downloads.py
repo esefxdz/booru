@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from core import settings
-from ui import colors
+from ui.style import colors
 from download_images.engines import ENGINES, ENGINE_LABELS, get_available_engines
 
 

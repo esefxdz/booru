@@ -16,7 +16,7 @@ from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage, QWebEngineS
 from PyQt6.QtCore import pyqtSignal, QTimer, Qt
 
 from ui.browser_dialog.in_app_browser import InAppBrowser
-from ui import colors
+from ui.style import colors
 
 _CHROME_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

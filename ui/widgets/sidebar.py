@@ -7,8 +7,8 @@ from PyQt6.QtGui import QCursor, QIcon
 from storage.bookmarks_db import db
 from core import settings
 import boorus
-from ui import colors
-from ui.icons import Icons
+from ui.style import colors
+from ui.style.icons import Icons
 
 class SidebarItem(QPushButton):
     def __init__(self, text, icon_name, is_active=False):

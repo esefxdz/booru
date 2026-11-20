@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton
 from PyQt6.QtCore import Qt
 
 
-from ui import colors
+from ui.style import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  CLASS: BulkDownloadDialog                                          ║

@@ -3,14 +3,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSlot, QSize, pyqtSignal
 import threading
-from ui.icons import Icons
+from ui.style.icons import Icons
 from download_images.tag_categorizer import get_categorizer
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                         CLASS: TagPanel                             ║
 # ╚══════════════════════════════════════════════════════════════════════╝
-from ui import colors
+from ui.style import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                         CLASS: TagPanel                             ║

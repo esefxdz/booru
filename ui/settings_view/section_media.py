@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QComboBox, QCheckBox, QFrame
 )
 from core import settings
-from ui import colors
+from ui.style import colors
 
 
 class MediaSection(QWidget):

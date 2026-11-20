@@ -15,7 +15,7 @@ class AutocompleteHandlerSignals(QObject):
     visibility_changed = pyqtSignal(bool)
 
 
-from ui import colors
+from ui.style import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  CLASS: AutocompleteHandler                                         ║

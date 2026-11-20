@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QFrame, QScrollArea, QGridLayout, QSizePolicy
 )
 from PyQt6.QtCore import Qt
-from ui import colors
+from ui.style import colors
 
 class CheatSheetView(QWidget):
     def __init__(self, main_app):

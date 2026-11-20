@@ -17,7 +17,7 @@ from PyQt6.QtCore import Qt, QUrl, QTimer, QSettings, pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 
-from ui import colors
+from ui.style import colors
 from core import settings
 
 

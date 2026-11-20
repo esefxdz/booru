@@ -7,10 +7,10 @@ Extracted here so neither view needs to define the same class twice.
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 from PyQt6.QtCore import Qt, pyqtSignal
 
-from ui.icons import Icons
+from ui.style.icons import Icons
 
 
-from ui import colors
+from ui.style import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  CLASS: TagChip                                                     ║

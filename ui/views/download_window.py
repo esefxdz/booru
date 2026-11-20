@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QProgressBar, QHBoxLayout
 from PyQt6.QtCore import Qt
-from ui import colors
+from ui.style import colors
 
 class DownloadProgressBar(QWidget):
     """A single progress bar for a file download."""

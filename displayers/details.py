@@ -5,7 +5,7 @@ Provides reusable components for displaying post metadata like ID,
 resolution, and rating in a clean, space-saving format.
 """
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel
-from ui import colors
+from ui.style import colors
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

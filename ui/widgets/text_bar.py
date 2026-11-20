@@ -1,10 +1,10 @@
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QPushButton, QLabel, QGraphicsDropShadowEffect, QFrame
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
-from ui.icons import Icons
+from ui.style.icons import Icons
 
 
-from ui import colors
+from ui.style import colors
 #this is for favorite tags and blacklist tags
 
 # ╔══════════════════════════════════════════════════════════════════════╗

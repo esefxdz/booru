@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from displayers.details import CollapsibleWidget
-from ui import colors
+from ui.style import colors
 
 # ---------------------------------------------------------------------------
 # Per-category accent colors (matches the tag_chip palette)

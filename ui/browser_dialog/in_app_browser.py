@@ -14,7 +14,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings
 from PyQt6.QtCore import Qt, QUrl
 
-from ui import colors
+from ui.style import colors
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

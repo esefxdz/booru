@@ -23,10 +23,10 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QPainterPath
 
 from core import settings
-from ui import colors
-from ui.pixmap_cache import PixmapLRU, DEFAULT_MAX_BYTES as PX_CACHE_DEFAULT
-from ui.tile_pool import TilePool
-from ui.gallery_layout import GalleryLayout
+from ui.style import colors
+from ui.gallery.pixmap_cache import PixmapLRU, DEFAULT_MAX_BYTES as PX_CACHE_DEFAULT
+from ui.gallery.tile_pool import TilePool
+from ui.gallery.gallery_layout import GalleryLayout
 from storage import thumb_cache
 
 

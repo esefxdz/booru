@@ -19,7 +19,7 @@ from adapters import adapter_choices
 from core.validation import validate_url, validate_filename
 
 
-from ui import colors
+from ui.style import colors
 
 # Default API paths per engine — auto-filled when the user picks a type
 # or when auto-detect succeeds, so they rarely need to touch this field

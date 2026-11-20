@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import QPushButton, QWidget
 from PyQt6.QtCore import Qt, QRect
 from PyQt6.QtGui import QIcon, QPixmap
 
-from ui import colors
+from ui.style import colors
 import ui.animations as anims
 
 

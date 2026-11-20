@@ -27,7 +27,7 @@ from core import settings
 import boorus
 
 
-from ui import colors
+from ui.style import colors
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  CLASS: APISettingsView                                             ║
