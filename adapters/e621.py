@@ -23,28 +23,36 @@ class E621Adapter(BaseAdapter):
             data = r.json()
             if isinstance(data, dict):
                 return data.get("posts", [])
-            return []
+            return data if isinstance(data, list) else []  # 2026 format: a bare list
         except Exception as e:
             logging.getLogger("adapters").warning(
                 "[e621] could not parse response from %s (HTTP %s): %s",
                 str(getattr(r, "url", "?")).split("?")[0], getattr(r, "status_code", "?"), e)
             return []
 
+    @staticmethod
+    def _url(post: dict, old_key: str, new_key: str, new_field: str) -> str:
+        # Old format: post[old_key]["url"]; 2026 format: post["files"][new_key][new_field].
+        files = post.get("files")
+        if isinstance(files, dict):
+            obj = files.get(new_key)
+            return (obj.get(new_field) or "") if isinstance(obj, dict) else ""
+        obj = post.get(old_key)
+        return (obj.get("url") or "") if isinstance(obj, dict) else ""
+
     def get_preview_url(self, post: dict) -> str:
-        preview = post.get("preview", {})
-        return preview.get("url") if isinstance(preview, dict) else ""
+        return self._url(post, "preview", "preview", "jpg")
 
     def get_file_url(self, post: dict) -> str:
-        file_obj = post.get("file", {})
-        return file_obj.get("url") if isinstance(file_obj, dict) else ""
+        return self._url(post, "file", "original", "url")
 
     def get_sample_url(self, post: dict) -> str:
-        sample = post.get("sample", {})
-        url = sample.get("url") if isinstance(sample, dict) else ""
-        return url or self.get_file_url(post)
+        return self._url(post, "sample", "sample", "jpg") or self.get_file_url(post)
 
     def get_tags(self, post: dict) -> list:
         tag_obj = post.get("tags", {})
+        if isinstance(tag_obj, list):
+            return [t for t in tag_obj if isinstance(t, str)]
         if isinstance(tag_obj, dict):
             result = []
             for cats in tag_obj.values():
@@ -56,7 +64,8 @@ class E621Adapter(BaseAdapter):
     def get_categorized_tags(self, post: dict) -> dict:
         tag_obj = post.get("tags", {})
         if not isinstance(tag_obj, dict):
-            return {"artist": [], "copyright": [], "meta": [], "general": []}
+            return {"artist": [], "copyright": [], "character": [], "meta": [],
+                    "general": self.get_tags(post)}
         return {
             "artist": tag_obj.get("artist", []),
             "copyright": tag_obj.get("copyright", []),
