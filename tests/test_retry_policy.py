@@ -139,3 +139,15 @@ def test_success_closes_circuit(server):
     _Counter.status, _Counter.body = 200, b'{"ok": true}'
     r = asyncio.run(s.get(server + "/x"))
     assert r.status_code == 200 and not cb._blocked_until
+
+
+def test_lookup_with_arm_breaker_false_does_not_pause_the_host(server):
+    # The tag-category page lookup must not stop images/searches on a
+    # challenged HTML page: arm_breaker=False leaves the host circuit closed.
+    _Counter.status, _Counter.body = 403, _CF_CHALLENGE
+    s = _session(server)
+    r = s.get_sync(server + "/post-page", arm_breaker=False)
+    assert r.is_blocked
+    assert not cb._blocked_until
+    s.get_sync(server + "/post-page")           # default still arms it
+    assert cb._blocked_until

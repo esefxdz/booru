@@ -160,7 +160,8 @@ def categorize_post(post: dict) -> dict:
     if url:
         try:
             from cloudflare_bypasser import get_session
-            r = get_session(booru).get_sync(url, timeout=15)
+            # Optional lookup: a challenged page must not pause image loads on this host.
+            r = get_session(booru).get_sync(url, timeout=15, arm_breaker=False)
             if r.status_code == 200:
                 categorizer.learn(adapter.parse_tag_types(r.text))
         except Exception as e:

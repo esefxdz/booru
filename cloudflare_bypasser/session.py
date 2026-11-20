@@ -299,6 +299,7 @@ class BypassSession(FileDownloadMixin):
         only_engines: list[str] | None = None,
         _solve_since: Optional[int] = None,
         _max_attempts: Optional[int] = None,
+        arm_breaker: bool = True,
     ) -> BypassResponse:
         """GET with engine failover, at most _MAX_ENGINE_ATTEMPTS engine calls.
 
@@ -370,7 +371,7 @@ class BypassSession(FileDownloadMixin):
                      round_no, _MAX_RETRIES, url, wait)
             await asyncio.sleep(wait)
 
-        return self._give_up(url, last_response, solve_gen)
+        return self._give_up(url, last_response, solve_gen, arm_breaker)
 
     def _accept(self, engine: str, url: str, resp) -> bool:
         """Record and accept a good response."""
@@ -396,9 +397,9 @@ class BypassSession(FileDownloadMixin):
         return None
 
     def _give_up(self, url: str, last_response: Optional[BypassResponse],
-                 solve_gen: Optional[int] = None) -> BypassResponse:
+                 solve_gen: Optional[int] = None, arm_breaker: bool = True) -> BypassResponse:
         if last_response:
-            if last_response.is_blocked:
+            if last_response.is_blocked and arm_breaker:
                 _open_circuit(url, solve_gen)
             log.warning("All engines failed for %s, returning last response [%d]",
                         url, last_response.status_code)
@@ -420,8 +421,10 @@ class BypassSession(FileDownloadMixin):
         params: dict | None = None,
         headers: dict | None = None,
         timeout: int = _DEFAULT_TIMEOUT,
+        arm_breaker: bool = True,
     ) -> BypassResponse:
-        """Sync engines first; httpx on the shared loop only after transient failures, within the attempt budget."""
+        """Sync engines first; httpx on the shared loop only after transient failures, within the attempt budget.
+        arm_breaker=False: a block here does not pause the host (for optional lookups)."""
         solve_gen = solve_generation(url)
         refused = _refuse_non_http(url)
         if refused is not None:
@@ -457,13 +460,13 @@ class BypassSession(FileDownloadMixin):
             async_resp = self._run_on_shared_loop(
                 self.get(url, params=params, headers=headers, timeout=timeout,
                          only_engines=["httpx"], _solve_since=solve_gen,
-                         _max_attempts=remaining),
+                         _max_attempts=remaining, arm_breaker=arm_breaker),
                 timeout,
             )
             if async_resp is not None and async_resp.status_code > 0:
                 return async_resp
 
-        return self._give_up(url, last_response, solve_gen)
+        return self._give_up(url, last_response, solve_gen, arm_breaker)
 
     @staticmethod
     def _run_on_shared_loop(coro, timeout: int):
