@@ -244,11 +244,11 @@ class DisplayerWindow(QMainWindow):
     # ----- Bookmarks -----
 
     def _check_bookmarked(self):
-        from ui.bookmarks_main.bookmarks_db import db
+        from storage.bookmarks_db import db
         return db.is_post_bookmarked(self.post_id, self.post.get("_booru"))
 
     def _toggle_bookmark(self):
-        from ui.bookmarks_main.bookmarks_db import db
+        from storage.bookmarks_db import db
         if self._is_bookmarked:
             db.remove_bookmark(self.post_id, self.post.get("_booru"))
             self._is_bookmarked = False

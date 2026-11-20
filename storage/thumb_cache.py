@@ -26,7 +26,7 @@ Architecture
 
 Usage
 =====
-    import thumb_cache
+    from storage import thumb_cache
 
     # Read (checks L1 first, then L2, promotes to L1 on hit)
     data: bytes | None = thumb_cache.get("safebooru:12345")

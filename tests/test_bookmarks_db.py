@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from ui.bookmarks_main import bookmarks_db as m
+from storage import bookmarks_db as m
 
 
 def _db(path):

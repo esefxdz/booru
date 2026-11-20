@@ -34,7 +34,7 @@ def test_write_probe_leaves_nothing(tmp_path):
 
 def test_suite_never_uses_real_data_folder():
     from core.settings import BASE_DIR
-    from ui.bookmarks_main import bookmarks_db
+    from storage import bookmarks_db
     assert BASE_DIR != app_paths.app_dir()
     assert "booru-test-data-" in str(BASE_DIR)
     assert "booru-test-data-" in str(bookmarks_db._DB_FILE)

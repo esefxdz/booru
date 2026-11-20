@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSlot, QSize, pyqtSignal
 import threading
 from ui.icons import Icons
-from tag_categorizer import get_categorizer
+from download_images.tag_categorizer import get_categorizer
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

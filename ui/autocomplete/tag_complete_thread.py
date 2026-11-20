@@ -12,7 +12,7 @@ import re
 import json
 import httpx
 from PyQt6.QtCore import QRunnable, QObject, pyqtSignal
-from ui.autocomplete.tag_cache import search_tags, store_tags
+from storage.tag_cache import search_tags, store_tags
 
 from core import settings
 import boorus

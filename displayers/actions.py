@@ -97,7 +97,7 @@ class ActionButtons(QWidget):
         self.orig_btn.setText("Original")
         self.orig_btn.show()
         
-        from ui.bookmarks_main.bookmarks_db import db
+        from storage.bookmarks_db import db
         self._is_bookmarked = db.is_post_bookmarked(self.post_id, self.post.get("_booru"))
         self._update_bm_style()
 
@@ -133,7 +133,7 @@ class ActionButtons(QWidget):
 
     def _toggle_bookmark(self):
         if not self.post: return
-        from ui.bookmarks_main.bookmarks_db import db
+        from storage.bookmarks_db import db
         if self._is_bookmarked:
             db.remove_bookmark(self.post_id, self.post.get("_booru"))
             self._is_bookmarked = False

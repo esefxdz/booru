@@ -46,7 +46,7 @@ from io import BytesIO
 from PIL import Image
 
 from core import settings
-import thumb_cache
+from storage import thumb_cache
 
 log = logging.getLogger(__name__)
 

@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from core import settings
 from ui import colors
-import thumb_cache
+from storage import thumb_cache
 import webbrowser
 
 

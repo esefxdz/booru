@@ -25,7 +25,7 @@ class FetchThread(QThread):
 
         try:
             if self.is_bookmarks_mode:
-                from ui.bookmarks_main.bookmarks_db import db
+                from storage.bookmarks_db import db
                 all_bms = db.get_all_bookmarks()
                 if self.bookmark_filter:
                     all_bms = [p for p in all_bms if p.get("_booru") == self.bookmark_filter]

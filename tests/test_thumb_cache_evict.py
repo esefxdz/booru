@@ -1,5 +1,5 @@
 """L2 thumbnail cache only runs its eviction scan every N writes."""
-import thumb_cache
+from storage import thumb_cache
 
 
 def test_eviction_scan_runs_once_per_batch_of_puts(tmp_path):

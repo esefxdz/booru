@@ -47,7 +47,7 @@ from ui.cheat_sheet import CheatSheetView
 from ui.navigation import NavigationManager
 from ui.hotkeys import HotkeyManager
 from ui.windows_utils import apply_dark_title_bar
-from ui.bookmarks_main.bookmarks_db import db
+from storage.bookmarks_db import db
 from ui.browser_dialog import run_cf_bypass
 from ui.modals import AddBooruDialog, BulkDownloadDialog
 from core.validation import validate_search_term

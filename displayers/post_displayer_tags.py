@@ -58,7 +58,7 @@ class _CategorizerThread(QThread):
 
     def run(self):
         try:
-            from tag_categorizer import get_categorizer
+            from download_images.tag_categorizer import get_categorizer
             cats = get_categorizer().categorize_tags(self._tags)
             self.done.emit(cats, self._generation)
         except Exception as e:

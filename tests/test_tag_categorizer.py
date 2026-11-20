@@ -2,7 +2,7 @@
 import json
 import time
 
-import tag_categorizer
+from download_images import tag_categorizer
 
 
 class _Resp:

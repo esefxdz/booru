@@ -5,7 +5,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import traceback
-import thumb_cache
+from storage import thumb_cache
 import download_images.engines as engines
 import download_images.thumb_client as thumb_client
 

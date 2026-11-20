@@ -27,7 +27,7 @@ from ui import colors
 from ui.pixmap_cache import PixmapLRU, DEFAULT_MAX_BYTES as PX_CACHE_DEFAULT
 from ui.tile_pool import TilePool
 from ui.gallery_layout import GalleryLayout
-import thumb_cache
+from storage import thumb_cache
 
 
 def _post_key(post) -> tuple:
@@ -311,7 +311,7 @@ class Gallery(QWidget):
 
     def prepare_skeletons(self, posts):
         """Register posts as pure data. No widgets are created here."""
-        from ui.bookmarks_main.bookmarks_db import db
+        from storage.bookmarks_db import db
         # (booru, id): ids are only unique per booru, and the bookmarks page
         # mixes posts from several boorus.
         bookmarked_keys = db.bookmarked_keys(posts)

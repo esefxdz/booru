@@ -6,7 +6,7 @@ import pytest
 
 from core import app_paths
 from core import credentials
-from ui.autocomplete import tag_cache  # noqa: F401  (imports the module)
+from storage import tag_cache  # noqa: F401  (imports the module)
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ def test_migrations_ignore_appdata_under_override(fake_appdata, tmp_path, monkey
         (data / "settings.json").read_bytes() != b"{}"
 
     # bookmarks db
-    from ui.bookmarks_main import bookmarks_db as bdb
+    from storage import bookmarks_db as bdb
     monkeypatch.setattr(bdb, "_DB_FILE", data / "bookmarks.db")
     obj = bdb.BookmarksDB.__new__(bdb.BookmarksDB)
     obj.db_path = data / "bookmarks.db"
@@ -71,7 +71,7 @@ def test_migrations_ignore_appdata_under_override(fake_appdata, tmp_path, monkey
     assert (data / "tag_cache.db").stat().st_size != 2
 
     # tag categorizer json
-    import tag_categorizer
+    from download_images import tag_categorizer
     monkeypatch.setattr(tag_categorizer, "BASE_DIR", data)
     tag_categorizer.TagCategorizer()
     assert not (data / "tag_cache.json").exists()
