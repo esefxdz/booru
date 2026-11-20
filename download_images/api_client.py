@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from core import settings
-from download_images.network import CloudflareBlockError
+from download_images.network import BooruAPIError, CloudflareBlockError
 
 
 async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
@@ -59,7 +59,8 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
             elif r.status_code == 404:
                 logging.warning("[api_client] %s returned 404 — the API endpoint may be wrong or the site is down", booru)
             elif r.status_code == 401:
-                logging.warning("[api_client] %s requires authentication — add an API key in Settings > Credentials", booru)
+                raise BooruAPIError(
+                    f"'{booru}' needs an API key: add one in Settings > Credentials.")
             else:
                 logging.warning("[api_client] HTTP %d from %s", r.status_code, url)
             return []
@@ -83,7 +84,7 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
             )
             return []
         return result
-    except CloudflareBlockError:
+    except (CloudflareBlockError, BooruAPIError):
         raise
     except Exception as e:
         booru = settings.manager.active_booru
@@ -94,7 +95,6 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
                 "[api_client] %s/%s returned invalid JSON from %s: %s",
                 booru, adapter_name, url, e,
             )
-            from download_images.network import BooruAPIError
             raise BooruAPIError(
                 f"'{booru}' ({adapter_name}) returned invalid data instead of JSON. "
                 "The site might be down, or the API URL is wrong."

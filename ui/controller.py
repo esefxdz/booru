@@ -237,6 +237,8 @@ class AppController(QObject):
             from core import settings
             self.status_updated.emit("🔐 Cloudflare blocked — solve CAPTCHA?", "orange")
             self.cf_blocked.emit(settings.manager.active_booru, error_msg)
+        elif "API key" in error_msg:
+            self.status_updated.emit("API key needed (Settings)", "red")
         else:
             self.status_updated.emit("Error!", "red")
 

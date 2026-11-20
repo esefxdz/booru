@@ -35,3 +35,18 @@ def test_single_object_post_wrapped():
 
 def test_wrong_shape_gives_empty_list():
     assert _run("e621", {"posts": "nope"}) == []
+
+
+def test_401_raises_api_key_error_instead_of_empty_results():
+    import pytest
+    from download_images.network import BooruAPIError
+
+    class _R401(_Resp):
+        status_code = 401
+
+    async def fetch(url, params=None):
+        return _R401(None)
+    site = {"url": "https://example.com", "api_path": "/index.php", "post_key": None,
+            "api_type": "gelbooru"}
+    with pytest.raises(BooruAPIError, match="API key"):
+        asyncio.run(search_posts(get_adapter("gelbooru"), site, fetch, "tag", 10))
