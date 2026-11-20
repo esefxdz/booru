@@ -9,7 +9,6 @@ hiddenimports += collect_submodules('boorus')
 hiddenimports += collect_submodules('cloudflare_bypasser')
 hiddenimports += collect_submodules('updater')
 hiddenimports += collect_submodules('ui')
-hiddenimports += collect_submodules('displayers')
 hiddenimports += collect_submodules('download_images')
 
 

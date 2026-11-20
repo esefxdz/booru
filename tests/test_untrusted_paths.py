@@ -143,7 +143,7 @@ def test_double_click_downloads_once_and_file_is_intact(tmp_path, monkeypatch):
 def test_legacy_viewer_opens_in_process_not_a_new_app(monkeypatch):
     import subprocess
     from PyQt6.QtWidgets import QApplication
-    from displayers import legacy_window as lw
+    from ui.viewer import legacy_window as lw
     app = QApplication.instance() or QApplication([])
 
     def no_spawn(*a, **k):

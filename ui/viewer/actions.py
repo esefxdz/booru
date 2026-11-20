@@ -1,5 +1,5 @@
 """
-displayers/actions.py — Action buttons for the media overlay.
+ui/viewer/actions.py — Action buttons for the media overlay.
 
 Provides a row of buttons (Bookmark, Download, Share, Original) to
 interact with the currently displayed post.
@@ -212,7 +212,7 @@ class ActionButtons(QWidget):
         post_booru = self.post.get("_booru", settings.manager.active_booru)
         site_data = boorus.REGISTRY.get(post_booru, {})
         
-        from displayers.media_viewer import _resolve_url
+        from ui.viewer.media_viewer import _resolve_url
         resolved = _resolve_url(file_url, site_data)
         
         QApplication.clipboard().setText(resolved)

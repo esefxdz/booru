@@ -1,5 +1,5 @@
 """
-displayers/post_displayer_tags.py — Categorized clickable tags view.
+ui/viewer/post_displayer_tags.py — Categorized clickable tags view.
 
 Two-pass categorization strategy:
   1. Adapter-native (instant for Danbooru / e621 — tags come pre-sorted)
@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
-from displayers.details import CollapsibleWidget
+from ui.viewer.details import CollapsibleWidget
 from ui.style import colors
 
 # ---------------------------------------------------------------------------

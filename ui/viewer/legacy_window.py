@@ -1,12 +1,12 @@
 ###########################################################################################
-#displayers/legacy_window.py — Legacy standalone media viewer (subprocess mode).
+#ui/viewer/legacy_window.py — Legacy standalone media viewer (subprocess mode).
 #
 #Used only when `use_legacy_viewer` is enabled in Global Settings.
 #Spawns a separate PyQt6 window as a subprocess, keeping it fully decoupled
 #from the main app process.
 #
 #Entry point (called by UniversalViewer):
-#    python -m displayers.legacy_window <url> <post_json>
+#    python -m ui.viewer.legacy_window <url> <post_json>
 ############################################################################################
 
 import logging
@@ -167,7 +167,7 @@ class DisplayerWindow(QMainWindow):
 
         # Restore saved window geometry, default 700x550
         from core.settings import BASE_DIR
-        self._qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
+        self._qs = QSettings(str(BASE_DIR / "ui.viewer.ini"), QSettings.Format.IniFormat)
         w = self._qs.value("window_w", 700, type=int)
         h = self._qs.value("window_h", 550, type=int)
         self.resize(w, h)
@@ -422,7 +422,7 @@ class DisplayerWindow(QMainWindow):
         """)
 
         from core.settings import BASE_DIR
-        qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
+        qs = QSettings(str(BASE_DIR / "ui.viewer.ini"), QSettings.Format.IniFormat)
         saved = qs.value("volume", 50, type=int)
         self.vol_slider.setValue(saved)
         self.audio.setVolume(saved / 100.0)
@@ -505,7 +505,7 @@ class DisplayerWindow(QMainWindow):
 class UniversalViewer:
     """Opens the legacy displayer as a separate window in this process.
 
-    It used to spawn ``sys.executable -m displayers.legacy_window``. In the
+    It used to spawn ``sys.executable -m ui.viewer.legacy_window``. In the
     one-file exe ``sys.executable`` is BooruBrowser.exe, which ignores -m, so
     every click opened a second full copy of the app (writing the same data
     files); the post JSON on the command line could also exceed Windows'
@@ -526,11 +526,11 @@ class UniversalViewer:
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  MODULE ENTRYPOINT  (python -m displayers.legacy_window <url> <json>)
+#  MODULE ENTRYPOINT  (python -m ui.viewer.legacy_window <url> <json>)
 # ══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        logging.error("Usage: python -m displayers.legacy_window <url> <post_json>")
+        logging.error("Usage: python -m ui.viewer.legacy_window <url> <post_json>")
         sys.exit(1)
 
     app = QApplication(sys.argv)

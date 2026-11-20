@@ -1,5 +1,5 @@
 """
-displayers/video_player.py — Multi-engine video player widget.
+ui/viewer/video_player.py — Multi-engine video player widget.
 
 Supports three backends (selectable in Global Settings → Video Engine):
   1. "qt"  — Built-in QtMultimedia (default, no extra deps)
@@ -137,7 +137,7 @@ class VideoPlayerWidget(QWidget):
         self.vol_slider.setFixedWidth(80)
 
         from core.settings import BASE_DIR
-        qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
+        qs = QSettings(str(BASE_DIR / "ui.viewer.ini"), QSettings.Format.IniFormat)
         saved_vol = qs.value("VideoPlayer/volume", 50, type=int)
         self.vol_slider.setValue(saved_vol)
         self.vol_slider.valueChanged.connect(self._set_volume)
@@ -214,7 +214,7 @@ class VideoPlayerWidget(QWidget):
         self.player.setVideoOutput(self._qt_video_widget)
 
         from core.settings import BASE_DIR
-        qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
+        qs = QSettings(str(BASE_DIR / "ui.viewer.ini"), QSettings.Format.IniFormat)
         saved_vol = qs.value("VideoPlayer/volume", 50, type=int)
         self._audio.setVolume(saved_vol / 100.0)
 
@@ -295,7 +295,7 @@ class VideoPlayerWidget(QWidget):
     # └──────────────────────────────────────────────────────────────────┘
     def _set_volume(self, v):
         from core.settings import BASE_DIR
-        qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
+        qs = QSettings(str(BASE_DIR / "ui.viewer.ini"), QSettings.Format.IniFormat)
         qs.setValue("VideoPlayer/volume", v)
         if self.engine_type == "vlc":
             if self.player:

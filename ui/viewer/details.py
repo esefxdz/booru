@@ -1,5 +1,5 @@
 """
-displayers/details.py — Collapsible metadata sections.
+ui/viewer/details.py — Collapsible metadata sections.
 
 Provides reusable components for displaying post metadata like ID,
 resolution, and rating in a clean, space-saving format.

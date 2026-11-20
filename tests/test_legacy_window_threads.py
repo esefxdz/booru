@@ -11,7 +11,7 @@ _REAL_LOAD_IMAGE = None
 @pytest.fixture
 def lw_env(monkeypatch, tmp_path):
     from PyQt6.QtWidgets import QApplication
-    from displayers import legacy_window as lw
+    from ui.viewer import legacy_window as lw
     from core import settings
 
     global _REAL_LOAD_IMAGE
@@ -97,7 +97,7 @@ def test_download_finishing_after_window_deleted_does_not_raise(lw_env, fail):
 def test_image_worker_after_window_deleted_is_dropped_quietly(lw_env, monkeypatch):
     from PyQt6 import sip
     from PyQt6.QtCore import QCoreApplication, QEvent, Qt
-    from displayers import legacy_window as lw
+    from ui.viewer import legacy_window as lw
     app, make_window, gate, state, threads, errors = lw_env
     w = make_window()
     w.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -137,7 +137,7 @@ def test_close_stops_the_video_player(lw_env):
 def test_gif_worker_after_window_deleted_is_dropped_quietly(lw_env, monkeypatch):
     from PyQt6 import sip
     from PyQt6.QtCore import QCoreApplication, QEvent, Qt
-    from displayers import legacy_window as lw
+    from ui.viewer import legacy_window as lw
     app, make_window, gate, state, threads, errors = lw_env
     w = make_window()
     w.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)

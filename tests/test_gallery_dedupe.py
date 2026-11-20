@@ -82,7 +82,7 @@ def test_adjacent_post_uses_booru(monkeypatch):
 
 
 def test_overlay_prev_next_start_from_the_right_booru(monkeypatch):
-    from displayers.overlay import MediaOverlay
+    from ui.viewer.overlay import MediaOverlay
     g = _g(monkeypatch)
     a = {"id": 5, "_booru": "gelbooru"}
     b = {"id": 5, "_booru": "danbooru"}

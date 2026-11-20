@@ -1,5 +1,5 @@
 """
-displayers/overlay.py — Full-screen media viewer overlay.
+ui/viewer/overlay.py — Full-screen media viewer overlay.
 
 This is the top-level container that holds both the MediaViewer (left)
 and the OverlaySidebar (right). It sits on top of the main gallery
@@ -10,8 +10,8 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QWidget, QHBoxLayout
 from ui.style import colors
 
-from displayers.media_viewer import MediaViewer
-from displayers.sidebar import OverlaySidebar
+from ui.viewer.media_viewer import MediaViewer
+from ui.viewer.sidebar import OverlaySidebar
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

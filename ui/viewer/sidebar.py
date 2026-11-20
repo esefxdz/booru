@@ -1,14 +1,14 @@
 """
-displayers/sidebar.py — Overlay info sidebar.
+ui/viewer/sidebar.py — Overlay info sidebar.
 
 A dark right-aligned panel that contains all the metadata panels
 (Details, Actions, Tags).
 """
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
 
-from displayers.details import FileDetails
-from displayers.actions import ActionButtons
-from displayers.post_displayer_tags import ClickableTagsDropdown
+from ui.viewer.details import FileDetails
+from ui.viewer.actions import ActionButtons
+from ui.viewer.post_displayer_tags import ClickableTagsDropdown
 from ui.style import colors
 
 

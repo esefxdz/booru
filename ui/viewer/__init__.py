@@ -1,5 +1,5 @@
 """
-displayers/ — Media overlay system for viewing posts full-screen.
+ui/viewer/ — Media overlay system for viewing posts full-screen.
 
 Architecture:
   MediaOverlay (overlay.py)
@@ -10,6 +10,6 @@ Architecture:
         ├── ActionButtons (actions.py)  — bookmark, download, share, view-original
         └── TagsDropdown (tags.py)      — categorized tag display
 """
-from displayers.overlay import MediaOverlay
+from ui.viewer.overlay import MediaOverlay
 
 __all__ = ["MediaOverlay"]

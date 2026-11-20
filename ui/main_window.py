@@ -32,7 +32,7 @@ import boorus
 import boorus as boorus_mod
 from download_images import BooruDownloader
 from ui.controller import AppController
-from displayers.overlay import MediaOverlay
+from ui.viewer.overlay import MediaOverlay
 from ui.widgets.sidebar import Sidebar
 from ui.gallery.gallery import Gallery
 from ui.widgets.tag_panel import TagPanel
@@ -52,7 +52,7 @@ from ui.browser_dialog import run_cf_bypass
 from ui.modals import AddBooruDialog, BulkDownloadDialog
 from core.validation import validate_search_term
 try:
-    from displayers.legacy_window import UniversalViewer
+    from ui.viewer.legacy_window import UniversalViewer
 except ImportError:
     UniversalViewer = None  # type: ignore
 

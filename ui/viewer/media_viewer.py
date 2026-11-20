@@ -1,5 +1,5 @@
 """
-displayers/media_viewer.py — Central media display widget.
+ui/viewer/media_viewer.py — Central media display widget.
 
 Handles three content types:
   • Images  — fetched in a background thread, displayed via QPixmap
@@ -401,7 +401,7 @@ class MediaViewer(QWidget):
         self.lbl.hide()
 
         if self._video_widget is None:
-            from displayers.video_player import VideoPlayerWidget
+            from ui.viewer.video_player import VideoPlayerWidget
             self._video_widget = VideoPlayerWidget()
             self._main_layout.addWidget(self._video_widget, 1)
 
