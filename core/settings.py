@@ -1,11 +1,4 @@
-"""
-settings/manager.py — Unified configuration and settings management.
-
-SettingsManager singleton + static constants.
-User preferences persisted to settings.json in the app root directory
-so the application is 100 % portable (“unzip and run”).
-Secrets (API keys, tokens, bypass cookies) live in credentials.bin (DPAPI).
-"""
+"""SettingsManager singleton; preferences in settings.json, secrets in credentials.bin."""
 import logging
 import json
 import shutil
@@ -13,24 +6,18 @@ from pathlib import Path
 from core.credentials import migrate_from_settings, get_sensitive, set_sensitive_many, get_credential, set_credential
 from updater.version import __version__ as VERSION
 
-# --- STATIC CONSTANTS ---
 import threading
 import time
 from core.app_paths import data_dir, legacy_appdata_dir
-# Next to the exe when that folder is usable, else %LOCALAPPDATA%\BooruBrowser.
 BASE_DIR = data_dir()
 SEARCH_LIMIT = 50
 TIMEOUT = 30.0
 DOWNLOAD_DIR = BASE_DIR / "files"
-# mkdir moved to initialize()
 DEFAULT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json"
 }
 
-# --- INTERNAL STATE ---
-# Portable: settings live next to the .exe / main.py so the whole folder
-# can be copied to a USB stick or another machine and retain all config.
 _SETTINGS_DIR  = BASE_DIR
 _SETTINGS_FILE = _SETTINGS_DIR / "settings.json"
 
@@ -56,7 +43,6 @@ class SettingsManager:
         return cls._instance
 
     def _init(self):
-        # Default state
         self.active_booru: str = "safebooru"
         self.blacklist: str = ""
         self.favorites: str = ""
@@ -94,12 +80,11 @@ class SettingsManager:
         self._legacy_plaintext = None
 
     def initialize(self):
-        """Explicit initialization to be called on app startup."""
+        """Create folders, migrate legacy settings, load. Call at startup."""
         if self._initialized:
             return
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
         _SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
-        # One-time migration from legacy %APPDATA% location
         legacy = legacy_appdata_dir() / "settings.json"
         if not _SETTINGS_FILE.exists() and legacy.exists():
             try:
@@ -114,7 +99,6 @@ class SettingsManager:
         self._initialized = True
 
     def load(self):
-        """Load settings from disk and update singleton attributes."""
         data = {}
         if _SETTINGS_FILE.exists():
             try:
@@ -141,7 +125,7 @@ class SettingsManager:
                 self._save_disabled = True
                 data = {}
 
-        # --- Migration: thumbnail_size > 500 means it was actually a resolution ---
+        # Old builds stored the resolution in thumbnail_size.
         if "thumbnail_size" in data and "thumbnail_res" not in data:
             if data["thumbnail_size"] >= 500:
                 data["thumbnail_res"] = data["thumbnail_size"]
@@ -149,7 +133,6 @@ class SettingsManager:
             else:
                 data.setdefault("thumbnail_res", 720)
 
-        # --- Migration: plaintext credentials → encrypted credentials.bin ---
         if "credentials" in data:
             logging.info("[settings] Migrating plaintext credentials to secure storage...")
             try:
@@ -157,10 +140,8 @@ class SettingsManager:
             except Exception as e:
                 logging.error(f"[settings] Credential migration failed: {e}")
             del data["credentials"]
-            # Re-save without plaintext credentials
             self._raw_save(data)
 
-        # Apply all known keys
         for k, v in data.items():
             if hasattr(self, k):
                 setattr(self, k, v)
@@ -171,7 +152,6 @@ class SettingsManager:
         plaintext = {k: data[k] for k in _SECRET_STORE_KEYS
                      if isinstance(data.get(k), dict) and data[k]}
 
-        # Load sensitive fields from secure storage (all or nothing)
         try:
             stored = {k: get_sensitive(sk, raise_on_error=True) or {}
                       for k, sk in _SECRET_STORE_KEYS.items()}
@@ -192,12 +172,9 @@ class SettingsManager:
         self._reconcile_active_booru()
 
     def _migrate_plaintext_secrets(self, plaintext, stored):
-        """Move plaintext secrets from an old settings.json into the store.
+        """Merge old plaintext secrets into the store (store entries win); returns the merged values.
 
-        Merged per site; an entry already in the store wins (it was written
-        by a newer build). Returns the merged values. If they cannot be
-        written and read back, the plaintext stays pending so save() keeps it
-        in settings.json; the next load() tries again.
+        If the write can't be read back, the plaintext stays pending and save() keeps it.
         """
         if not all(isinstance(stored[k], dict) for k in plaintext):
             logging.error("[settings] Credentials store has an unexpected format; "
@@ -227,8 +204,7 @@ class SettingsManager:
         return merged
 
     def _reconcile_active_booru(self):
-        """If the saved active booru no longer exists (e.g. a deleted custom
-        booru), switch to one that does instead of searching a URL-less entry."""
+        """Switch to an existing booru if the saved one was deleted."""
         import boorus
         if self.active_booru in boorus.REGISTRY:
             return
@@ -238,7 +214,6 @@ class SettingsManager:
         self.active_booru = fallback
 
     def validate(self):
-        """Enforce sane bounds on numeric settings."""
         if self.thumbnail_size < 100:
             self.thumbnail_size = 100
         elif self.thumbnail_size > 600:
@@ -254,14 +229,11 @@ class SettingsManager:
         elif self.concurrent_downloads > 200:
             self.concurrent_downloads = 200
 
-        # Ensure we always ship/fallback with at least 1 booru (safebooru)
         if not self.booru_order:
             self.booru_order = ["safebooru"]
 
     def save(self):
-        """Persist current settings to disk."""
-        # Guard: never save the fresh-init defaults before load() has run.
-        # This prevents a crash/early-save from wiping the user's real settings.
+        # Never save fresh-init defaults before load() has run.
         if not self._initialized:
             logging.debug("[settings] save() called before initialize() — skipped.")
             return False
@@ -269,14 +241,11 @@ class SettingsManager:
             logging.warning("[settings] save() skipped: settings.json could not be read this session")
             return False
         self.validate()
-        # These keys contain live session cookies, CF bypass tokens, and auth
-        # headers.  They must never be written to the plaintext settings.json
-        # file — they go to credentials.bin via CredentialManager instead.
+        # Secrets must never reach the plaintext settings.json.
         _SENSITIVE_KEYS = set(_SECRET_STORE_KEYS)
         
         with _SAVE_LOCK:
-            # One credentials.bin write for all three (was three separate
-            # read-modify-write cycles that could interleave).
+            # One credentials.bin write for all three so cycles can't interleave.
             if self._secrets_unloaded:
                 logging.warning("[settings] save(): secrets store was unreadable at "
                                 "startup; not writing cookies/tokens (would erase them)")
@@ -298,7 +267,6 @@ class SettingsManager:
             return self._raw_save(data)
 
     def _raw_save(self, data):
-        """Low-level save — atomically writes a dict to settings.json."""
         from core.fileutil import atomic_write_text
         try:
             with _SAVE_LOCK:
@@ -308,39 +276,26 @@ class SettingsManager:
             logging.error(f"[settings] Could not save settings: {e}")
             return False
 
-
-    # --- Credentials helpers ---
-
     def get_credential(self, booru):
-        """Retrieve API credentials from secure storage."""
         return get_credential(booru)
 
     def set_credential(self, booru, user_id, api_key):
-        """Store API credentials securely using encrypted local storage."""
         set_credential(booru, user_id, api_key)
-
-    # --- Bypass helpers ---
 
     def save_bypass(self, name, cookies, user_agent):
         self.bypass_data[name] = {"cookies": cookies, "user_agent": user_agent}
         self.save()
 
-    # --- Path helpers ---
-    
     def get_download_dir(self):
-        """Returns the user's custom download path, or the default files/ dir."""
         if self.custom_download_path:
             p = Path(self.custom_download_path)
             if p.exists() and p.is_dir():
                 return p
         return DOWNLOAD_DIR
 
-    # --- Network helpers ---
     def get_user_agent(self) -> str:
-        """Returns the user-configured User-Agent, or the default Chrome UA if empty."""
         if self.custom_user_agent.strip():
             return self.custom_user_agent.strip()
-        # Option 1 fallback: Full modern Chrome User-Agent
         return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
 
 manager = SettingsManager()

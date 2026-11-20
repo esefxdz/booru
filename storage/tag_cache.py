@@ -1,12 +1,4 @@
-"""
-ui/autocomplete/tag_cache.py
-
-Local SQLite tag cache for instant, offline-capable autocomplete.
-Stores tags per-booru and supports fuzzy/substring matching so
-queries like "girl" can match "1girl" without a network round-trip.
-
-Populated automatically from network autocomplete results.
-"""
+"""Local SQLite tag cache for autocomplete, filled from network results."""
 import sqlite3
 import threading
 import shutil
@@ -20,7 +12,7 @@ _local = threading.local()
 
 
 def _conn() -> sqlite3.Connection:
-    """Return a thread-local SQLite connection (one per thread)."""
+    """Thread-local SQLite connection."""
     if not hasattr(_local, "conn") or _local.conn is None:
         legacy = legacy_appdata_dir() / "tag_cache.db"
         if not _DB_PATH.exists() and legacy.exists():
@@ -52,10 +44,7 @@ def _conn() -> sqlite3.Connection:
 
 
 def store_tags(booru: str, tags: list[dict]) -> None:
-    """Upsert a batch of tags into the cache.
-
-    Each tag dict must have keys: name, type, count.
-    """
+    """Upsert tags; each dict needs name, type, count."""
     if not tags:
         return
     conn = _conn()
@@ -71,11 +60,7 @@ def store_tags(booru: str, tags: list[dict]) -> None:
 
 
 def search_tags(booru: str, prefix: str, limit: int = 15) -> list[dict]:
-    """Fuzzy-search the local cache.
-
-    Matches any tag whose name *contains* the prefix as a substring,
-    ordered by post count descending.  e.g. "girl" → "1girl", "girl", …
-    """
+    """Tags whose name contains *prefix* (e.g. "girl" matches "1girl"), by post count descending."""
     conn = _conn()
     rows = conn.execute(
         """SELECT name, type, count FROM tags

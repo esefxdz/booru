@@ -1,26 +1,4 @@
-"""
-credentials.py — Local storage for API keys, tokens and bypass/session cookies.
-
-Format
-------
-``credentials.v2.bin`` (next to settings.json) holds one JSON object.
-
-* On Windows it is encrypted with DPAPI (``CryptProtectData``), the same
-  mechanism browsers use: only the same Windows user account can decrypt
-  it, and another program running as you still can. The file starts with
-  ``DPAPI1:``.
-* Files written by older versions are XOR-obfuscated with a key derived
-  from the MAC address + username (reversible by anyone who reads this
-  code) or plain JSON. They are read once and rewritten as DPAPI.
-
-Because DPAPI is tied to the Windows account, copying the app folder to
-another PC/account means saved logins have to be entered again. The old
-XOR scheme had the same limitation (its key included the MAC address).
-
-If the file cannot be decrypted it is renamed to
-``credentials.v2.bin.unreadable-<timestamp>`` and an error is logged, instead
-of being silently overwritten with an empty store.
-"""
+"""DPAPI-encrypted local store for API keys, tokens and session cookies."""
 import base64
 import ctypes
 import hashlib
@@ -38,9 +16,7 @@ _DPAPI_PREFIX = "DPAPI1:"
 _ENTROPY = b"BooruBrowser credentials v1"
 
 
-# One lock for every read-modify-write of credentials.bin. Saves happen on the
-# GUI thread and on the asyncio thread (e.g. clearing a Cloudflare bypass);
-# without this, concurrent saves silently dropped each other's changes.
+# Guards every read-modify-write; saves come from both the GUI and asyncio threads.
 _LOCK = threading.RLock()
 
 
@@ -56,10 +32,6 @@ def _locked(fn):
 class CredentialReadError(Exception):
     """credentials.bin exists but could not be decrypted/parsed."""
 
-
-# ---------------------------------------------------------------------------
-# DPAPI (Windows) via ctypes — no pywin32 dependency
-# ---------------------------------------------------------------------------
 
 class _DataBlob(ctypes.Structure):
     _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_char))]
@@ -92,10 +64,6 @@ def _have_dpapi() -> bool:
     return sys.platform == "win32"
 
 
-# ---------------------------------------------------------------------------
-# Legacy XOR obfuscation (read-only migration; also the non-Windows fallback)
-# ---------------------------------------------------------------------------
-
 def _get_machine_key() -> bytes:
     mac = str(uuid.getnode())
     user = os.environ.get("USERNAME", os.environ.get("USER", "unknown"))
@@ -107,20 +75,16 @@ def _xor(data: bytes) -> bytes:
     return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
 
 
-# ---------------------------------------------------------------------------
-# Encode / decode
-# ---------------------------------------------------------------------------
-
 def _encrypt(data: str) -> str:
     raw = data.encode("utf-8")
     if _have_dpapi():
         return _DPAPI_PREFIX + base64.b64encode(_dpapi(raw, protect=True)).decode("ascii")
-    # Non-Windows: obfuscation only. The app targets Windows.
+    # Non-Windows fallback: obfuscation only.
     return base64.b64encode(_xor(raw)).decode("ascii")
 
 
 def _decrypt(data: str) -> str:
-    """Return the JSON text stored in *data*. Raises CredentialReadError."""
+    """Return the JSON text stored in *data*; raises CredentialReadError."""
     data = (data or "").strip()
     if not data:
         return "{}"
@@ -145,24 +109,19 @@ def _decrypt(data: str) -> str:
 
 
 class CredentialManager:
-    """Credential storage in a DPAPI-encrypted local JSON file."""
 
-    #: Current store. A new name (not credentials.bin) so an older exe, which
-    #: cannot read DPAPI and would overwrite the file with an empty store,
-    #: never sees it. Downgrading just starts logged out instead of wiping.
+    # New name so an older exe (no DPAPI) can't overwrite it with an empty store.
     FILE_NAME = "credentials.v2.bin"
-    #: Written by <= 1.1.x next to the exe: XOR-obfuscated or plain JSON.
+    # Written by <= 1.1.x: XOR-obfuscated or plain JSON.
     LEGACY_NAME = "credentials.bin"
 
     @staticmethod
     def _get_credentials_file() -> Path:
-        """Path of the DPAPI store (in the data folder, see app_paths)."""
         from core.settings import BASE_DIR
         return BASE_DIR / CredentialManager.FILE_NAME
 
     @staticmethod
     def _get_legacy_credentials_file() -> Path:
-        """Pre-portable %APPDATA% location — only read for one-time migration."""
         from core.app_paths import legacy_appdata_dir
         return legacy_appdata_dir() / CredentialManager.LEGACY_NAME
 
@@ -175,17 +134,10 @@ class CredentialManager:
         ]
 
     def _ensure_file_exists(self):
-        """Kept for callers; migration happens in _load_credentials, and
-        _save_credentials creates the file, so nothing to pre-create here."""
         self._get_credentials_file().parent.mkdir(parents=True, exist_ok=True)
 
     def _migrate_legacy(self) -> Optional[Dict[str, Any]]:
-        """If there is no v2 store yet, import the first readable legacy file.
-
-        The legacy file is deleted only after the v2 store has been written
-        and read back successfully (it holds reversible-XOR or plaintext
-        secrets, so leaving it around would defeat the encryption).
-        """
+        """Import the first readable legacy file; delete it only after the v2 store reads back."""
         for src in self._legacy_sources():
             if not src.exists():
                 continue
@@ -215,8 +167,7 @@ class CredentialManager:
 
     @staticmethod
     def _read_with_retry(path: Path) -> str:
-        """read_text, retrying briefly on PermissionError: an AV scanner or
-        sync client often holds the file for a few hundred ms at startup."""
+        """read_text, retrying on PermissionError (AV/sync clients briefly hold the file)."""
         for delay in (0.1, 0.2, 0.4):
             try:
                 return path.read_text(encoding="utf-8")
@@ -226,11 +177,7 @@ class CredentialManager:
 
     @_locked
     def _load_credentials(self) -> Dict[str, Any]:
-        """Load credentials, migrating legacy files on first use.
-
-        Never returns {} for a file that exists but is unreadable: that file
-        is moved aside first so the next save cannot destroy it.
-        """
+        """Load credentials; an unreadable file is moved aside first so a save can't destroy it."""
         cred_file = self._get_credentials_file()
         if not cred_file.exists():
             migrated = self._migrate_legacy()
@@ -264,23 +211,12 @@ class CredentialManager:
         return data
 
     def _save_credentials(self, credentials: Dict[str, Any]):
-        """Encrypt and atomically write credentials to disk."""
         from core.fileutil import atomic_write_text
         atomic_write_text(self._get_credentials_file(), _encrypt(json.dumps(credentials)))
 
     @_locked
     def set_credential(self, booru: str, user_id: str, api_key: str) -> bool:
-        """
-        Store API credentials.
-
-        Args:
-            booru: Name of the booru site (e.g., 'danbooru', 'e621')
-            user_id: Username or user ID
-            api_key: API key or password
-
-        Returns:
-            bool: True if stored successfully, False otherwise
-        """
+        """Store API credentials; returns False on failure."""
         try:
             self._ensure_file_exists()
             credentials = self._load_credentials()
@@ -296,15 +232,7 @@ class CredentialManager:
 
     @_locked
     def get_credential(self, booru: str) -> Optional[Dict[str, str]]:
-        """
-        Retrieve API credentials.
-
-        Args:
-            booru: Name of the booru site
-
-        Returns:
-            Dict with 'user_id' and 'api_key' keys, or None if not found
-        """
+        """Return {'user_id', 'api_key'} or None."""
         try:
             credentials = self._load_credentials()
             return credentials.get(booru)
@@ -314,15 +242,6 @@ class CredentialManager:
 
     @_locked
     def delete_credential(self, booru: str) -> bool:
-        """
-        Delete stored credentials for a booru site.
-
-        Args:
-            booru: Name of the booru site
-
-        Returns:
-            bool: True if deleted successfully, False otherwise
-        """
         try:
             credentials = self._load_credentials()
             if booru in credentials:
@@ -335,12 +254,6 @@ class CredentialManager:
 
     @_locked
     def list_boorus_with_credentials(self) -> list[str]:
-        """
-        Get list of booru sites that have stored credentials.
-
-        Returns:
-            List of booru names that have credentials stored
-        """
         try:
             credentials = self._load_credentials()
             return [k for k in credentials.keys() if not k.startswith("_")]
@@ -350,11 +263,7 @@ class CredentialManager:
 
     @_locked
     def get_sensitive(self, key: str, *, raise_on_error: bool = False) -> dict:
-        """Return the stored blob, or {} if absent.
-
-        A failed read also returns {} by default; pass raise_on_error=True
-        to tell "unreadable" apart from "no secrets" (the exception propagates).
-        """
+        """Return the stored blob, or {}; raise_on_error=True distinguishes "unreadable" from "none"."""
         try:
             return self._load_credentials().get(key, {})
         except Exception:
@@ -390,12 +299,6 @@ class CredentialManager:
 
     @_locked
     def migrate_from_settings(self, settings_credentials: Dict[str, Any]) -> None:
-        """
-        Migrate credentials from settings.json to separate credentials file.
-
-        Args:
-            settings_credentials: Dict of credentials from old settings format
-        """
         if not settings_credentials:
             return
 
@@ -412,40 +315,30 @@ class CredentialManager:
             logging.info(f"[credentials] Successfully migrated {migrated_count} credential(s)")
 
 
-# Global instance for easy access
 _credential_manager = CredentialManager()
 
 
-# --- Module-level functions for backward compatibility ---
 def set_credential(booru: str, user_id: str, api_key: str) -> bool:
-    """Store API credentials."""
     return _credential_manager.set_credential(booru, user_id, api_key)
 
 def get_credential(booru: str) -> Optional[Dict[str, str]]:
-    """Retrieve API credentials."""
     return _credential_manager.get_credential(booru)
 
 def delete_credential(booru: str) -> bool:
-    """Delete stored credentials."""
     return _credential_manager.delete_credential(booru)
 
 def list_boorus_with_credentials() -> list[str]:
-    """Get list of booru sites with stored credentials."""
     return _credential_manager.list_boorus_with_credentials()
 
 def migrate_from_settings(settings_credentials: Dict[str, Any]) -> None:
-    """Migrate credentials from settings.json."""
     _credential_manager.migrate_from_settings(settings_credentials)
 
 def get_sensitive(key: str, *, raise_on_error: bool = False) -> dict:
-    """Retrieve sensitive data dict (e.g. bypass_data)."""
     return _credential_manager.get_sensitive(key, raise_on_error=raise_on_error)
 
 def set_sensitive(key: str, data: dict) -> bool:
-    """Store sensitive data dict securely."""
     return _credential_manager.set_sensitive(key, data)
 
 
 def set_sensitive_many(items: Dict[str, dict]) -> bool:
-    """Store several sensitive data dicts in a single write."""
     return _credential_manager.set_sensitive_many(items)

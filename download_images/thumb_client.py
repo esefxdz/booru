@@ -1,26 +1,4 @@
-"""
-download_images/thumb_client.py — Lightweight thumbnail HTTP client.
-
-Why this exists
----------------
-Thumbnail CDN servers (e.g. img3.gelbooru.com, img1.safebooru.org) are plain
-static file servers sitting behind Cloudflare.  Once the main BypassSession has
-solved the CF challenge and obtained a ``cf_clearance`` cookie, CDN requests
-only need that cookie — they do NOT need TLS impersonation, JS challenge
-solving, or the full curl_cffi / cloudscraper stack.
-
-Using a single persistent ``httpx.AsyncClient`` with the CF cookie lets us:
-  • Reuse a warm HTTP/2 connection pool (no per-request TLS handshake)
-  • Fire 20+ concurrent thumbnail requests safely
-  • Look exactly like a real browser tab loading images
-
-The client is created lazily on first use and recreated automatically whenever
-the CF cookies for a booru change (e.g. after a new bypass session).
-
-Public API
-----------
-    thumb_fetch(url, booru, timeout) -> _LightResponse | None
-"""
+"""Lightweight httpx client for thumbnail CDNs; needs only the stored cf_clearance cookie, not the full bypass stack."""
 
 from __future__ import annotations
 
@@ -30,7 +8,7 @@ log = logging.getLogger("thumb_client")
 
 
 class _LightResponse:
-    """Minimal response wrapper compatible with what thumbnails._fetch_raw expects."""
+    """Minimal response wrapper for thumbnails._fetch_raw."""
     __slots__ = ("status_code", "content", "text")
 
     def __init__(self, resp):
@@ -39,52 +17,38 @@ class _LightResponse:
         self.text = resp.text
 
 
-# ---------------------------------------------------------------------------
-# Per-booru client registry
-# ---------------------------------------------------------------------------
-# Maps booru_name → (fingerprint, httpx.AsyncClient)
-# Recreated if cookies, HTTP/2, or proxy settings change.
+# booru -> (fingerprint, client); rebuilt when cookies, HTTP/2 or proxy change.
 _clients: dict[str, tuple[str, object]] = {}
 
-# Tracks boorus where the lightweight client failed, so callers can skip
-# straight to BypassSession instead of each thumbnail independently
-# discovering the same failure.  Maps booru_name → expiry_time (monotonic).
+# booru -> monotonic expiry; lets callers skip the lightweight client after a failure.
 _lightweight_blocked: dict[str, float] = {}
-_BLOCKED_TTL = 60.0  # seconds before retrying the lightweight client
+_BLOCKED_TTL = 60.0  # seconds
 
 
 def _make_client_fp(cookies: dict, use_http2: bool, proxy_url: str) -> str:
-    """Fingerprint that captures all settings that affect client construction."""
+    """Fingerprint of everything that affects client construction."""
     cookie_part = ",".join(f"{k}={v}" for k, v in sorted(cookies.items()))
     return f"{cookie_part}|h2={int(use_http2)}|px={proxy_url or ''}"
 
 
 async def _get_client(booru: str, cookies: dict, use_http2: bool, proxy_url: str):
-    """Return the cached httpx.AsyncClient for *booru*, or create one.
-
-    Lock-free — the hot path is a dict lookup + string compare.  The
-    rare race where two coroutines create clients simultaneously is
-    harmless (the second just replaces the first in the dict).
-    """
+    """Cached client for *booru*, or a new one. Lock-free: a creation race just replaces the entry."""
     import httpx
     from cloudflare_bypasser import store as cf_store
     from core import settings
 
     fp = _make_client_fp(cookies, use_http2, proxy_url)
 
-    # ── Hot path: cached client, matching fingerprint ──────────
     existing = _clients.get(booru)
     if existing is not None:
         old_fp, client = existing
         if old_fp == fp:
             return client
-        # Stale — close and fall through to rebuild
         try:
             await client.aclose()
         except Exception:
             pass
 
-    # ── Build a new client ─────────────────────────────────────
     max_dl = getattr(settings.manager, "concurrent_downloads", 50)
     per_host = max(8, min(max_dl, 32))
 
@@ -114,8 +78,7 @@ async def _get_client(booru: str, cookies: dict, use_http2: bool, proxy_url: str
     client = httpx.AsyncClient(
         http2=use_http2,
         follow_redirects=True,
-        # No client-level cookies: httpx would send domain-less cookies to
-        # every host. thumb_fetch() adds them per request, same site only.
+        # No client-level cookies (they would go to every host); thumb_fetch adds them same-site only.
         proxy=proxy_url or None,
         headers=image_headers,
         limits=httpx.Limits(
@@ -131,18 +94,9 @@ async def _get_client(booru: str, cookies: dict, use_http2: bool, proxy_url: str
 
 
 async def thumb_fetch(url: str, booru: str = "unknown", timeout: float = 10.0, *, extra_cookies: dict | None = None):
-    """
-    Fetch a thumbnail URL with the lightweight persistent client.
+    """Fetch with the lightweight client; returns a _LightResponse, or None (callers fall back to the bypass session).
 
-    Returns a _LightResponse on success, or None on failure.
-    Callers should fall back to the heavy BypassSession on None or non-200.
-
-    Parameters
-    ----------
-    extra_cookies : dict | None
-        Additional cookies merged on top of stored bypass cookies.
-        Callers pass the API session's accumulated cookies so the
-        lightweight client benefits from warmup/session cookies.
+    *extra_cookies* are merged over the stored bypass cookies.
     """
     try:
         from cloudflare_bypasser import store as cf_store
@@ -170,7 +124,7 @@ async def thumb_fetch(url: str, booru: str = "unknown", timeout: float = 10.0, *
             mark_lightweight_blocked(booru)
             return None
 
-        # Don't gate on Content-Type — the caller validates bytes with _is_image()
+        # Content-Type isn't checked; the caller validates the bytes.
         return _LightResponse(resp)
 
     except Exception as e:
@@ -180,7 +134,6 @@ async def thumb_fetch(url: str, booru: str = "unknown", timeout: float = 10.0, *
 
 
 async def close_all():
-    """Close all cached clients — call at app shutdown."""
     for _, (__, client) in list(_clients.items()):
         try:
             await client.aclose()
@@ -190,19 +143,12 @@ async def close_all():
     _lightweight_blocked.clear()
 
 
-# ---------------------------------------------------------------------------
-# Fallback caching — prevent 50 thumbnails from each triggering the full
-# engine cascade when the lightweight client fails for a booru.
-# ---------------------------------------------------------------------------
-
 def is_lightweight_blocked(booru: str) -> bool:
-    """Return True if the lightweight client recently failed for *booru*."""
     import time
     expiry = _lightweight_blocked.get(booru, 0)
     return time.monotonic() < expiry
 
 
 def mark_lightweight_blocked(booru: str) -> None:
-    """Record that the lightweight client failed for *booru* (TTL: 60s)."""
     import time
     _lightweight_blocked[booru] = time.monotonic() + _BLOCKED_TTL

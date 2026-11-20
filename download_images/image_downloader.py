@@ -1,14 +1,4 @@
-"""
-download_images/image_downloader.py — Main download orchestrator.
-
-This is the single entry point for downloading a post's image to disk.
-It resolves the URL, builds headers, picks the engine, and delegates
-the actual HTTP transfer to the engine function from engines.py.
-
-Public API:
-    download_post(post, folder, downloader, ...) -> bool
-    download_post_async(...)                     -> bool   (async wrapper)
-"""
+"""Downloads a post's full-resolution file to disk via the chosen engine."""
 
 from __future__ import annotations
 
@@ -21,8 +11,7 @@ from download_images.engines import ENGINE_FNS, DEFAULT_ENGINE
 
 log = logging.getLogger("image_downloader")
 
-# One lock per destination file: two downloads of the same post (double
-# click, or bulk + single) used to write into the same .part file.
+# One lock per destination file so duplicate downloads don't share a .part file.
 _dest_locks: dict[str, threading.Lock] = {}
 _dest_locks_guard = threading.Lock()
 
@@ -33,19 +22,6 @@ def _lock_for(dest: Path) -> threading.Lock:
         return _dest_locks.setdefault(key, threading.Lock())
 
 
-
-
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  download_post — download one post's full-resolution image          ║
-# ║                                                                     ║
-# ║  Steps:                                                             ║
-# ║    1. Resolve the file URL via the post's adapter                   ║
-# ║    2. Build CDN-friendly headers (Referer, UA, CF cookies)          ║
-# ║    3. Pick the engine from settings (or use the override)           ║
-# ║    4. Call the engine function → write file to dest                 ║
-# ║    5. Clean up partial files on failure                             ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-
 def download_post(
     post: dict,
     folder: Path,
@@ -53,24 +29,10 @@ def download_post(
     engine: str | None = None,
     on_progress: Callable | None = None,
 ) -> bool:
-    """Download the full-resolution image for *post* into *folder*.
+    """Download *post* into the existing *folder*. Returns success; never raises.
 
-    Returns True on success, False on failure.  Never raises.
-
-    Parameters
-    ----------
-    post : dict
-        Booru post dict (must have 'id' and a file URL).
-    folder : Path
-        Destination directory (must exist).
-    downloader : BooruDownloader
-        Used to resolve the file URL via the correct adapter.
-    engine : str or None
-        Override the download engine.  None = read from settings.
-    on_progress : callable or None
-        ``fn(downloaded_bytes, total_bytes)`` called during download.
+    *engine* overrides the setting; *on_progress* is ``fn(downloaded, total)``.
     """
-    # ── Resolve URL and filename ──────────────────────────────────
     url = downloader.get_file_url(post)
     if not url:
         log.warning("No file URL for post %s", post.get("id"))
@@ -81,15 +43,14 @@ def download_post(
     post_id = post.get("id", "unknown")
     try:
         url = require_http_url(url)
-        # id and extension come from the server: never trust them in a path.
+        # Server-supplied id/extension must not reach the path unchecked.
         dest = safe_media_path(folder, post_id, url)
     except ValidationError as e:
         log.warning("Refusing download for post %r: %s", post_id, e)
         return False
 
     with _lock_for(dest):
-        # Checked inside the lock: a concurrent download of the same post
-        # may have just finished.
+        # Inside the lock: a concurrent download may have just finished.
         if dest.exists() and dest.stat().st_size > 0:
             log.info("Already exists: %s", dest)
             return True
@@ -99,21 +60,17 @@ def download_post(
 def _download_to(url, dest: Path, post: dict, post_id, engine, on_progress) -> bool:
     from core import settings
 
-    # ── Resolve engine ────────────────────────────────────────────
     if engine is None:
         engine = getattr(settings.manager, "download_engine", DEFAULT_ENGINE)
     if engine not in ENGINE_FNS:
         engine = DEFAULT_ENGINE
 
-    # ── Build request headers ─────────────────────────────────────
     headers = _build_headers(post, url)
 
-    # ── Execute download ──────────────────────────────────────────
     log.info("Downloading post %s via %s -> %s", post_id, engine, dest.name)
 
     fn = ENGINE_FNS[engine]
-    # Write to a .part file and rename on success, so an interrupted download
-    # never leaves a truncated file that the "already exists" check would keep.
+    # Write to .part and rename, so an interrupted download leaves no truncated file.
     part = dest.with_name(dest.name + ".part")
     try:
         ok = fn(url, part, headers, on_progress)
@@ -130,10 +87,6 @@ def _download_to(url, dest: Path, post: dict, post_id, engine, on_progress) -> b
         return False
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  download_post_async — async wrapper for use in QThread / asyncio   ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-
 async def download_post_async(
     post: dict,
     folder: Path,
@@ -141,7 +94,6 @@ async def download_post_async(
     engine: str | None = None,
     on_progress: Callable | None = None,
 ) -> bool:
-    """Async wrapper around download_post.  Runs in a thread executor."""
     import asyncio
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
@@ -149,21 +101,8 @@ async def download_post_async(
     )
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  _build_headers — CDN-friendly request headers                      ║
-# ║                                                                     ║
-# ║  Image CDNs need:                                                   ║
-# ║    - A valid Referer (hotlink protection)                           ║
-# ║    - The same User-Agent that solved the CF challenge               ║
-# ║    - cf_clearance cookie injected as a Cookie header                ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-
 def _build_headers(post: dict, url: str = "") -> dict:
-    """Build HTTP headers for downloading *url* (a post's image).
-
-    Bypass cookies are attached only when *url* is on the booru's own site;
-    a file URL on any other host gets no cookies.
-    """
+    """Request headers for *url*; bypass cookies only when it is on the booru's own site."""
     from core import settings
     import boorus
 
@@ -181,13 +120,12 @@ def _build_headers(post: dict, url: str = "") -> dict:
         "Sec-Fetch-Site": "cross-site",
     }
 
-    # Override UA with the one stored from the CF bypass (if any)
+    # Use the UA that solved the Cloudflare challenge.
     from cloudflare_bypasser import store as cf_store
     bypass_ua = cf_store.get_user_agent(post_booru)
     if bypass_ua:
         headers["User-Agent"] = bypass_ua
 
-    # Inject CF bypass cookies as a Cookie header — same site only
     from core.validation import same_site
     bypass_cookies = cf_store.get_cookies(post_booru) if same_site(url, base_url) else {}
     if bypass_cookies:

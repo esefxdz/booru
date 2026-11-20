@@ -1,21 +1,4 @@
-"""
-download_images/engines.py — HTTP download engine functions.
-
-Each engine is a plain function with the same signature:
-    fn(url, dest_path, headers, on_progress) -> bool
-
-Engines are ordered from most reliable to most advanced:
-  1. urllib       — Python stdlib.  Always available.
-  2. requests     — Popular library.  Good redirect/cookie handling.
-  3. httpx        — Modern client.  HTTP/2 support.
-  4. curl_cffi    — TLS fingerprint impersonation.  Bypasses CF CDNs.
-
-SSL policy
-----------
-Certificates are always verified. A verification failure is exactly what a
-man-in-the-middle looks like, and these requests can carry session cookies,
-so the download fails with a logged error instead of retrying insecurely.
-"""
+"""HTTP download engines (urllib, requests, httpx, curl_cffi), each ``fn(url, dest, headers, on_progress) -> bool``. TLS certificates are always verified."""
 
 from __future__ import annotations
 
@@ -31,10 +14,6 @@ from typing import Callable
 
 log = logging.getLogger("image_downloader")
 
-
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  Constants                                                          ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 
 ENGINES: list[str] = ["urllib", "requests", "httpx", "curl_cffi"]
 
@@ -52,8 +31,7 @@ _CHUNK = 65536
 
 
 def _proxy_url() -> str:
-    """The user's configured proxy ("" = direct). Read on every download so a
-    settings change applies immediately."""
+    """The configured proxy ("" = direct); read per download so changes apply at once."""
     try:
         from core import settings
         return (getattr(settings.manager, "proxy_url", "") or "").strip()
@@ -80,33 +58,25 @@ def _write_stream(dest: Path, chunks, total: int, on_progress: Callable | None) 
             downloaded += len(chunk)
             if on_progress and total:
                 on_progress(downloaded, total)
-    # A connection that closes early is not always an exception (urllib just
-    # returns fewer bytes). Never accept a short file as a finished download.
+    # urllib returns fewer bytes on an early close instead of raising.
     if total and downloaded < total:
         raise IOError(f"incomplete download: {downloaded} of {total} bytes")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  Engine 1 — urllib (Python stdlib, always available)
-# ═══════════════════════════════════════════════════════════════════════
-
 def _download_urllib(url: str, dest: Path, headers: dict,
                      on_progress: Callable | None = None) -> bool:
-    """Download using Python's built-in urllib."""
     req = urllib.request.Request(url, headers=headers)
     ctx = ssl.create_default_context()
     handlers: list = [urllib.request.HTTPSHandler(context=ctx), SameSiteRedirectHandler()]
     proxy = _proxy_url()
     if proxy:
         if not proxy.lower().startswith(("http://", "https://")):
-            # urllib has no SOCKS support. Fail instead of silently going direct.
+            # urllib has no SOCKS support; fail rather than silently go direct.
             log.error("urllib: proxy %r is not HTTP; choose another download engine", proxy.split("@")[-1])
             return False
         handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
     else:
-        # No app proxy means direct. Without this, build_opener adds a default
-        # ProxyHandler that silently uses HTTP(S)_PROXY or the Windows
-        # registry (system) proxy instead.
+        # Without this, build_opener would use the HTTP(S)_PROXY / system proxy.
         handlers.append(urllib.request.ProxyHandler({}))
     opener = urllib.request.build_opener(*handlers)
     try:
@@ -129,14 +99,10 @@ def _download_urllib(url: str, dest: Path, headers: dict,
     return True
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  Engine 2 — requests (popular third-party library)
-# ═══════════════════════════════════════════════════════════════════════
-
 # requests.Session is not thread-safe and downloads run on several threads,
 # so each thread gets its own session.
 _requests_local = threading.local()
-_requests_sessions: list = []          # every session created, for shutdown()
+_requests_sessions: list = []  # for shutdown()
 _requests_sessions_lock = threading.Lock()
 
 
@@ -152,7 +118,6 @@ def _requests_session():
 
 def _download_requests(url: str, dest: Path, headers: dict,
                        on_progress: Callable | None = None) -> bool:
-    """Download using the ``requests`` library."""
     import requests as _req
 
     proxy = _proxy_url()
@@ -171,17 +136,12 @@ def _download_requests(url: str, dest: Path, headers: dict,
         return False
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  Engine 3 — httpx (modern client, optional HTTP/2)
-# ═══════════════════════════════════════════════════════════════════════
-
 _httpx_client = None
 _httpx_client_key = None
 
 
 def _download_httpx(url: str, dest: Path, headers: dict,
                     on_progress: Callable | None = None) -> bool:
-    """Download using ``httpx`` with streaming."""
     import httpx
     global _httpx_client, _httpx_client_key
     from core import settings
@@ -211,18 +171,11 @@ def _download_httpx(url: str, dest: Path, headers: dict,
         raise
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  Engine 4 — curl_cffi (Chrome TLS fingerprint impersonation)
-# ═══════════════════════════════════════════════════════════════════════
-
 def _download_curl_cffi(url: str, dest: Path, headers: dict,
                         on_progress: Callable | None = None) -> bool:
-    """Download using ``curl_cffi`` with Chrome TLS impersonation.
+    """curl_cffi with Chrome TLS impersonation.
 
-    Streams to disk. In stream mode curl_cffi turns a float ``timeout`` into
-    a connect timeout plus an idle timeout (abort when under 1 byte/s for
-    ``timeout`` seconds) and sets no total limit, so a big file on a slow
-    but flowing connection finishes instead of being cut off at 60 s.
+    In stream mode the timeout is connect plus idle only, so slow big files finish.
     """
     from curl_cffi import requests as cffi_req
 
@@ -245,13 +198,9 @@ def _download_curl_cffi(url: str, dest: Path, headers: dict,
             # iter_content ignores (and warns about) chunk_size.
             _write_stream(dest, r.iter_content(), total, on_progress)
         finally:
-            r.close()   # stops the transfer thread if we bail out early
+            r.close()   # stops the transfer thread on early exit
     return True
 
-
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  Engine registry — maps engine name to its download function        ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 
 ENGINE_FNS: dict[str, Callable] = {
     "urllib":     _download_urllib,
@@ -262,7 +211,6 @@ ENGINE_FNS: dict[str, Callable] = {
 
 
 def shutdown():
-    """Close any globally cached sessions to avoid unclosed socket warnings on exit."""
     global _httpx_client
     with _requests_sessions_lock:
         for s in _requests_sessions:
@@ -274,14 +222,9 @@ def shutdown():
         _httpx_client = None
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  Availability checker — which engines are importable right now?      ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-
 def get_available_engines() -> list[str]:
-    """Return list of engines that can actually run on this system."""
     import importlib.util
-    available = ["urllib"]  # always present
+    available = ["urllib"]
     for name in ("requests", "httpx", "curl_cffi"):
         if importlib.util.find_spec(name) is not None:
             available.append(name)

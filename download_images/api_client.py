@@ -1,10 +1,4 @@
-"""
-download_images/api_client.py — Booru API search.
-
-Sends a search query to the active booru's API and returns a list of
-post dicts.  Handles blacklist/favorites injection, 401 retry without
-credentials, and Cloudflare challenge wall detection.
-"""
+"""Booru API search: builds the query, handles 401/Cloudflare, returns post dicts."""
 
 from __future__ import annotations
 import logging
@@ -13,45 +7,11 @@ from core import settings
 from download_images.network import CloudflareBlockError
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  search_posts — query a booru's API for post metadata               ║
-# ║                                                                     ║
-# ║  Steps:                                                             ║
-# ║    1. Build search query (user tags + blacklist + favorites)        ║
-# ║    2. Build params via the adapter (handles pagination, auth)       ║
-# ║    3. Fetch via the bypass session                                  ║
-# ║    4. Retry without creds on 401 (stale API key + valid bypass)     ║
-# ║    5. Detect Cloudflare challenge walls → raise CloudflareBlockError║
-# ║    6. Parse the response via the adapter → return list[dict]        ║
-# ╚══════════════════════════════════════════════════════════════════════╝
-
 async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
-    """Search the booru and return a list of post dicts.
-
-    Parameters
-    ----------
-    adapter : BaseAdapter
-        The booru adapter for this site.
-    site_data : dict
-        Registry entry (url, api_path, api_type, ...).
-    fetch_fn : async callable
-        ``async fn(url, params=...) -> response`` — the HTTP fetcher.
-    tags : str
-        User's search query.
-    limit : int
-        Max number of posts to return.
-    page : int
-        Zero-based page index.
-
-    Returns
-    -------
-    list[dict]
-        Post dicts from the API, or [] on error.
-    """
+    """Return post dicts from the booru API, or [] on error. *fetch_fn* is ``async fn(url, params=...)``."""
     url   = adapter.build_url(site_data)
     creds = settings.manager.get_credential(settings.manager.active_booru) or {}
 
-    # ── Build search query with blacklist + favorites ─────────────
     search_tags = tags.strip()
     if settings.manager.blacklist:
         blacklist = " ".join(f"-{t}" for t in settings.manager.blacklist.split())
@@ -60,35 +20,28 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
         favorites = " ".join(settings.manager.favorites.split())
         search_tags = f"{search_tags} {favorites}"
 
-    # ── Send request ──────────────────────────────────────────────
     params = adapter.build_params(search_tags, limit, page, creds)
     from cloudflare_bypasser import bypass_snapshot
     stored_before = bypass_snapshot(settings.manager.active_booru)
     try:
         r = await fetch_fn(url, params=params)
 
-        # ── 401: authentication required ────────────────────────
         if r.status_code == 401:
             booru = settings.manager.active_booru
             if creds:
                 logging.error("[api_client] Auth failed (401) with stored credentials — they may be expired")
             else:
                 logging.warning("[api_client] %s requires an API key — get one from the site and add it in Settings > Credentials", booru)
-            # Retry without credentials in case they're stale (some boorus work anonymously)
+            # Retry anonymously in case the stored key is stale.
             if creds:
                 params_no_auth = adapter.build_params(search_tags, limit, page, {})
                 r = await fetch_fn(url, params=params_no_auth)
 
-        # ── Cloudflare challenge wall detection ───────────────────
         if hasattr(r, "is_blocked") and r.is_blocked:
             booru = settings.manager.active_booru
-            # "circuit-open" is synthetic: no request was sent, so it says
-            # nothing about the stored clearance. Keep the cookies then.
-            # Nor if the user solved the challenge while this request was
-            # in flight: it went out without the new clearance.
-            # Nor on a 403 that merely might be a block (tiny body, no
-            # challenge markers): an ordinary site 403 says nothing about
-            # the clearance either. Only a real challenge page clears it.
+            # Only a real challenge page invalidates the stored clearance: not a
+            # synthetic "circuit-open" (nothing was sent), not a plain 403, and
+            # not unless_changed_since a newer solve.
             if (getattr(r, "engine_used", None) != "circuit-open"
                     and getattr(r, "is_cf_challenge", False)):
                 from cloudflare_bypasser import invalidate_session
@@ -99,7 +52,6 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
                 f"solve the CAPTCHA to unlock access."
             )
 
-        # ── Non-200 response ─────────────────────────────────────
         if r.status_code != 200:
             booru = settings.manager.active_booru
             if r.status_code == 403:
@@ -117,10 +69,9 @@ async def search_posts(adapter, site_data, fetch_fn, tags, limit, page=0):
 
         result = adapter.parse_response(r, site_data)
         if isinstance(result, dict):
-            result = [result]          # some sites return a lone object for one hit
+            result = [result]  # some sites return a lone object for one hit
         if isinstance(result, list):
-            # Everything downstream calls post.get(...): drop non-object entries
-            # from malformed/hostile responses instead of crashing on them.
+            # Downstream calls post.get(): drop non-dict entries from malformed responses.
             dropped = sum(1 for p in result if not isinstance(p, dict))
             if dropped:
                 logging.warning("[api_client] %s: dropped %d malformed post entries", booru_name, dropped)

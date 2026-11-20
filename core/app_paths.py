@@ -1,17 +1,4 @@
-"""
-app_paths.py — where BooruBrowser keeps user data.
-
-Portable by default: data lives next to the exe (or the repo root when run
-from source), so the whole folder can be moved to a USB stick.
-
-That folder is not usable when the exe sits in Program Files or another
-read-only location (the app used to crash before showing a window), or when
-it was started from inside a zip / a temp folder (data would be written to a
-directory Windows deletes later). In those cases data goes to
-``%LOCALAPPDATA%\\BooruBrowser`` instead.
-
-``data_dir()`` is computed once per process and logged at startup.
-"""
+"""Where user data lives: next to the exe, else %LOCALAPPDATA%\\BooruBrowser."""
 from __future__ import annotations
 
 import os
@@ -59,7 +46,7 @@ def _is_writable(path: Path) -> bool:
 
 
 def choose_data_dir(candidate: Path, fallback: Path) -> tuple[Path, str]:
-    """Return (dir, reason). Pure apart from the write probe, so it is testable."""
+    """Return (dir, reason)."""
     if _is_temporary(candidate):
         reason = "app folder is a temporary folder (run from inside a zip?)"
     elif not _is_writable(candidate):
@@ -70,8 +57,7 @@ def choose_data_dir(candidate: Path, fallback: Path) -> tuple[Path, str]:
     return fallback, reason
 
 
-#: Environment override for the data folder (used by the test suite so it can
-#: never touch a developer's real data; also handy for a custom location).
+# Overrides the data folder (tests use it so they never touch real data).
 ENV_OVERRIDE = "BOORUBROWSER_DATA_DIR"
 
 
@@ -89,12 +75,7 @@ def data_dir() -> Path:
 
 
 def legacy_appdata_dir() -> Path:
-    """Where pre-portable versions kept data; read only for one-time migration.
-
-    Under the ENV_OVERRIDE sandbox this is ``<override>/legacy_appdata`` so
-    migration code can never read (or delete) the real ``%APPDATA%`` files.
-    Evaluated on every call so it follows the environment.
-    """
+    """Old %APPDATA% location, read only for migration (sandboxed under the override)."""
     if os.environ.get(ENV_OVERRIDE):
         return data_dir() / "legacy_appdata"
     base = os.environ.get("APPDATA") or os.environ.get("XDG_CONFIG_HOME") or str(

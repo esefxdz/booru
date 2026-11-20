@@ -1,14 +1,4 @@
-"""
-fileutil.py — crash- and race-safe file writes for user data files.
-
-``atomic_write_text`` writes to a *unique* temp file in the target's folder,
-fsyncs it, then ``os.replace``s it over the target. A crash mid-write leaves
-the old file intact, and two writers can never truncate each other's temp
-file (the old code used one fixed ``name.tmp`` per file).
-
-Callers that do read-modify-write must still hold their own lock around the
-whole cycle; this only makes the final write itself safe.
-"""
+"""Crash- and race-safe file writes. Read-modify-write callers still need their own lock."""
 from __future__ import annotations
 
 import os
@@ -16,8 +6,7 @@ import tempfile
 import time
 from pathlib import Path
 
-# On Windows, antivirus / Search indexer briefly open freshly written files,
-# which makes os.replace fail with PermissionError (WinError 5/32).
+# Antivirus/indexer can briefly lock fresh files on Windows (PermissionError on replace).
 _REPLACE_RETRIES = 10
 _REPLACE_DELAY = 0.05
 

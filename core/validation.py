@@ -1,9 +1,4 @@
-"""
-validation.py — Input validation utilities.
-
-Provides secure validation for user inputs to prevent injection attacks,
-path traversal, and other security vulnerabilities.
-"""
+"""Validation and sanitising for user input and server-supplied URLs, ids and extensions."""
 import re
 from urllib.parse import urlparse
 from typing import Optional
@@ -15,31 +10,10 @@ class ValidationError(ValueError):
 
 
 def validate_search_term(term: str, max_length: int = 500) -> str:
-    """
-    Validate search terms for booru queries.
-
-    Booru search syntax is rich: operators like ``score:>=50``, ``id:>1500000``,
-    ``order:score``, ``filetype:png/webp``, and negation tags (``-tag``) are all
-    legitimate.  A regex that strips ``<``, ``>``, ``/``, or ``[`` will silently
-    corrupt these queries and return wrong results with no error message.
-
-    This function only enforces a length cap and normalises whitespace.
-    The Booru API itself will reject genuinely malformed syntax.
-
-    Args:
-        term: Search term string
-        max_length: Maximum allowed length
-
-    Returns:
-        Validated and whitespace-normalised search term
-
-    Raises:
-        ValidationError: If term is not a string or exceeds max_length
-    """
+    """Cap length and normalise whitespace; deliberately no character filtering (<, >, / are valid operators)."""
     if not isinstance(term, str):
         raise ValidationError("Search term must be a string")
 
-    # Normalise whitespace
     term = " ".join(term.split())
 
     if len(term) > max_length:
@@ -49,19 +23,7 @@ def validate_search_term(term: str, max_length: int = 500) -> str:
 
 
 def validate_url(url: str, allow_schemes: tuple = ('http', 'https')) -> str:
-    """
-    Validate URLs to prevent malicious redirects or injections.
-
-    Args:
-        url: URL string to validate
-        allow_schemes: Allowed URL schemes
-
-    Returns:
-        Validated URL
-
-    Raises:
-        ValidationError: If URL is invalid
-    """
+    """Return the stripped URL or raise ValidationError."""
     if not isinstance(url, str):
         raise ValidationError("URL must be a string")
 
@@ -73,23 +35,18 @@ def validate_url(url: str, allow_schemes: tuple = ('http', 'https')) -> str:
     try:
         parsed = urlparse(url)
 
-        # Must have a scheme
         if not parsed.scheme:
             raise ValidationError("URL must include scheme (http/https)")
 
-        # Scheme must be allowed
         if parsed.scheme not in allow_schemes:
             raise ValidationError(f"URL scheme '{parsed.scheme}' not allowed")
 
-        # Must have a netloc (domain)
         if not parsed.netloc:
             raise ValidationError("URL must include a valid domain")
 
-        # Prevent localhost/private IP access (basic protection)
         if parsed.hostname in ('localhost', '127.0.0.1', '::1'):
             raise ValidationError("Localhost URLs not allowed")
 
-        # Basic length check
         if len(url) > 2048:
             raise ValidationError("URL too long")
 
@@ -100,19 +57,7 @@ def validate_url(url: str, allow_schemes: tuple = ('http', 'https')) -> str:
 
 
 def validate_filename(filename: str, max_length: int = 255) -> str:
-    """
-    Validate and sanitize filenames to prevent path traversal.
-
-    Args:
-        filename: Filename to validate
-        max_length: Maximum allowed length
-
-    Returns:
-        Sanitized filename
-
-    Raises:
-        ValidationError: If filename is invalid
-    """
+    """Sanitise a filename; raises ValidationError on path traversal."""
     if not isinstance(filename, str):
         raise ValidationError("Filename must be a string")
 
@@ -124,14 +69,9 @@ def validate_filename(filename: str, max_length: int = 255) -> str:
     if len(filename) > max_length:
         raise ValidationError(f"Filename too long (max {max_length} characters)")
 
-    # Remove or replace dangerous characters
-    # Allow alphanumeric, dots, hyphens, underscores, spaces
     sanitized = re.sub(r'[<>:"/\\|?*]', '_', filename)
-
-    # Remove control characters
     sanitized = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', sanitized)
 
-    # Prevent directory traversal
     if '..' in sanitized or sanitized.startswith('/') or '\\' in sanitized:
         raise ValidationError("Filename contains invalid path characters")
 
@@ -139,19 +79,7 @@ def validate_filename(filename: str, max_length: int = 255) -> str:
 
 
 def validate_directory_name(dirname: str, max_length: int = 100) -> str:
-    """
-    Validate directory names for safe folder creation.
-
-    Args:
-        dirname: Directory name to validate
-        max_length: Maximum allowed length
-
-    Returns:
-        Sanitized directory name
-
-    Raises:
-        ValidationError: If directory name is invalid
-    """
+    """Sanitise a directory name; raises ValidationError on path traversal."""
     if not isinstance(dirname, str):
         raise ValidationError("Directory name must be a string")
 
@@ -163,13 +91,9 @@ def validate_directory_name(dirname: str, max_length: int = 100) -> str:
     if len(dirname) > max_length:
         raise ValidationError(f"Directory name too long (max {max_length} characters)")
 
-    # Similar to filename but allow spaces and be more restrictive
     sanitized = re.sub(r'[<>:"/\\|?*<>]', '_', dirname)
-
-    # Remove control characters
     sanitized = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', sanitized)
 
-    # Prevent directory traversal
     if '..' in sanitized or sanitized.startswith('/') or '\\' in sanitized:
         raise ValidationError("Directory name contains invalid path characters")
 
@@ -177,20 +101,7 @@ def validate_directory_name(dirname: str, max_length: int = 100) -> str:
 
 
 def validate_integer(value: str, min_val: Optional[int] = None, max_val: Optional[int] = None) -> int:
-    """
-    Validate and convert string to integer.
-
-    Args:
-        value: String representation of integer
-        min_val: Minimum allowed value (optional)
-        max_val: Maximum allowed value (optional)
-
-    Returns:
-        Validated integer
-
-    Raises:
-        ValidationError: If value is invalid
-    """
+    """Parse *value* as an int within optional bounds, or raise ValidationError."""
     if not isinstance(value, str):
         raise ValidationError("Value must be a string")
 
@@ -209,41 +120,27 @@ def validate_integer(value: str, min_val: Optional[int] = None, max_val: Optiona
 
 
 def sanitize_tag_list(tags: str) -> str:
-    """
-    Sanitize tag lists for booru searches.
-
-    Args:
-        tags: Raw tag string
-
-    Returns:
-        Sanitized tag string
-    """
+    """Collapse whitespace and cap at 1000 characters."""
     if not isinstance(tags, str):
         return ""
 
-    # Remove excessive whitespace
     tags = re.sub(r'\s+', ' ', tags.strip())
 
-    # Basic length limit
     if len(tags) > 1000:
         tags = tags[:1000]
 
     return tags
 
-# ---------------------------------------------------------------------------
-# Server-supplied data: URLs, post ids, file extensions
-# ---------------------------------------------------------------------------
-# Everything below handles values that come from a booru's API response.
-# A malicious or compromised server controls them, so they are forced into a
-# known-safe shape before being used in a request or a file path.
+
+# Everything below handles server-controlled values; force them into a safe
+# shape before use in a request or file path.
 
 import hashlib as _hashlib
 import os as _os
 from pathlib import Path as _Path
 from urllib.parse import urljoin as _urljoin
 
-#: Extensions we are willing to write to disk. Anything else becomes ".bin"
-#: so a server cannot make us write e.g. ``.bat``, ``.exe`` or ``.lnk``.
+# Extensions we write to disk; anything else becomes ".bin" (no .bat/.exe/.lnk from a server).
 ALLOWED_MEDIA_EXTS = frozenset({
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp", ".jxl",
     ".mp4", ".webm", ".mkv", ".mov", ".m4v",
@@ -254,12 +151,9 @@ _POST_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 
 
 def _ambiguous_authority(url: str) -> bool:
-    r"""True for URLs whose host different parsers disagree on.
+    r"""True for URLs whose host parsers disagree on, e.g. ``https://evil.example\@booru.com/``.
 
-    ``https://evil.example\@booru.com/`` is host ``booru.com`` to
-    urllib.parse but ``evil.example`` to urllib3 (requests, cloudscraper), so
-    a same-site check could pass while the request goes elsewhere. Legitimate
-    booru URLs never contain a backslash or ``user@`` credentials.
+    urllib.parse sees booru.com but urllib3 sees evil.example, which would defeat same-site checks.
     """
     if "\\" in url:
         return True
@@ -271,12 +165,7 @@ def _ambiguous_authority(url: str) -> bool:
 
 
 def require_http_url(url: str, base: Optional[str] = None) -> str:
-    """Return *url* as an absolute http(s) URL, or raise ValidationError.
-
-    Protocol-relative (``//host/x``) and relative (``/x``, ``x``) URLs are
-    resolved against *base* when given. Rejects ``file:``, ``data:`` and any
-    other scheme, which urllib, mpv and VLC would otherwise happily open.
-    """
+    """Return *url* as an absolute http(s) URL (relative ones resolved against *base*), or raise ValidationError."""
     if not isinstance(url, str) or not url.strip():
         raise ValidationError("URL is empty")
     url = url.strip()
@@ -295,12 +184,7 @@ def require_http_url(url: str, base: Optional[str] = None) -> str:
 
 
 def safe_post_id(post_id) -> str:
-    """Return a filename-safe form of a server-supplied post id.
-
-    Ordinary ids (digits, or short alphanumeric hashes) are kept as-is.
-    Anything else (path separators, "..", empty) is replaced with a stable
-    hash so it can never contain a path separator.
-    """
+    """Return a filename-safe post id; unusual ids become a stable hash."""
     s = str(post_id if post_id is not None else "").strip()
     if _POST_ID_RE.match(s):
         return s
@@ -308,10 +192,7 @@ def safe_post_id(post_id) -> str:
 
 
 def media_extension(url: str, default: str = ".jpg") -> str:
-    """Return the lowercased, allow-listed extension of *url*'s path.
-
-    No extension -> *default*. An extension not in ALLOWED_MEDIA_EXTS -> ".bin".
-    """
+    """Allow-listed extension of *url*'s path: *default* if none, ".bin" if not allowed."""
     path = urlparse(url or "").path
     ext = _os.path.splitext(path)[1].lower()
     if not ext:
@@ -320,11 +201,7 @@ def media_extension(url: str, default: str = ".jpg") -> str:
 
 
 def safe_media_path(folder, post_id, url: str, prefix: str = "", default_ext: str = ".jpg") -> _Path:
-    """Build ``folder / f"{prefix}{id}{ext}"`` and prove it stays in *folder*.
-
-    Raises ValidationError if the result would escape *folder* (it cannot with
-    the sanitising above, but this is the last line of defence).
-    """
+    """Build ``folder / f"{prefix}{id}{ext}"``; raises ValidationError if it would escape *folder*."""
     folder = _Path(folder)
     name = f"{prefix}{safe_post_id(post_id)}{media_extension(url, default_ext)}"
     dest = folder / name
@@ -333,12 +210,8 @@ def safe_media_path(folder, post_id, url: str, prefix: str = "", default_ext: st
     return dest
 
 
-# ---------------------------------------------------------------------------
-# Cookie scoping
-# ---------------------------------------------------------------------------
-# Bypass/session cookies are stored as a flat {name: value} dict without the
-# domain they were issued for. These helpers decide whether a request URL is
-# "the same site" as the booru, so cookies are never sent to third parties.
+# Cookie scoping: cookies are stored without their domain, so these helpers
+# decide whether a URL is the booru's own site.
 
 import ipaddress as _ipaddress
 
@@ -347,11 +220,9 @@ _SLD_SUFFIXES = frozenset({"co", "com", "net", "org", "ac", "gov", "edu", "ne", 
 
 
 def site_key(host: str) -> str:
-    """Approximate registrable domain of *host* ("img3.gelbooru.com" -> "gelbooru.com").
+    """Approximate registrable domain ("img3.gelbooru.com" -> "gelbooru.com").
 
-    IP addresses and single-label hosts are returned unchanged. This is a
-    small heuristic, not the full Public Suffix List; it errs on the side of
-    a *longer* key (fewer hosts match) for ccTLD second-level suffixes.
+    A heuristic, not the Public Suffix List; errs toward a longer key.
     """
     host = (host or "").strip().lower().rstrip(".")
     try:
@@ -375,9 +246,8 @@ def is_private_host(host: str) -> bool:
     try:
         ip = _ipaddress.ip_address(host)
     except ValueError:
-        # A bare intranet name ("nas") resolves via the local network, never
-        # the public DNS. Digit-leading dotless strings are excluded: the OS
-        # resolver reads "134744072" or "0x8080808" as an IPv4 address.
+        # Bare intranet names ("nas") are private; digit-leading ones are excluded
+        # because the OS resolver reads "134744072" as an IPv4 address.
         return bool(re.fullmatch(r"[a-z_][a-z0-9_-]*", host))
     return ip.is_private or ip.is_loopback or ip.is_link_local
 
@@ -400,9 +270,7 @@ import urllib.request as _urllib_request
 
 
 class SameSiteRedirectHandler(_urllib_request.HTTPRedirectHandler):
-    """urllib copies every header (Cookie, Authorization) to the redirect
-    target, whatever its host. Drop them when the redirect leaves the site,
-    and refuse redirects to non-http(s) schemes."""
+    """Drop Cookie/Authorization on cross-site redirects and refuse non-http(s) targets."""
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         try:
@@ -414,7 +282,7 @@ class SameSiteRedirectHandler(_urllib_request.HTTPRedirectHandler):
             for h in ("Cookie", "Authorization"):
                 new.remove_header(h)
                 new.unredirected_hdrs.pop(h, None)
-            # Request stores header names .capitalize()d
+            # Request stores header names capitalized.
             for k in list(new.headers):
                 if k.lower() in ("cookie", "authorization"):
                     del new.headers[k]
@@ -430,6 +298,5 @@ _SECRET_PARAM_RE = re.compile(
 
 
 def redact_secrets(text) -> str:
-    """*text* (a URL, or an error message quoting one) with the values of
-    credential query parameters replaced by ``***``, for logging."""
+    """Mask credential query-parameter values in *text* for logging."""
     return _SECRET_PARAM_RE.sub(lambda m: m.group(1) + "=***", str(text))

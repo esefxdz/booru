@@ -10,13 +10,11 @@ import download_images.engines as engines
 import download_images.thumb_client as thumb_client
 
 def _setup_logging():
-    """Wire up rotating file logs so crashes are diagnosable in packaged builds."""
     from core.app_paths import data_dir
     log_file = None
     handlers = []
     try:
-        # data_dir() can raise (e.g. LOCALAPPDATA not writable); fall back to
-        # stderr-only logging instead of stopping the app from starting.
+        # data_dir() can raise; fall back to stderr-only logging.
         log_file = data_dir() / "error.txt"
         handlers.append(RotatingFileHandler(
             log_file,
@@ -25,7 +23,7 @@ def _setup_logging():
             encoding="utf-8",
         ))
     except Exception:
-        pass  # never let logging setup stop the app from starting
+        pass
     if sys.stdout is not None and sys.stderr is not None:
         handlers.append(logging.StreamHandler())
 
@@ -35,14 +33,13 @@ def _setup_logging():
         handlers=handlers,
     )
 
-    # Silence noisy loggers that spam every HTTP request / retry
     for noisy in (
         "httpx", "httpcore", "h2", "urllib3", "curl_cffi",
         "asyncio",
     ):
         logging.getLogger(noisy).setLevel(logging.ERROR)
 
-    # Lives on the GUI thread (this runs at import time on the main thread).
+    # Created on the GUI thread (runs at import time).
     from PyQt6.QtCore import QObject, pyqtSignal
 
     class _ErrorDialogBridge(QObject):
@@ -71,11 +68,8 @@ def _setup_logging():
         
         logging.critical("Unhandled exception", exc_info=(exc_type, exc_value, exc_traceback))
         
-        # Show a critical error dialog so the user knows what crashed.  Qt
-        # widgets may only be created on the GUI thread, and PyQt also calls
-        # this hook for exceptions raised on worker threads, so the dialog is
-        # requested through a signal: direct on the GUI thread, queued from
-        # any other thread.
+        # Qt widgets need the GUI thread but this hook also fires for worker
+        # threads, so request the dialog through a signal.
         try:
             if QApplication.instance():
                 tb = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -87,7 +81,6 @@ def _setup_logging():
 
 _setup_logging()
 
-# ── Write a startup marker so we can confirm logging works ────────
 logging.info("BooruBrowser starting (frozen=%s)", getattr(sys, 'frozen', False))
 try:
     from core.app_paths import data_dir, data_dir_reason
@@ -95,9 +88,7 @@ try:
 except Exception:
     logging.exception("Could not determine data folder")
 
-# ── Catch Qt-level messages (C++ crashes, qFatal, etc.) ──────────
-# These bypass Python's exception system and would otherwise kill the
-# app silently.  We log them so they appear in error.txt.
+# Qt-level messages bypass Python exceptions; log them to error.txt.
 def _qt_message_handler(mode, context, message):
     if mode == 4:  # QtFatalMsg — would abort() without this
         logging.critical("Qt fatal: %s", message)
@@ -109,10 +100,8 @@ def _qt_message_handler(mode, context, message):
 from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
 qInstallMessageHandler(_qt_message_handler)
 
-# Disable GPU hardware acceleration in WebEngine to prevent black screens
-# and init crashes on Windows.  --disable-gpu alone isn't always enough;
-# --in-process-gpu keeps GPU work inside the main process, avoiding
-# sandbox/spawn failures that cause silent qFatal crashes.
+# Avoids black screens and silent qFatal crashes in WebEngine on Windows;
+# --disable-gpu alone isn't enough, --in-process-gpu avoids GPU sandbox/spawn failures.
 os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
     "--disable-gpu "
     "--in-process-gpu "
@@ -123,13 +112,12 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtCore import Qt
 
-# 4.1 High-DPI & Scaling Support
 if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
 
-# WebEngine MUST be imported before QApplication is created.
+# Must be imported before QApplication is created.
 from PyQt6.QtWebEngineWidgets import QWebEngineView as _WEV  # noqa: F401
 
 from core import settings
@@ -137,15 +125,10 @@ from ui.main_window import BooruGui
 
 from ui.style import colors
 
-# ── Main Entry ──────────────────────────────────────────────
-
-
-
-
 
 def main():
     import ctypes
-    # Tell Windows this is a distinct app so the taskbar groups it correctly and uses our icon
+    # Distinct AppUserModelID so the taskbar groups and icons correctly.
     try:
         myappid = 'esef.boorubrowser.app.1'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
@@ -157,14 +140,12 @@ def main():
 
     settings.manager.initialize()
 
-    # Share contexts to prevent "virtualization" errors on some systems
+    # Avoids "virtualization" errors on some systems.
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
 
     app = QApplication(sys.argv)
     
-    # When frozen by PyInstaller, assets live in sys._MEIPASS (the temp
-    # extraction dir).  At runtime we look there first, then fall back to
-    # the source-tree location so running from source still works.
+    # PyInstaller extracts assets to sys._MEIPASS; from source use the repo.
     _asset_base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
 
     icon_path = _asset_base / "ui" / "assets" / "appico.png"
@@ -186,15 +167,10 @@ def main():
 
     exit_code = app.exec()
 
-    # ── Clean shutdown: close the SQLite cache connection ──────────
-
     thumb_cache.shutdown()
     engines.shutdown()
 
-    # Close the persistent thumbnail httpx connection pool and cached
-    # CF bypass sessions.  All async work now runs on the shared global
-    # event loop, so everything is submitted to that same loop — no
-    # cross-loop errors.
+    # Close clients and sessions on the global loop they were created on.
     from core.async_loop import run as async_run, stop as stop_async_loop
     from cloudflare_bypasser import close_all_sessions
     try:

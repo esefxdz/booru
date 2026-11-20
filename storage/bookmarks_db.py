@@ -18,13 +18,11 @@ class BookmarksDB:
         self._migrate_legacy_json()
 
     def _migrate_legacy_db(self):
-        """One-time: copy bookmarks.db from %APPDATA% to the app folder."""
         legacy = legacy_appdata_dir() / "bookmarks.db"
         if not self.db_path.exists() and legacy.exists():
             try:
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
-                # Copy (never move) so the original survives, and bring the
-                # WAL/SHM sidecars so recent writes are not lost.
+                # Copy, never move; include WAL/SHM sidecars so recent writes survive.
                 for suffix in ("-wal", "-shm"):
                     side = legacy.with_name(legacy.name + suffix)
                     if side.exists():
@@ -80,22 +78,18 @@ class BookmarksDB:
 
     @staticmethod
     def _migrate_to_composite_key(conn):
-        """v1 keyed bookmarks on post id alone, so the same id on two boorus
-        overwrote each other. Rebuild the table keyed on (booru, id) once,
-        keeping the old table as bookmarks_v1_backup."""
+        """Rebuild the table keyed on (booru, id), keeping the old one as bookmarks_v1_backup."""
         pk = [row[1] for row in sorted(
             (r for r in conn.execute("PRAGMA table_info(bookmarks)") if r[5]), key=lambda r: r[5])]
         if pk == ["booru", "id"]:
             return
         logging.info("[bookmarks] Migrating bookmarks table to a (booru, id) key")
-        # sqlite3 does not BEGIN before DDL, so `with conn:` cannot roll back
-        # CREATE TABLE. Manage the transaction explicitly instead.
+        # sqlite3 doesn't BEGIN before DDL, so `with conn:` can't roll back CREATE TABLE.
         previous = conn.isolation_level
         conn.isolation_level = None
         try:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                # leftover from an older failed run
                 conn.execute("DROP TABLE IF EXISTS bookmarks_v2")
                 conn.execute('''
                     CREATE TABLE bookmarks_v2 (
@@ -124,8 +118,7 @@ class BookmarksDB:
         finally:
             conn.isolation_level = previous
 
-    # Rows saved by very old versions have booru 'unknown'; they match any booru
-    # so upgrading never makes an existing bookmark look un-bookmarked.
+    # Rows from very old versions have booru 'unknown' and match any booru.
 
     def is_post_bookmarked(self, post_id: str, booru: str | None = None) -> bool:
         pid = str(post_id)
@@ -139,7 +132,6 @@ class BookmarksDB:
             return cursor.fetchone() is not None
 
     def are_posts_bookmarked(self, post_ids: list[str], booru: str | None = None) -> set[str]:
-        """Ids among *post_ids* that are bookmarked (on *booru*, if given)."""
         if not post_ids:
             return set()
         chunk_size = 900   # SQLite bound-parameter limit is 999
@@ -160,10 +152,7 @@ class BookmarksDB:
         return bookmarked
 
     def bookmarked_keys(self, posts: list[dict]) -> set[tuple[str, str]]:
-        """``{(booru, id)}`` for the posts in *posts* that are bookmarked.
-
-        Works for mixed lists (the bookmarks page shows several boorus).
-        """
+        """``{(booru, id)}`` of the bookmarked posts; works for mixed-booru lists."""
         ids = list({str(p.get("id")) for p in posts if p.get("id") is not None})
         if not ids:
             return set()
@@ -223,8 +212,7 @@ class BookmarksDB:
             return results
 
     def load_bookmarks(self):
-        """No-op compatibility method for code that previously forced a JSON reload."""
+        """No-op kept for callers."""
         pass
 
-# Singleton instance
 db = BookmarksDB()

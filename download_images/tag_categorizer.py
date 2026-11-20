@@ -10,9 +10,7 @@ from core.fileutil import atomic_write_text
 from core.app_paths import legacy_appdata_dir
 from core.settings import BASE_DIR
 
-# ── Offline meta-tag knowledge base ──────────────────────────────────────
-# These tags describe the *image itself* rather than its content and are
-# categorised instantly without an API call.
+# Tags about the image itself; categorised without an API call.
 _META_TAGS = {
     # Resolution / quality
     "highres", "absurdres", "incredibly_absurdres", "lowres", "bad_id",
@@ -75,8 +73,7 @@ class TagCategorizer:
         self.cache_file = BASE_DIR / "tag_cache.json"
         self._legacy_cache_file = legacy_appdata_dir() / "tag_cache.json"
         self.cache = {}
-        # Tags a lookup could not resolve: remembered in memory only, with an
-        # expiry, so a network failure is never persisted as "general".
+        # Unresolved tags, in memory only with an expiry, so a network failure is never persisted.
         self._unresolved: dict[str, float] = {}
         self._load_cache()
         self._lock = threading.Lock()
@@ -106,14 +103,9 @@ class TagCategorizer:
             logging.error(f"[tag_categorizer] Failed to save cache: {e}")
 
     def _apply_heuristics(self, tag: str):
-        """Apply offline heuristics to categorise a tag.
-
-        These run BEFORE any API call so that common tags are categorised
-        instantly even when the Danbooru API is unreachable.
-        """
+        """Offline category for *tag*, or None; runs before any API call."""
         t = tag.lower()
 
-        # ── Danbooru-style suffixes ───────────────────────────────
         if t.endswith("_(artist)"):   return "artist"
         if t.endswith("_(copyright)"): return "copyright"
         if t.endswith("_(character)"): return "character"
@@ -121,11 +113,9 @@ class TagCategorizer:
         if t.endswith("_(style)"):    return "meta"
         if t.endswith("_(medium)"):   return "meta"
 
-        # ── Known meta / technical tags ────────────────────────────
         if t in _META_TAGS:
             return "meta"
 
-        # ── Artist markers (Pixiv / Twitter / etc.) ────────────────
         if t.endswith("_(pixiv)") or t.endswith("_(twitter)"):
             return "artist"
         if t.startswith("pixiv_") and t[6:].isdigit():
@@ -134,11 +124,10 @@ class TagCategorizer:
         return None
 
     def categorize_tags(self, tags: list) -> dict:
-        """Returns a dict of categorized tags: {'artist': [...], 'copyright': [...], ...}"""
+        """Return ``{category: [tags]}``."""
         result = {"artist": [], "character": [], "copyright": [], "meta": [], "general": []}
         unknown_tags = []
 
-        # 1. Check local cache and heuristics
         for tag in tags:
             cache_key = tag.replace(" ", "_").lower()
             cat = self._apply_heuristics(cache_key)
@@ -153,11 +142,8 @@ class TagCategorizer:
             else:
                 unknown_tags.append(tag)
 
-        # 2. Fetch unknown tags from Danbooru (in chunks of 100 to avoid long URLs)
         if unknown_tags:
-            # We don't use an async lock here because it causes issues across different event loops
-            # in multiple threads. We just fetch and then update the cache.
-            # Redundant fetches for the same tags in near-simultaneous calls are acceptable.
+            # No async lock (breaks across event loops); duplicate fetches are acceptable.
             tags_to_fetch = []
             with self._lock:
                 tags_to_fetch = [t for t in unknown_tags if t.replace(" ", "_").lower() not in self.cache]
@@ -166,13 +152,11 @@ class TagCategorizer:
                 self._fetch_from_danbooru(tags_to_fetch)
             
             with self._lock:
-                # Re-evaluate previously unknown tags using now-populated cache
                 for tag in unknown_tags:
                     cache_key = tag.replace(" ", "_").lower()
                     cat = self.cache.get(cache_key)
                     if cat is None:
-                        # Not resolved (failure or unknown tag): show as general
-                        # but do not persist it; retry after a while.
+                        # Unresolved: show as general but don't persist; retry later.
                         cat = "general"
                         self._unresolved[cache_key] = time.monotonic() + _UNRESOLVED_RETRY_SECONDS
                     result[cat].append(tag)
@@ -181,7 +165,7 @@ class TagCategorizer:
         return result
 
     def _fetch_from_danbooru(self, tags: list):
-        # Circuit breaker: if Danbooru was blocked recently, skip straight to e621.
+        # Circuit breaker: skip to e621 while Danbooru is blocking.
         now = time.monotonic()
         if now < getattr(self, '_danbooru_blocked_until', 0):
             self._fetch_from_e621(tags)
@@ -200,10 +184,7 @@ class TagCategorizer:
             names = urllib.parse.quote(",".join(chunk_query))
             url = f"https://danbooru.donmai.us/tags.json?search[name_comma]={names}"
             try:
-                # Non-blocking lock: if another thread is already fetching from
-                # Danbooru, skip — the cache will be populated when it finishes.
-                # Holding this lock for the full HTTP call was causing threads to
-                # queue up and stall the tag panel for several seconds.
+                # Non-blocking: if another thread is fetching, skip rather than queue up.
                 if not self._fetch_lock.acquire(blocking=False):
                     break
                 try:
@@ -231,20 +212,18 @@ class TagCategorizer:
                                 self.cache[cache_key] = CAT_MAP.get(cat_id, "general")
                                 resolved.add(cache_key)
                 elif r.status_code in (403, 503):
-                    # Cloudflare or server block — circuit-break for 5 minutes
+                    # Blocked: circuit-break for 5 minutes.
                     blocked = True
                     self._danbooru_blocked_until = now + 300
             except Exception:
                 logging.warning("Tag categorizer: danbooru fetch failed for %d tags (network error)", len(chunk), exc_info=True)
                 blocked = True
 
-        # Fallback: e621 for anything not resolved
         remaining = [t for t in tags if t.replace(" ", "_").lower() not in resolved]
         if remaining:
             self._fetch_from_e621(remaining)
 
     def _fetch_from_e621(self, tags: list):
-        """Fallback categorisation via e621's tag API."""
         chunk_size = 50
         for i in range(0, len(tags), chunk_size):
             chunk = tags[i:i + chunk_size]
@@ -270,7 +249,7 @@ class TagCategorizer:
             except Exception as e:
                 logging.debug("[tag_categorizer] e621 fallback error: %s", e)
 
-# Global instance — lazily created to avoid import-time filesystem access
+# Created lazily to avoid filesystem access at import.
 _categorizer = None
 
 def get_categorizer():
