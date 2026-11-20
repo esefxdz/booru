@@ -5,6 +5,7 @@ import threading
 
 import pytest
 
+from cloudflare_bypasser import circuit_breaker as cb
 from cloudflare_bypasser import session as sess
 from cloudflare_bypasser.session import BypassSession
 
@@ -94,7 +95,7 @@ def test_403_with_big_non_cloudflare_body_is_accepted_not_blocked(server):
     r = asyncio.run(_session(server).get(server + "/x"))
     assert r.status_code == 403 and not r.is_blocked
     assert _Counter.hits == 2
-    assert not sess._blocked_until
+    assert not cb._blocked_until
 
 
 # async: round 1 = 5 engine calls (1 hit each, curl_cffi does not retry a 503);
@@ -105,7 +106,7 @@ def test_transient_5xx_is_still_retried_but_capped(server):
     r = asyncio.run(_session(server).get(server + "/flaky"))
     assert r.status_code == 503 and not r.is_blocked
     assert _Counter.hits == sess._MAX_ENGINE_ATTEMPTS == 8
-    assert not sess._blocked_until          # a 5xx is not a block
+    assert not cb._blocked_until          # a 5xx is not a block
 
 
 # sync: two rounds of the 4 sync engines = 8 attempts, which is the whole
@@ -134,7 +135,7 @@ def test_get_sync_httpx_fallback_uses_remaining_budget(server, monkeypatch):
 def test_success_closes_circuit(server):
     s = _session(server)
     asyncio.run(s.get(server + "/x"))                  # opens the circuit
-    sess._blocked_until.clear()                         # cooldown elapsed
+    cb._blocked_until.clear()                         # cooldown elapsed
     _Counter.status, _Counter.body = 200, b'{"ok": true}'
     r = asyncio.run(s.get(server + "/x"))
-    assert r.status_code == 200 and not sess._blocked_until
+    assert r.status_code == 200 and not cb._blocked_until

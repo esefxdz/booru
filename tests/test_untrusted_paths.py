@@ -106,7 +106,7 @@ def test_failed_download_leaves_no_file(tmp_path, monkeypatch):
 
 
 def test_bypass_session_refuses_file_scheme():
-    from cloudflare_bypasser.session import _refuse_non_http
+    from cloudflare_bypasser.engines import _refuse_non_http
     r = _refuse_non_http("file:///C:/Windows/win.ini")
     assert r is not None and r.status_code == 0 and r.content == b""
     assert _refuse_non_http("https://safebooru.org/index.php") is None

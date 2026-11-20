@@ -44,7 +44,7 @@ def _isolate_user_data(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(settings_manager, "_SETTINGS_FILE", data / "settings.json")
     # The Cloudflare circuit breaker is module-level and keyed by host; every
     # test server is 127.0.0.1, so one test's block must not leak into the next.
-    from cloudflare_bypasser import session as _cf_session
-    _cf_session.reset_all_circuits()
+    from cloudflare_bypasser import circuit_breaker as _cf_breaker
+    _cf_breaker.reset_all_circuits()
     yield
-    _cf_session.reset_all_circuits()
+    _cf_breaker.reset_all_circuits()

@@ -13,6 +13,7 @@ import pytest
 import boorus
 from adapters import get_adapter
 from cloudflare_bypasser import bypass_solved, get_session, store
+from cloudflare_bypasser import circuit_breaker as cb
 from cloudflare_bypasser import session as sess
 from download_images.api_client import search_posts
 from download_images.network import CloudflareBlockError
@@ -170,13 +171,13 @@ def test_captcha_dialog_finalize_reopens_host(booru):
 
 
 def test_reset_circuit_covers_cdn_hosts_of_the_site_only():
-    sess._open_circuit("https://gelbooru.com/index.php?page=dapi")
-    sess._open_circuit("https://img3.gelbooru.com/thumbnails/a.jpg")
-    sess._open_circuit("https://danbooru.donmai.us/posts.json")
-    sess.reset_circuit("https://gelbooru.com")
-    assert not sess._circuit_is_open("https://gelbooru.com/x")
-    assert not sess._circuit_is_open("https://img3.gelbooru.com/y")
-    assert sess._circuit_is_open("https://danbooru.donmai.us/z")
+    cb._open_circuit("https://gelbooru.com/index.php?page=dapi")
+    cb._open_circuit("https://img3.gelbooru.com/thumbnails/a.jpg")
+    cb._open_circuit("https://danbooru.donmai.us/posts.json")
+    cb.reset_circuit("https://gelbooru.com")
+    assert not cb._circuit_is_open("https://gelbooru.com/x")
+    assert not cb._circuit_is_open("https://img3.gelbooru.com/y")
+    assert cb._circuit_is_open("https://danbooru.donmai.us/z")
 
 
 def test_block_on_one_port_does_not_pause_another_booru_on_same_host(booru, monkeypatch):
@@ -242,7 +243,7 @@ def test_stale_block_after_solve_does_not_rearm_breaker(booru):
     _solve_mid_request({"cf_clearance": "SOLVED"})
     _blocked_search()
     assert _Booru.hits == 1
-    assert not sess._circuit_is_open(booru)
+    assert not cb._circuit_is_open(booru)
     _Booru.blocked = False
     assert _search() == [{"id": 1}]                     # went out right away
     assert _Booru.hits == 2
@@ -266,7 +267,7 @@ def test_get_sync_stale_block_after_solve_does_not_rearm_breaker(booru):
     _solve_mid_request({"cf_clearance": "SOLVED"})
     r = get_session(BOORU).get_sync(booru + "/thumb.jpg")
     assert r.is_blocked and _Booru.hits == 1
-    assert not sess._circuit_is_open(booru)
+    assert not cb._circuit_is_open(booru)
 
 
 def test_block_without_solve_still_clears_and_opens(booru):
@@ -274,7 +275,7 @@ def test_block_without_solve_still_clears_and_opens(booru):
     _blocked_search()
     assert _Booru.hits == 1
     assert store.get_cookies(BOORU) == {}
-    assert sess._circuit_is_open(booru)
+    assert cb._circuit_is_open(booru)
     _blocked_search()                                   # circuit-open, no request
     assert _Booru.hits == 1
 
@@ -282,7 +283,7 @@ def test_block_without_solve_still_clears_and_opens(booru):
 def test_get_sync_block_without_solve_still_opens(booru):
     r = get_session(BOORU).get_sync(booru + "/thumb.jpg")
     assert r.is_blocked and _Booru.hits == 1
-    assert sess._circuit_is_open(booru)
+    assert cb._circuit_is_open(booru)
     get_session(BOORU).get_sync(booru + "/thumb.jpg")
     assert _Booru.hits == 1
 
@@ -299,7 +300,7 @@ def test_get_sync_httpx_fallback_keeps_start_generation(booru, monkeypatch):
     r = s.get_sync(booru + "/thumb.jpg")
     assert r.is_blocked and r.engine_used == "httpx"
     assert _Booru.hits == 3                             # urllib x2 (503), httpx x1 (403)
-    assert not sess._circuit_is_open(booru)
+    assert not cb._circuit_is_open(booru)
 
 
 # ── Only a real challenge clears the stored clearance ───────────────────
@@ -313,7 +314,7 @@ def test_plain_tiny_403_keeps_stored_clearance(booru):
     assert _Booru.hits == 1
     assert store.get_cookies(BOORU) == {"cf_clearance": "VALID"}
     assert store.get_user_agent(BOORU) == "UA/ok"
-    assert sess._circuit_is_open(booru)                 # host still paused
+    assert cb._circuit_is_open(booru)                 # host still paused
 
 
 def test_challenge_header_alone_clears_stored_clearance(booru):

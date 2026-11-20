@@ -635,3 +635,16 @@ def _try_urllib_sync(
     except Exception as e:
         log.debug("urllib failed for %s: %s", _redact(url), _redact(e))
         return None
+
+
+def _refuse_non_http(url) -> Optional[BypassResponse]:
+    """Return a status-0 response for anything that is not an absolute
+    http(s) URL. Server-supplied URLs reach this layer, and urllib/curl
+    would otherwise open file:// and similar schemes."""
+    from validation import ValidationError, require_http_url
+    try:
+        require_http_url(url)
+        return None
+    except ValidationError as e:
+        log.warning("Refusing request: %s", e)
+        return BypassResponse(b"", "", 0, str(url), None, "refused")

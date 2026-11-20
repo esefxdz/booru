@@ -26,8 +26,8 @@ from cloudflare_bypasser.session import (
     BYPASS_METHOD_LABELS,
     ENGINE_ORDER,
     get_available_engines,
-    reset_circuit as _reset_circuit,
 )
+from cloudflare_bypasser.circuit_breaker import reset_circuit as _reset_circuit
 from cloudflare_bypasser import store as _store
 
 # Ensure the logger exists so consumers can configure it

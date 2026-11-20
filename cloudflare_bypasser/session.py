@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
-import os
 import threading
 import time
 from typing import Optional
@@ -38,17 +37,12 @@ from cloudflare_bypasser.fingerprint import (
     _MAX_RETRIES,
     _RETRY_BACKOFF_BASE,
     ENGINE_ORDER,
-    _HAS_CURL_CFFI,
-    _IMPERSONATE_TARGETS,
-    cffi_requests,
     _HAS_HTTPX,
     get_available_engines,
     httpx,
 )
 from cloudflare_bypasser.engines import (
     BypassResponse,
-    _extract_cookies,
-    _lower_headers,
     _try_curl_cffi,
     _try_curl_cffi_sync,
     _try_cloudscraper_sync,
@@ -57,7 +51,15 @@ from cloudflare_bypasser.engines import (
     _try_urllib_sync,
 )
 
-from validation import redact_secrets as _redact  # noqa: E402
+from cloudflare_bypasser.circuit_breaker import (
+    _circuit_is_open,
+    _close_circuit,
+    _host_of,
+    _open_circuit,
+    solve_generation,
+)
+from cloudflare_bypasser.engines import _refuse_non_http
+from cloudflare_bypasser.file_download import FileDownloadMixin
 
 log = logging.getLogger("cloudflare_bypasser")
 
@@ -79,131 +81,12 @@ from cloudflare_bypasser.engines import _Response  # noqa: E402, F401
 #: URL). It counts engine calls, not requests: curl_cffi may send a second
 #: fingerprint on a 403 within one call.
 _MAX_ENGINE_ATTEMPTS = 8
-#: After a Cloudflare challenge, stop hitting that host for this long.
-_BLOCK_COOLDOWN = 30.0
-
-
-def _host_of(url: str) -> str:
-    from urllib.parse import urlparse
-    try:
-        return (urlparse(url).hostname or "").lower()
-    except ValueError:
-        return ""
-
-
-# Circuit-breaker state is module-level, not per BypassSession: api_client
-# drops the cached session after a block, and a fresh session must not
-# forget that the host is blocking us. Keyed by (host, port) so two
-# self-hosted boorus on one machine do not pause each other. Touched from
-# the asyncio thread and from worker threads (get_sync), hence the lock.
-_blocked_until: dict[tuple[str, int], float] = {}   # (host, port) -> monotonic deadline
-_blocked_lock = threading.Lock()
-# Bumped by reset_circuit (a solved challenge), per site. A request captures
-# it when it starts; if it changed by the time the request ends blocked, the
-# block is stale (sent without the new clearance) and must not re-arm.
-_solve_gen: dict[str, int] = {}                       # site_key(host) -> count
-
-
-def _circuit_key(url: str) -> tuple[str, int]:
-    from urllib.parse import urlparse
-    try:
-        u = urlparse(url)
-        port = u.port
-    except ValueError:
-        return ("", 0)
-    if port is None:
-        port = 443 if (u.scheme or "").lower() == "https" else 80
-    return ((u.hostname or "").lower(), port)
-
-
-def _solve_key(url: str) -> str:
-    from validation import site_key
-    host = _host_of(url)
-    return site_key(host) if host else ""
-
-
-def solve_generation(url: str) -> int:
-    """How many times the challenge was solved for *url*'s site."""
-    key = _solve_key(url)
-    with _blocked_lock:
-        return _solve_gen.get(key, 0)
-
-
-def _open_circuit(url: str, solve_gen: Optional[int] = None) -> None:
-    """Open the breaker for *url*. With *solve_gen*, only if no challenge
-    was solved since the request that saw the block captured it."""
-    key = _solve_key(url) if solve_gen is not None else ""
-    with _blocked_lock:
-        if solve_gen is not None and _solve_gen.get(key, 0) != solve_gen:
-            log.debug("Not opening circuit for %s: solved since request started", _host_of(url))
-            return
-        _blocked_until[_circuit_key(url)] = time.monotonic() + _BLOCK_COOLDOWN
-
-
-def _close_circuit(url: str) -> None:
-    with _blocked_lock:
-        _blocked_until.pop(_circuit_key(url), None)
-
-
-def _circuit_is_open(url: str) -> bool:
-    key = _circuit_key(url)
-    with _blocked_lock:
-        until = _blocked_until.get(key)
-        if until is None:
-            return False
-        if time.monotonic() < until:
-            return True
-        del _blocked_until[key]
-        return False
-
-
-def reset_circuit(site_url: str) -> None:
-    """Close the breaker for every host on *site_url*'s site (the API host
-    and its CDN hosts alike). Call after the user has solved the challenge."""
-    from validation import site_key
-    host = _host_of(site_url)
-    if not host:
-        return
-    key = site_key(host)
-    with _blocked_lock:
-        _solve_gen[key] = _solve_gen.get(key, 0) + 1
-        for k in [k for k in _blocked_until if k[0] == host or site_key(k[0]) == key]:
-            del _blocked_until[k]
-
-
-def reset_all_circuits() -> None:
-    """Close every breaker (used by the test suite)."""
-    with _blocked_lock:
-        _blocked_until.clear()
-        _solve_gen.clear()
-
-
 def _is_definitive(resp) -> bool:
     """A response that retrying will not change: any 4xx or a CF challenge."""
     return bool(resp) and (resp.is_blocked or 400 <= resp.status_code < 500)
 
 
-def _refuse_non_http(url) -> Optional[BypassResponse]:
-    """Return a status-0 response for anything that is not an absolute
-    http(s) URL. Server-supplied URLs reach this layer, and urllib/curl
-    would otherwise open file:// and similar schemes."""
-    from validation import ValidationError, require_http_url
-    try:
-        require_http_url(url)
-        return None
-    except ValidationError as e:
-        log.warning("Refusing request: %s", e)
-        return BypassResponse(b"", "", 0, str(url), None, "refused")
-
-
-def _unlink_quiet(path) -> None:
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
-
-
-class BypassSession:
+class BypassSession(FileDownloadMixin):
     """
     Multi-engine HTTP session with automatic failover.
 
@@ -683,92 +566,6 @@ class BypassSession:
                 return async_resp
 
         return self._give_up(url, last_response, solve_gen)
-
-    def download_sync(
-        self,
-        url: str,
-        dest,
-        headers: dict | None = None,
-        timeout: int = _DEFAULT_TIMEOUT,
-    ) -> BypassResponse:
-        """Fetch *url* into the file *dest* without holding it in memory.
-
-        curl_cffi streams in chunks; in stream mode its float ``timeout`` is
-        a connect timeout plus an idle timeout (no total cap), so a slow but
-        flowing transfer finishes. Data goes to ``<dest>.part`` and is
-        renamed only when complete, so *dest* never holds a partial file.
-        Anything the streaming path cannot settle (curl_cffi missing, a
-        non-200 answer, a transport error) goes through :meth:`get_sync`
-        (circuit breaker, retries, other engines) and its body is written
-        out. Returns a BypassResponse; on 200 ``content`` is empty, the data
-        being in *dest*.
-        """
-        self._enter()
-        try:
-            refused = _refuse_non_http(url)
-            if refused is not None:
-                return refused
-            open_resp = self._circuit_open(url)
-            if open_resp is not None:
-                return open_resp
-            if _HAS_CURL_CFFI and "curl_cffi" in self._get_engine_order():
-                resp = self._stream_curl_cffi(url, dest, self._build_headers(headers), timeout)
-                if resp is not None:
-                    return resp
-            resp = self._get_sync(url, headers=headers, timeout=timeout)
-            if resp.status_code == 200:
-                part = f"{dest}.part"
-                try:
-                    with open(part, "wb") as f:
-                        f.write(resp.content)
-                    os.replace(part, dest)
-                except BaseException:
-                    _unlink_quiet(part)
-                    raise
-                resp.content = b""
-            return resp
-        finally:
-            self._leave()
-
-    def _stream_curl_cffi(self, url, dest, headers, timeout) -> Optional[BypassResponse]:
-        """Stream a 200 answer to *dest*. None means "use the normal path"."""
-        proxy = self.proxy_url
-        proxies = {"http": proxy, "https": proxy} if proxy else None
-        target = self._cffi_winner if self._cffi_winner in _IMPERSONATE_TARGETS \
-            else _IMPERSONATE_TARGETS[0]
-        if target not in self._cffi_sync_sessions:
-            self._cffi_sync_sessions[target] = cffi_requests.Session(
-                impersonate=target, proxies=proxies, verify=True)
-        session = self._cffi_sync_sessions[target]
-        part = f"{dest}.part"
-        try:
-            r = session.get(url, headers=headers, cookies=self._cookies_for(url),
-                            timeout=timeout, allow_redirects=True, stream=True)
-        except Exception as e:
-            log.debug("curl_cffi stream failed for %s: %s", _redact(url), _redact(e))
-            return None
-        try:
-            if r.status_code != 200:
-                return None
-            total = int(r.headers.get("Content-Length", 0) or 0)
-            got = 0
-            with open(part, "wb") as f:
-                for chunk in r.iter_content():
-                    f.write(chunk)
-                    got += len(chunk)
-            if total and got < total:
-                raise IOError(f"incomplete download: {got} of {total} bytes")
-            os.replace(part, dest)
-        except Exception as e:
-            _unlink_quiet(part)
-            log.debug("curl_cffi stream aborted for %s: %s", _redact(url), _redact(e))
-            return None
-        finally:
-            r.close()
-        resp = BypassResponse(b"", "", 200, r.url, None, f"curl_cffi/{target}",
-                              _extract_cookies(r), headers=_lower_headers(r.headers))
-        self._accept("curl_cffi", url, resp)
-        return resp
 
     @staticmethod
     def _run_on_shared_loop(coro, timeout: int):
