@@ -133,7 +133,7 @@ if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
 from PyQt6.QtWebEngineWidgets import QWebEngineView as _WEV  # noqa: F401
 
 from core import settings
-from gui import BooruGui
+from ui.main_window import BooruGui
 
 import ui.colors as colors
 
@@ -167,7 +167,7 @@ def main():
     # the source-tree location so running from source still works.
     _asset_base = Path(getattr(sys, '_MEIPASS', Path(__file__).parent))
 
-    icon_path = _asset_base / "appico.png"
+    icon_path = _asset_base / "ui" / "assets" / "appico.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 

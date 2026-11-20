@@ -500,7 +500,7 @@ class DisplayerWindow(QMainWindow):
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║  CLASS: UniversalViewer                                              ║
-# ║  Thin launcher used by gui.py when legacy mode is enabled.          ║
+# ║  Thin launcher used by main_window.py when legacy mode is enabled.          ║
 # ╚══════════════════════════════════════════════════════════════════════╝
 class UniversalViewer:
     """Opens the legacy displayer as a separate window in this process.

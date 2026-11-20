@@ -1,5 +1,5 @@
 """
-gui.py — BooruBrowser main window.
+ui/main_window.py — BooruBrowser main window.
 
 Responsibilities (and ONLY these):
   - Build the widget tree (sidebar, gallery, tag panel, overlay, stack)
@@ -31,7 +31,7 @@ from core import settings
 import boorus
 import boorus as boorus_mod
 from download_images import BooruDownloader
-from controller import AppController
+from ui.controller import AppController
 from displayers.overlay import MediaOverlay
 from ui.sidebar import Sidebar
 from ui.gallery import Gallery
@@ -70,7 +70,7 @@ class BooruGui(QMainWindow):
         self.resize(1400, 900)
 
         # App icon
-        icon_path = os.path.join(os.path.dirname(__file__), "appico.png")
+        icon_path = os.path.join(os.path.dirname(__file__), "assets", "appico.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 

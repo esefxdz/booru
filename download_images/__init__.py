@@ -16,7 +16,7 @@ Usage:
     from download_images import download_post, get_download_folder
 """
 
-# ── BooruDownloader (main client object used by gui.py) ───────────
+# ── BooruDownloader (main client object used by main_window.py) ───────────
 from download_images.booru_client import BooruDownloader
 
 # ── Network errors ────────────────────────────────────────────────

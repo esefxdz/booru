@@ -10,7 +10,7 @@ Sub-systems extracted:
   - Pixmap LRU cache    → ui/pixmap_cache.py
   - Widget tile pool    → ui/tile_pool.py
   - Layout + Y-index    → ui/gallery_layout.py
-  - Bookmark toggling   → signal emitted; handled by gui.py
+  - Bookmark toggling   → signal emitted; handled by main_window.py
 """
 
 from __future__ import annotations
@@ -425,7 +425,7 @@ class Gallery(QWidget):
         self.open_preview(post)
 
     def _on_star_clicked(self, post, star_btn):
-        """Emit signal so gui.py handles the DB write."""
+        """Emit signal so main_window.py handles the DB write."""
         # Toggle: figure out new state
         post_idx = self._post_id_to_idx.get(_post_key(post))
         is_now_bookmarked = not self._post_bookmarked.get(post_idx, False)

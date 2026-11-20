@@ -3,6 +3,8 @@ from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = []
 hiddenimports += collect_submodules('adapters')
+hiddenimports += collect_submodules('core')
+hiddenimports += collect_submodules('storage')
 hiddenimports += collect_submodules('boorus')
 hiddenimports += collect_submodules('cloudflare_bypasser')
 hiddenimports += collect_submodules('updater')
@@ -15,7 +17,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('ui/assets', 'ui/assets'), ('appico.png', '.')],  # code packages are collected as modules
+    datas=[('ui/assets', 'ui/assets')],  # code packages are collected as modules
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -40,7 +42,7 @@ exe = EXE(
     a.datas,
     [],
     name='BooruBrowser',
-    icon='appico.ico',
+    icon='ui/assets/appico.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

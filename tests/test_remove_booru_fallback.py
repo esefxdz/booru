@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import boorus
 
-GUI = Path(__file__).resolve().parent.parent / "gui.py"
+GUI = Path(__file__).resolve().parent.parent / "ui" / "main_window.py"
 
 
 def _remove_booru_fn():

@@ -1,7 +1,7 @@
 """Bulk download reports real success counts, and download_file says ok/False."""
 import asyncio
 
-from controller import BulkThread
+from ui.controller import BulkThread
 
 
 class _Dl:
