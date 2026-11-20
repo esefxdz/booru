@@ -11,56 +11,73 @@ running one of the nine supported engines can be added from the UI.
 
 ```
 booru/
-├── main.py                  Entry point, logging, crash handler
-├── gui.py                   Main window, menu bar, signal wiring
-├── controller.py            Background threads (fetch, bulk download), cancellation
-├── async_loop.py            Shared asyncio event loop (submit() / run())
-├── credentials.py           DPAPI-encrypted credentials.bin (keys, tokens, bypass cookies)
-├── thumb_cache.py           Two-tier thumbnail cache (L1 LRU memory + L2 SQLite)
-├── validation.py            Input validation + guards for server-supplied data
-├── tag_categorizer.py       Tag categorization via Danbooru API (cached)
+├── main.py                  Entry point: logging, crash handler, starts the window
 │
-├── cloudflare_bypasser/     ** CF bypass engine (the hard part) **
-│   ├── __init__.py          get_session(): per-booru session cache, fingerprint invalidation
-│   ├── session.py           BypassSession: multi-engine failover, retry, cookie scoping
-│   ├── engines.py           Engine implementations + BypassResponse wrapper
+├── core/                    App-wide plumbing (no Qt)
+│   ├── settings.py          Settings manager (settings.json) + defaults
+│   ├── credentials.py       DPAPI-encrypted credentials.v2.bin (keys, tokens, cookies)
+│   ├── app_paths.py         Where user data lives (portable / %LOCALAPPDATA% / override)
+│   ├── validation.py        Guards for server-supplied URLs, paths, cookies; log redaction
+│   ├── async_loop.py        Shared asyncio event loop (submit() / run())
+│   └── fileutil.py          atomic_write_text
+│
+├── storage/                 Local databases and caches
+│   ├── thumb_cache.py       Two-tier thumbnail cache (memory LRU + SQLite)
+│   ├── bookmarks_db.py      Bookmarks (SQLite)
+│   └── tag_cache.py         Autocomplete tag cache
+│
+├── cloudflare_bypasser/     HTTP engine chain + Cloudflare handling
+│   ├── __init__.py          get_session(): per-booru session cache
+│   ├── session.py           BypassSession: engine failover, retries, cookie scoping
+│   ├── circuit_breaker.py   Pause a host after a Cloudflare block
+│   ├── file_download.py     BypassSession.download_sync (stream to file)
+│   ├── engines.py           curl_cffi / cloudscraper / httpx / requests / urllib
 │   ├── fingerprint.py       Browser identity, headers, engine order
 │   └── store.py             Per-booru cookie/UA persistence
 │
-├── adapters/                Per-API-type adapter classes
-│   ├── base.py              BaseAdapter + NormalizedPost dataclass
-│   ├── gelbooru.py, danbooru.py, moebooru.py, e621.py, szurubooru.py,
-│   ├── philomena.py, shimmie2.py, zerochan.py, html_scraper.py
-│   └── session_login.py     Session-cookie login helpers (Danbooru Gold etc.)
-│
-├── boorus/__init__.py       Booru registry: built-ins + custom_boorus.json, validated
+├── adapters/                One adapter per booru API type (gelbooru, danbooru, e621, ...)
+├── boorus/                  Booru registry: built-ins + custom_boorus.json, validated
 │
 ├── download_images/         Search + download pipeline
-│   ├── booru_client.py      BooruDownloader: composition layer, safe URL getters
+│   ├── booru_client.py      BooruDownloader: what the UI calls
 │   ├── api_client.py        search_posts(): API query, 401 retry, CF detection
-│   ├── network.py           NetworkManager (semaphore), CloudflareBlockError
+│   ├── network.py           Request semaphore, CloudflareBlockError
 │   ├── thumbnails.py        Thumbnail prefetch with cancellation
-│   ├── thumb_client.py      Lightweight persistent httpx client for thumbnails
+│   ├── thumb_client.py      Persistent httpx client for thumbnails
 │   ├── image_downloader.py  Single-post download (.part + rename)
-│   ├── engines.py           Download engines: urllib, requests, httpx, curl_cffi
-│   └── smart_folders.py     Organize downloads by artist/character
+│   ├── engines.py           Download engines
+│   ├── smart_folders.py     Organize downloads by artist/character
+│   └── tag_categorizer.py   Tag categories via Danbooru (cached)
 │
-├── displayers/              Post display widgets (viewer, video player, sidebar, tags)
-├── ui/                      Everything else UI (gallery, search, settings, browser dialogs)
+├── ui/                      PyQt6 interface (to be replaced by Flutter later)
+│   ├── main_window.py       Main window, menus, signal wiring
+│   ├── controller.py        Background threads (fetch, bulk download)
+│   ├── gallery/             Virtualized thumbnail grid
+│   ├── viewer/              Post viewer: image, video, tags, details
+│   ├── views/               Pages: favorites, blacklist, downloads, API settings
+│   ├── widgets/             Sidebar, tag panel, chips, text bar, navigation
+│   ├── settings_view/       Settings page sections
+│   ├── browser_dialog/      Embedded Chromium for CAPTCHA and logins
+│   ├── search_bar/, autocomplete/, server_bar/, modals/, animations/
+│   ├── style/               Colors and icons
+│   └── assets/              theme.qss, app icon
+│
 ├── updater/                 Checks GitHub releases (notify only, never downloads)
-│
 └── tests/                   pytest suite (offline; `pytest` from the repo root)
 ```
 
 ## User data
 
-All of it lives next to the exe (or the repo root when running from source),
-so the folder is portable:
+It lives next to the exe (or the repo root when running from source), so the
+folder is portable. If that folder is not writable or is a temporary folder
+(e.g. run from inside a zip), it goes to `%LOCALAPPDATA%\BooruBrowser`. The
+`BOORUBROWSER_DATA_DIR` environment variable overrides both (the test suite
+uses it).
 
 | File | Contents |
 |---|---|
 | `settings.json` | Preferences (no secrets) |
-| `credentials.bin` | API keys, auth tokens, CF/session cookies. DPAPI-encrypted: tied to the Windows account, so logins must be re-entered on another PC |
+| `credentials.v2.bin` | API keys, auth tokens, CF/session cookies. DPAPI-encrypted: tied to the Windows account, so logins must be re-entered on another PC |
 | `custom_boorus.json` | Added boorus, engine overrides, removed built-ins |
 | `bookmarks.db`, `tag_cache.db`, `thumb_cache/` | Bookmarks and caches |
 
@@ -74,13 +91,13 @@ controls every field of its API responses.
   save and load. Older versions generated `.py` files; those are migrated once
   by parsing with `ast`, never imported.
 - **Paths:** post ids and file extensions from the server go through
-  `validation.safe_media_path()` (id sanitised, extension allow-listed, final
+  `core.validation.safe_media_path()` (id sanitised, extension allow-listed, final
   path asserted to stay inside the target folder).
 - **URL schemes:** server URLs are resolved against the booru and must be
   http(s) (`require_http_url`), checked in the URL getters and again in
   `BypassSession.get/get_sync`.
 - **Cookies** are stored without a domain, so they are only attached to URLs
-  on the booru's registrable domain (`validation.same_site`). This applies in
+  on the booru's registrable domain (`core.validation.same_site`). This applies in
   BypassSession, the thumbnail client, downloads, and on urllib redirects.
 - **TLS** is always verified; there is no insecure retry.
 - **Proxy:** when set, API searches, thumbnails, viewer media and downloads
@@ -128,7 +145,7 @@ engine type means writing one ~80-line adapter and registering it in
 ### 5. Shared asyncio event loop
 
 Async work (HTTP requests, thumbnails, warmup) runs on one event loop in a
-background thread, managed by `async_loop.py`. Qt code schedules work with
+background thread, managed by `core/async_loop.py`. Qt code schedules work with
 `async_loop.submit(coro)` (returns a `concurrent.futures.Future`) or blocks
 with `async_loop.run(coro)`.
 
@@ -160,7 +177,7 @@ SearchBar → AppController.fetch() → FetchThread.run()
 ```
 BypassSession.get() → every engine blocked
   → CloudflareBlockError → AppController cf_blocked signal
-  → gui.run_cf_bypass()
+  → ui.browser_dialog.run_cf_bypass()
     → CloudflareAutoSolver (hidden browser, 30s timeout)
       → success: cookies saved, session invalidated, re-fetch
       → timeout: CloudflareBrowserDialog (visible, manual solve or cookie paste)
@@ -171,7 +188,7 @@ BypassSession.get() → every engine blocked
 download_post()
   → BooruDownloader.get_file_url()      (resolved, http(s) only)
   → smart_folders.get_download_folder()
-  → validation.safe_media_path()
+  → core.validation.safe_media_path()
   → engine (urllib by default) → <name>.part → rename on success
 ```
 
@@ -200,7 +217,5 @@ Engines whose library is missing are skipped; urllib always works.
   (Danbooru), tag autocomplete, add-booru auto-detect, favicon fetcher
   (sends each booru's domain to icons.duckduckgo.com), update checker
   (GitHub), session login, and the embedded WebEngine browser.
-- `validation.same_site` uses a small heuristic, not the Public Suffix List:
+- `core.validation.same_site` uses a small heuristic, not the Public Suffix List:
   two sites on a shared host such as `*.github.io` count as the same site.
-- `gui.py` falls back to `"danbooru"` (no longer a built-in) when the last
-  booru is removed; settings load repairs this on next start.
