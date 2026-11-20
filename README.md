@@ -65,12 +65,14 @@ Output is in `dist/`.
 ## Structure
 
 ```
-cloudflare_bypasser/    HTTP engine chain + cookie persistence
+main.py                 Entry point
+core/                   Settings, credentials (DPAPI), data folder, validation, event loop
+storage/                Thumbnail cache, bookmarks, tag cache (SQLite)
+cloudflare_bypasser/    HTTP engine chain, circuit breaker, cookie persistence
 adapters/               API parsers per booru type
 boorus/                 Booru registry (built-ins + custom_boorus.json)
-download_images/        Search, thumbnails, download pipeline
-displayers/             Image viewer, video player, sidebar
-ui/                     Gallery, search bar, settings, autocomplete
+download_images/        Search, thumbnails, download pipeline, tag categories
+ui/                     PyQt6 interface: main window, gallery, viewer, pages, widgets
 updater/                Checks GitHub releases for new versions
 tests/                  pytest suite
 ```
