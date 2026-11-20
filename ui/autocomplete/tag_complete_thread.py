@@ -14,7 +14,7 @@ import httpx
 from PyQt6.QtCore import QRunnable, QObject, pyqtSignal
 from ui.autocomplete.tag_cache import search_tags, store_tags
 
-from ui import settings_view as settings
+from core import settings
 import boorus
 from adapters import get_adapter
 

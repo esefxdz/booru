@@ -11,7 +11,7 @@ import download_images.thumb_client as thumb_client
 
 def _setup_logging():
     """Wire up rotating file logs so crashes are diagnosable in packaged builds."""
-    from app_paths import data_dir
+    from core.app_paths import data_dir
     log_file = None
     handlers = []
     try:
@@ -90,7 +90,7 @@ _setup_logging()
 # ── Write a startup marker so we can confirm logging works ────────
 logging.info("BooruBrowser starting (frozen=%s)", getattr(sys, 'frozen', False))
 try:
-    from app_paths import data_dir, data_dir_reason
+    from core.app_paths import data_dir, data_dir_reason
     logging.info("Data folder: %s (%s)", data_dir(), data_dir_reason())
 except Exception:
     logging.exception("Could not determine data folder")
@@ -132,7 +132,7 @@ if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, "PassThrough"):
 # WebEngine MUST be imported before QApplication is created.
 from PyQt6.QtWebEngineWidgets import QWebEngineView as _WEV  # noqa: F401
 
-from ui import settings_view as settings
+from core import settings
 from gui import BooruGui
 
 import ui.colors as colors
@@ -152,7 +152,7 @@ def main():
     except Exception:
         logging.debug("SetCurrentProcessExplicitAppUserModelID failed", exc_info=True)
 
-    from async_loop import start as start_async_loop
+    from core.async_loop import start as start_async_loop
     start_async_loop()
 
     settings.manager.initialize()
@@ -195,7 +195,7 @@ def main():
     # CF bypass sessions.  All async work now runs on the shared global
     # event loop, so everything is submitted to that same loop — no
     # cross-loop errors.
-    from async_loop import run as async_run, stop as stop_async_loop
+    from core.async_loop import run as async_run, stop as stop_async_loop
     from cloudflare_bypasser import close_all_sessions
     try:
         async_run(thumb_client.close_all())
@@ -215,7 +215,7 @@ if __name__ == "__main__":
         import traceback
         import sys
         try:
-            from app_paths import data_dir
+            from core.app_paths import data_dir
             crash_file = data_dir() / "FATAL_CRASH.txt"
         except Exception:
             import tempfile

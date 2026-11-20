@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QFrame
 )
 from PyQt6.QtCore import Qt, QTimer
-from ui import settings_view as settings
+from core import settings
 from ui import colors
 import thumb_cache
 import webbrowser

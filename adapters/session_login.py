@@ -16,7 +16,7 @@ Login flow:
 
 import logging
 import httpx
-from ui import settings_view as settings
+from core import settings
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ async def perform_login(
 
     url = site_url + path
 
-    from validation import is_private_host, same_site
+    from core.validation import is_private_host, same_site
     from urllib.parse import urljoin, urlparse
     parsed_site = urlparse(site_url)
     if parsed_site.scheme != "https" and not is_private_host(parsed_site.hostname or ""):

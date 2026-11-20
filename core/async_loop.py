@@ -19,7 +19,7 @@ for the entire application lifetime.  All async work is submitted via
 Usage
 -----
     # In main.py, early:
-    from async_loop import start, stop, run
+    from core.async_loop import start, stop, run
 
     start()
 

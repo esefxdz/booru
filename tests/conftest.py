@@ -35,12 +35,11 @@ def _isolate_user_data(tmp_path_factory, monkeypatch):
     files that live next to the app (they are the developer's own data)."""
     data = tmp_path_factory.mktemp("userdata")
     import boorus
-    import credentials
+    from core import credentials
     monkeypatch.setattr(boorus, "STORE_FILE", data / "custom_boorus.json")
     monkeypatch.setattr(credentials.CredentialManager, "_get_credentials_file",
                         staticmethod(lambda: data / "credentials.v2.bin"))
-    import ui.settings_view  # noqa: F401  (the package re-exports an instance named 'manager')
-    settings_manager = sys.modules["ui.settings_view.manager"]
+    import core.settings as settings_manager
     monkeypatch.setattr(settings_manager, "_SETTINGS_FILE", data / "settings.json")
     # The Cloudflare circuit breaker is module-level and keyed by host; every
     # test server is 127.0.0.1, so one test's block must not leak into the next.

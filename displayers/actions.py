@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QApplication
 from PyQt6.QtCore import QTimer
 
 from ui import colors
-from ui import settings_view as settings
+from core import settings
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

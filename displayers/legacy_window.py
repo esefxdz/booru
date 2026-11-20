@@ -24,7 +24,7 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 import httpx
 
-from ui import settings_view as settings
+from core import settings
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -74,7 +74,7 @@ def _fetch_bytes(url, booru_name=None):
 
     # Same rules as the main app: http(s) only, booru cookies only to the
     # booru's own site (as a header, which httpx drops on redirect), proxy on.
-    from validation import require_http_url, same_site
+    from core.validation import require_http_url, same_site
     import boorus
     url = require_http_url(url)
     site_url = boorus.REGISTRY.get(booru_name or "", {}).get("url", "")
@@ -166,7 +166,7 @@ class DisplayerWindow(QMainWindow):
         self.setStyleSheet("background-color: #121212; color: #ffffff;")
 
         # Restore saved window geometry, default 700x550
-        from ui.settings_view.manager import BASE_DIR
+        from core.settings import BASE_DIR
         self._qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
         w = self._qs.value("window_w", 700, type=int)
         h = self._qs.value("window_h", 550, type=int)
@@ -268,7 +268,7 @@ class DisplayerWindow(QMainWindow):
                 # Use the global settings manager instead of a hardcoded "files" folder
                 dl_dir = settings.manager.get_download_dir()
                 dl_dir.mkdir(parents=True, exist_ok=True)
-                from validation import safe_media_path
+                from core.validation import safe_media_path
                 path = safe_media_path(dl_dir, post_id, file_url)
                 data = _fetch_bytes(file_url)
                 path.write_bytes(data)
@@ -345,10 +345,10 @@ class DisplayerWindow(QMainWindow):
         def work():
             try:
                 data = _fetch_bytes(url, booru)
-                from ui import settings_view as settings
+                from core import settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
-                from validation import safe_media_path
+                from core.validation import safe_media_path
                 path = safe_media_path(tmp, post_id, "x.gif", prefix="view_")
                 path.write_bytes(data)
                 return str(path)
@@ -421,7 +421,7 @@ class DisplayerWindow(QMainWindow):
             QSlider::handle:horizontal { background: #fff; width: 10px; height: 10px; margin: -3px 0; border-radius: 5px; }
         """)
 
-        from ui.settings_view.manager import BASE_DIR
+        from core.settings import BASE_DIR
         qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
         saved = qs.value("volume", 50, type=int)
         self.vol_slider.setValue(saved)

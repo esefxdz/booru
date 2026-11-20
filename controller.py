@@ -1,6 +1,6 @@
 import threading
 from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
-from ui import settings_view as settings
+from core import settings
 
 class FetchThread(QThread):
     finished = pyqtSignal(list, bool) # posts, is_bookmarks_mode
@@ -20,7 +20,7 @@ class FetchThread(QThread):
         self.cancel_event = threading.Event()
 
     def run(self):
-        from async_loop import run as async_run
+        from core.async_loop import run as async_run
         from cloudflare_bypasser import get_session
 
         try:
@@ -81,7 +81,7 @@ class BulkThread(QThread):
 
     def run(self):
         import uuid
-        from async_loop import run as async_run
+        from core.async_loop import run as async_run
         try:
             self.progress.emit("Fetching metadata…")
             posts = async_run(
@@ -256,7 +256,7 @@ class AppController(QObject):
         # Route Cloudflare-block errors to the dedicated signal so the GUI
         # can offer to open the CAPTCHA solver automatically.
         if "Cloudflare" in error_msg:
-            from ui import settings_view as settings
+            from core import settings
             self.status_updated.emit("🔐 Cloudflare blocked — solve CAPTCHA?", "orange")
             self.cf_blocked.emit(settings.manager.active_booru, error_msg)
         else:

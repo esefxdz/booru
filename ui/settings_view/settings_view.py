@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QCursor
 
-from ui import settings_view as settings
+from core import settings
 from ui import colors
 from ui.icons import Icons
 import ui.animations as anims

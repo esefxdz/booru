@@ -7,7 +7,7 @@ has_active_bypass → clear_bypass.
 
 import unittest
 
-from ui import settings_view as settings
+from core import settings
 from cloudflare_bypasser import store
 
 

@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QCheckBox, QSlider, QFrame
 )
 from PyQt6.QtCore import Qt
-from ui import settings_view as settings
+from core import settings
 from ui import colors
 
 

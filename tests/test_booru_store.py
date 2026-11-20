@@ -128,8 +128,7 @@ def test_malicious_legacy_py_rejected(store, tmp_path):
 def test_settings_fall_back_when_active_booru_missing(store, tmp_path):
     import json
     import sys
-    import ui.settings_view  # noqa: F401
-    mgr_mod = sys.modules["ui.settings_view.manager"]
+    import core.settings as mgr_mod
     mgr_mod._SETTINGS_FILE.write_text(json.dumps(
         {"active_booru": "gelbooru_3", "booru_order": ["gelbooru_3", "safebooru"]}))
     m = mgr_mod.manager
@@ -143,8 +142,7 @@ def test_settings_fall_back_when_active_booru_missing(store, tmp_path):
 
 def _fresh_manager(monkeypatch):
     import sys
-    import ui.settings_view  # noqa: F401
-    mod = sys.modules["ui.settings_view.manager"]
+    import core.settings as mod
     m = mod.manager
     for k, v in (("blacklist", ""), ("bypass_data", {}), ("_save_disabled", False), ("_initialized", True)):
         monkeypatch.setattr(m, k, v, raising=False)
@@ -152,7 +150,7 @@ def _fresh_manager(monkeypatch):
 
 
 def test_corrupt_settings_moved_aside_and_secrets_still_loaded(monkeypatch):
-    import credentials
+    from core import credentials
     mod, m = _fresh_manager(monkeypatch)
     credentials.set_sensitive("_bypass_data", {"gelbooru": {"cookies": {"cf_clearance": "keep"}}})
     mod._SETTINGS_FILE.write_text("{ truncated by a crash")
@@ -183,7 +181,7 @@ def test_unreadable_settings_disables_saving(monkeypatch):
 
 
 def test_locked_credentials_at_load_do_not_wipe_secrets_on_save(monkeypatch):
-    import credentials
+    from core import credentials
     mod, m = _fresh_manager(monkeypatch)
     monkeypatch.setattr(m, "_secrets_unloaded", False, raising=False)
     blob = {"gelbooru": {"cookies": {"cf_clearance": "keep"}}}
@@ -222,7 +220,7 @@ def test_failed_secret_write_is_not_silent(monkeypatch, caplog):
 
 
 def test_get_sensitive_raise_on_error_distinguishes_failure(monkeypatch):
-    import credentials
+    from core import credentials
 
     def boom(self):
         raise PermissionError(32, "locked")
@@ -234,7 +232,7 @@ def test_get_sensitive_raise_on_error_distinguishes_failure(monkeypatch):
 
 
 def test_transient_permission_error_on_read_is_retried(tmp_path, monkeypatch):
-    import credentials
+    from core import credentials
     monkeypatch.setattr(credentials.time, "sleep", lambda s: None)
     f = tmp_path / "c.bin"
     f.write_text("hello")

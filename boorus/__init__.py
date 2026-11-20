@@ -58,7 +58,7 @@ _PACKAGE_DIR = Path(__file__).resolve().parent
 
 def _app_dir() -> Path:
     """Directory that holds settings.json (see app_paths.data_dir)."""
-    from app_paths import data_dir
+    from core.app_paths import data_dir
     return data_dir()
 
 
@@ -168,7 +168,7 @@ def _read_store() -> dict:
 
 
 def _write_store(store: dict) -> bool:
-    from fileutil import atomic_write_text
+    from core.fileutil import atomic_write_text
     try:
         atomic_write_text(STORE_FILE, json.dumps(store, indent=2))
         return True

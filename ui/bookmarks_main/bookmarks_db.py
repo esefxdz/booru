@@ -4,8 +4,8 @@ import sqlite3
 import logging
 import threading
 
-from app_paths import legacy_appdata_dir
-from ui.settings_view.manager import BASE_DIR
+from core.app_paths import legacy_appdata_dir
+from core.settings import BASE_DIR
 _DB_FILE = BASE_DIR / "bookmarks.db"
 
 class BookmarksDB:

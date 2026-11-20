@@ -68,8 +68,8 @@ def get_download_folder(post: dict, downloader) -> Path:
     *downloader* is a ``BooruDownloader`` instance used for adapter
     access and tag resolution.
     """
-    from ui import settings_view as settings
-    from validation import validate_directory_name
+    from core import settings
+    from core.validation import validate_directory_name
 
     # ── Static download (default) ─────────────────────────────────
     if not settings.manager.use_smart_folders:
@@ -128,8 +128,8 @@ def get_download_folder(post: dict, downloader) -> Path:
 
 def get_bulk_folder(tags: str) -> Path:
     """Return a folder named after the search query for bulk downloads."""
-    from ui import settings_view as settings
-    from validation import validate_directory_name
+    from core import settings
+    from core.validation import validate_directory_name
 
     try:
         safe = validate_directory_name(tags.strip()) or "unsorted"
@@ -184,7 +184,7 @@ def _pick_folder_name(cats: dict) -> str | None:
     Respects the user's preference: artist-first vs character-first.
     Falls back to copyright, then returns None for the heuristic fallback.
     """
-    from ui import settings_view as settings
+    from core import settings
 
     if settings.manager.download_folder_use_artist_folder:
         # User prefers artist → character

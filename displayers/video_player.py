@@ -18,7 +18,7 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 
 from ui import colors
-from ui import settings_view as settings
+from core import settings
 
 
 #creator note, i know this is some yandere dev bullshit here, but im gonna keep all these ifs cause and keep this boilerplated code cuz im lazy
@@ -136,7 +136,7 @@ class VideoPlayerWidget(QWidget):
         self.vol_slider.setRange(0, 100)
         self.vol_slider.setFixedWidth(80)
 
-        from ui.settings_view.manager import BASE_DIR
+        from core.settings import BASE_DIR
         qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
         saved_vol = qs.value("VideoPlayer/volume", 50, type=int)
         self.vol_slider.setValue(saved_vol)
@@ -213,7 +213,7 @@ class VideoPlayerWidget(QWidget):
         self.player.setAudioOutput(self._audio)
         self.player.setVideoOutput(self._qt_video_widget)
 
-        from ui.settings_view.manager import BASE_DIR
+        from core.settings import BASE_DIR
         qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
         saved_vol = qs.value("VideoPlayer/volume", 50, type=int)
         self._audio.setVolume(saved_vol / 100.0)
@@ -294,7 +294,7 @@ class VideoPlayerWidget(QWidget):
     # │  _set_volume  — applies volume and persists to QSettings.      │
     # └──────────────────────────────────────────────────────────────────┘
     def _set_volume(self, v):
-        from ui.settings_view.manager import BASE_DIR
+        from core.settings import BASE_DIR
         qs = QSettings(str(BASE_DIR / "displayers.ini"), QSettings.Format.IniFormat)
         qs.setValue("VideoPlayer/volume", v)
         if self.engine_type == "vlc":

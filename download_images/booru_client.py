@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from ui import settings_view as settings
+from core import settings
 import boorus
 from adapters import get_adapter
 
@@ -128,7 +128,7 @@ class BooruDownloader(QObject):
         http(s). Returns "" for anything else (file:, data:, junk)."""
         if not url:
             return ""
-        from validation import ValidationError, require_http_url
+        from core.validation import ValidationError, require_http_url
         base = boorus.REGISTRY.get(post.get("_booru") or settings.manager.active_booru, {}).get("url")
         try:
             return require_http_url(url, base)

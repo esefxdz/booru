@@ -31,7 +31,7 @@ from cloudflare_bypasser.fingerprint import (
     _requests_lib,
 )
 
-from validation import redact_secrets as _redact
+from core.validation import redact_secrets as _redact
 
 log = logging.getLogger("cloudflare_bypasser")
 
@@ -393,7 +393,7 @@ def _set_site_scoped_cookies(jar, cookies: dict, url: str) -> None:
         return
     import ipaddress
     from urllib.parse import urlparse
-    from validation import site_key
+    from core.validation import site_key
     host = (urlparse(url).hostname or "").lower()
     if not host:
         return
@@ -584,7 +584,7 @@ def _try_urllib_sync(
             url = f"{url}?{query}" if "?" not in url else f"{url}&{query}"
 
         import http.cookiejar
-        from validation import SameSiteRedirectHandler
+        from core.validation import SameSiteRedirectHandler
         # Was HTTPCookieProcessor(HTTPCookieProcessor()), which raised on every
         # request, so this "always available" fallback never worked.
         cookie_jar = http.cookiejar.CookieJar()
@@ -641,7 +641,7 @@ def _refuse_non_http(url) -> Optional[BypassResponse]:
     """Return a status-0 response for anything that is not an absolute
     http(s) URL. Server-supplied URLs reach this layer, and urllib/curl
     would otherwise open file:// and similar schemes."""
-    from validation import ValidationError, require_http_url
+    from core.validation import ValidationError, require_http_url
     try:
         require_http_url(url)
         return None

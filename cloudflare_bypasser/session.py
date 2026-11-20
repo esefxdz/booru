@@ -26,7 +26,7 @@ import logging
 import threading
 import time
 from typing import Optional
-from ui import settings_view as settings
+from core import settings
 
 from cloudflare_bypasser.fingerprint import (
     _DEFAULT_UA,
@@ -298,7 +298,7 @@ class BypassSession(FileDownloadMixin):
             )
         elif engine == "httpx":
             if self._httpx_client is None and _HAS_HTTPX:
-                from ui import settings_view as settings
+                from core import settings
                 use_h2 = getattr(settings.manager, "use_http2", False)
                 self._httpx_client = httpx.AsyncClient(
                     http2=use_h2,
@@ -337,7 +337,7 @@ class BypassSession(FileDownloadMixin):
     def _cookies_for(self, url: str) -> dict:
         """Cookies to send to *url*: all of them on the booru's own site,
         none anywhere else."""
-        from validation import same_site
+        from core.validation import same_site
         if self.site_url and same_site(url, self.site_url):
             return self._merged_cookies
         return {}
@@ -349,7 +349,7 @@ class BypassSession(FileDownloadMixin):
         same-site: resp.cookies reflects the last hop, so a redirect through
         a third-party host could otherwise plant its cookies here.
         """
-        from validation import same_site
+        from core.validation import same_site
         final_url = str(getattr(resp, "url", "") or url)
         if (resp.cookies and self.site_url and same_site(url, self.site_url)
                 and same_site(final_url, self.site_url)):
@@ -578,7 +578,7 @@ class BypassSession(FileDownloadMixin):
             return None
         except RuntimeError:
             pass
-        import async_loop
+        from core import async_loop
         try:
             fut = async_loop.submit(coro)
         except RuntimeError:

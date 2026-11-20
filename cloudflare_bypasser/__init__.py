@@ -53,7 +53,7 @@ _session_cache: dict[str, tuple[str, BypassSession]] = {}
 
 def _session_fingerprint(booru_name: str) -> str:
     """Fingerprint of all settings that affect session construction."""
-    from ui import settings_view as settings
+    from core import settings
     cookies = _store.get_cookies(booru_name)
     ua = _store.get_user_agent(booru_name)
     proxy = settings.manager.proxy_url or ""
@@ -92,7 +92,7 @@ def get_session(booru_name: str) -> BypassSession:
         log.debug("get_session: invalidating cached session for %s (fp changed)", booru_name)
         _retire(session)
 
-    from ui import settings_view as settings
+    from core import settings
     import boorus
     session = BypassSession(
         user_agent=_store.get_user_agent(booru_name),

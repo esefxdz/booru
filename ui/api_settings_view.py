@@ -17,13 +17,13 @@ from PyQt6.QtWidgets import (
     QWidget, QFormLayout, QFrame
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from validation import ValidationError
+from core.validation import ValidationError
 from adapters.session_login import supports_session_login, get_session_cookie_names, perform_login, get_login_url
 from adapters import adapter_choices
 import ui.animations as anims
 from cloudflare_bypasser import get_session, invalidate_session
 from ui.browser_dialog import SessionLoginBrowserDialog
-from ui import settings_view as settings
+from core import settings
 import boorus
 
 
@@ -386,7 +386,7 @@ class APISettingsView(QWidget):
                 self._url, self._atype, self._user, self._pwd = url, atype, user, pwd
                 self._bypass = bypass_sess
             def run(self):
-                from async_loop import run as async_run
+                from core.async_loop import run as async_run
                 result = async_run(
                     perform_login(self._url, self._atype, self._user, self._pwd,
                                   bypass_session=self._bypass)

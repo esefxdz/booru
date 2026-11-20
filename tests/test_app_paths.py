@@ -2,7 +2,7 @@
 import tempfile
 from pathlib import Path
 
-import app_paths
+from core import app_paths
 
 
 def test_writable_permanent_folder_is_portable(tmp_path, monkeypatch):
@@ -33,7 +33,7 @@ def test_write_probe_leaves_nothing(tmp_path):
 
 
 def test_suite_never_uses_real_data_folder():
-    from ui.settings_view.manager import BASE_DIR
+    from core.settings import BASE_DIR
     from ui.bookmarks_main import bookmarks_db
     assert BASE_DIR != app_paths.app_dir()
     assert "booru-test-data-" in str(BASE_DIR)

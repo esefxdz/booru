@@ -57,7 +57,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from ui import settings_view as settings
+from core import settings
 
 
 # ─────────────────────────────────────────────────────────────────

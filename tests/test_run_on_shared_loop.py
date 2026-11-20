@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-import async_loop
+from core import async_loop
 from cloudflare_bypasser.session import BypassSession
 
 

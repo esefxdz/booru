@@ -9,7 +9,7 @@ credentials, and Cloudflare challenge wall detection.
 from __future__ import annotations
 import logging
 
-from ui import settings_view as settings
+from core import settings
 from download_images.network import CloudflareBlockError
 
 

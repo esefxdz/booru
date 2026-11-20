@@ -157,13 +157,13 @@ class CredentialManager:
     @staticmethod
     def _get_credentials_file() -> Path:
         """Path of the DPAPI store (in the data folder, see app_paths)."""
-        from ui.settings_view.manager import BASE_DIR
+        from core.settings import BASE_DIR
         return BASE_DIR / CredentialManager.FILE_NAME
 
     @staticmethod
     def _get_legacy_credentials_file() -> Path:
         """Pre-portable %APPDATA% location — only read for one-time migration."""
-        from app_paths import legacy_appdata_dir
+        from core.app_paths import legacy_appdata_dir
         return legacy_appdata_dir() / CredentialManager.LEGACY_NAME
 
     def _legacy_sources(self) -> list[Path]:
@@ -265,7 +265,7 @@ class CredentialManager:
 
     def _save_credentials(self, credentials: Dict[str, Any]):
         """Encrypt and atomically write credentials to disk."""
-        from fileutil import atomic_write_text
+        from core.fileutil import atomic_write_text
         atomic_write_text(self._get_credentials_file(), _encrypt(json.dumps(credentials)))
 
     @_locked

@@ -49,7 +49,7 @@ class SessionLoginBrowserDialog(InAppBrowser):
             return
         # Generic names like PHPSESSID are set by ads/analytics frames too.
         # Only keep the cookie if its domain belongs to the booru's site.
-        from validation import same_site
+        from core.validation import same_site
         domain = cookie.domain().lstrip(".")
         if not domain or not same_site(f"https://{domain}/", self._site_url):
             return

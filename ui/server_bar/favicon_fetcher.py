@@ -2,7 +2,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 import logging
 import re
 import httpx
-from ui import settings_view as settings
+from core import settings
 
 _log = logging.getLogger(__name__)
 

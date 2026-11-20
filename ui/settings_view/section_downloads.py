@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QFileDialog, QComboBox,
 )
 from PyQt6.QtCore import Qt
-from ui import settings_view as settings
+from core import settings
 from ui import colors
 from download_images.engines import ENGINES, ENGINE_LABELS, get_available_engines
 

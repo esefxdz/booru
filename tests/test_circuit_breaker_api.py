@@ -67,7 +67,7 @@ def booru(monkeypatch):
     _Booru.block = (403, _CHALLENGE, {"cf-mitigated": "challenge"})
     base = f"http://127.0.0.1:{srv.server_port}"
 
-    from ui import settings_view as settings
+    from core import settings
     import cloudflare_bypasser
     m = settings.manager
     monkeypatch.setitem(boorus.REGISTRY, BOORU, {"url": base, "api_type": "danbooru"})

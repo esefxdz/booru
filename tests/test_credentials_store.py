@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-import credentials as c
+from core import credentials as c
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI is Windows-only")
 

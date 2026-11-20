@@ -6,7 +6,7 @@ import threading
 import pytest
 
 import boorus
-import validation as v
+from core import validation as v
 from cloudflare_bypasser.session import BypassSession
 from download_images import engines, image_downloader, thumb_client
 

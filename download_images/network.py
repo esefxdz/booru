@@ -7,7 +7,7 @@ Contains:
 """
 
 import asyncio
-from ui import settings_view as settings
+from core import settings
 
 
 # ╔══════════════════════════════════════════════════════════════════════╗

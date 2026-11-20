@@ -45,7 +45,7 @@ from io import BytesIO
 
 from PIL import Image
 
-from ui import settings_view as settings
+from core import settings
 import thumb_cache
 
 log = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def _safe_preview_url(url: str, booru: str) -> str:
     refuse anything that is not http(s)."""
     if not url:
         return ""
-    from validation import ValidationError, require_http_url
+    from core.validation import ValidationError, require_http_url
     import boorus
     try:
         return require_http_url(url, boorus.REGISTRY.get(booru, {}).get("url"))

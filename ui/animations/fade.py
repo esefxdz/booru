@@ -1,6 +1,6 @@
 from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QWidget
-from ui import settings_view as settings
+from core import settings
 
 # ╔══════════════════════════════════════════════════════════════════════╗
 # ║                        ANIMATE_FADE_IN                              ║

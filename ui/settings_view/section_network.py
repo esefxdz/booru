@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QMessageBox
 )
 from PyQt6.QtCore import Qt
-from ui import settings_view as settings
+from core import settings
 from ui import colors
 
 

@@ -7,7 +7,7 @@ change — and that get_session() reuses sessions when nothing has changed.
 
 import unittest
 
-from ui import settings_view as settings
+from core import settings
 from cloudflare_bypasser import store, get_session, invalidate_session
 
 

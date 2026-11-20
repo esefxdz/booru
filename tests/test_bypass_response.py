@@ -5,7 +5,7 @@ tests/test_bypass_response.py — Unit tests for BypassResponse.
 import unittest
 import json
 
-from ui import settings_view as settings  # noqa: F401  # avoid circular import
+from core import settings  # noqa: F401  # avoid circular import
 from cloudflare_bypasser.engines import BypassResponse
 
 

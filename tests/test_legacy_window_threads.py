@@ -12,7 +12,7 @@ _REAL_LOAD_IMAGE = None
 def lw_env(monkeypatch, tmp_path):
     from PyQt6.QtWidgets import QApplication
     from displayers import legacy_window as lw
-    from ui import settings_view as settings
+    from core import settings
 
     global _REAL_LOAD_IMAGE
     _REAL_LOAD_IMAGE = lw.DisplayerWindow._load_image

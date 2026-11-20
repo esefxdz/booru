@@ -18,7 +18,7 @@ from cloudflare_bypasser.fingerprint import (
     _IMPERSONATE_TARGETS,
     cffi_requests,
 )
-from validation import redact_secrets as _redact
+from core.validation import redact_secrets as _redact
 
 log = logging.getLogger("cloudflare_bypasser")
 

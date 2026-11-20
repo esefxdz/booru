@@ -10,13 +10,13 @@ import logging
 import json
 import shutil
 from pathlib import Path
-from credentials import migrate_from_settings, get_sensitive, set_sensitive_many, get_credential, set_credential
+from core.credentials import migrate_from_settings, get_sensitive, set_sensitive_many, get_credential, set_credential
 from updater.version import __version__ as VERSION
 
 # --- STATIC CONSTANTS ---
 import threading
 import time
-from app_paths import data_dir, legacy_appdata_dir
+from core.app_paths import data_dir, legacy_appdata_dir
 # Next to the exe when that folder is usable, else %LOCALAPPDATA%\BooruBrowser.
 BASE_DIR = data_dir()
 SEARCH_LIMIT = 50
@@ -299,7 +299,7 @@ class SettingsManager:
 
     def _raw_save(self, data):
         """Low-level save — atomically writes a dict to settings.json."""
-        from fileutil import atomic_write_text
+        from core.fileutil import atomic_write_text
         try:
             with _SAVE_LOCK:
                 atomic_write_text(_SETTINGS_FILE, json.dumps(data, indent=2))

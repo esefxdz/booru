@@ -68,7 +68,7 @@ async def _get_client(booru: str, cookies: dict, use_http2: bool, proxy_url: str
     """
     import httpx
     from cloudflare_bypasser import store as cf_store
-    from ui import settings_view as settings
+    from core import settings
 
     fp = _make_client_fp(cookies, use_http2, proxy_url)
 
@@ -146,7 +146,7 @@ async def thumb_fetch(url: str, booru: str = "unknown", timeout: float = 10.0, *
     """
     try:
         from cloudflare_bypasser import store as cf_store
-        from ui import settings_view as settings
+        from core import settings
 
         cookies = dict(cf_store.get_cookies(booru) or {})
         if extra_cookies:
@@ -156,7 +156,7 @@ async def thumb_fetch(url: str, booru: str = "unknown", timeout: float = 10.0, *
 
         client = await _get_client(booru, cookies, use_http2, proxy_url)
 
-        from validation import same_site
+        from core.validation import same_site
         import boorus
         site_url = boorus.REGISTRY.get(booru, {}).get("url", "")
         req_headers = None

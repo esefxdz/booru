@@ -4,8 +4,8 @@ import sys
 
 import pytest
 
-import app_paths
-import credentials
+from core import app_paths
+from core import credentials
 from ui.autocomplete import tag_cache  # noqa: F401  (imports the module)
 
 
@@ -49,7 +49,7 @@ def test_migrations_ignore_appdata_under_override(fake_appdata, tmp_path, monkey
     mgr._load_credentials()
 
     # settings
-    sm = sys.modules["ui.settings_view.manager"]
+    sm = sys.modules["core.settings"]
     monkeypatch.setattr(sm, "_SETTINGS_FILE", data / "settings.json")
     sm.SettingsManager()._initialized = False
     sm.SettingsManager().initialize()

@@ -53,7 +53,7 @@ def booru(monkeypatch):
     _Slow.started.clear()
     _Slow.release.clear()
     base = f"http://127.0.0.1:{srv.server_port}"
-    from ui import settings_view as settings
+    from core import settings
     m = settings.manager
     monkeypatch.setitem(boorus.REGISTRY, BOORU, {"url": base, "api_type": "danbooru"})
     monkeypatch.setattr(m, "cf_bypass_method", "urllib", raising=False)

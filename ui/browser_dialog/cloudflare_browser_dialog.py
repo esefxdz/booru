@@ -223,7 +223,7 @@ class CloudflareBrowserDialog(InAppBrowser):
             return
         # Ad/analytics frames (or another site's cf_clearance) must not end
         # up stored under this booru's name.
-        from validation import same_site
+        from core.validation import same_site
         domain = cookie.domain().lstrip(".")
         if not domain or not same_site(f"https://{domain}/", self._site_url):
             return

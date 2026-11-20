@@ -20,7 +20,7 @@ class _Dl:
 
 def test_bulk_counts_only_real_successes(monkeypatch, tmp_path):
     import download_images
-    import async_loop
+    from core import async_loop
     monkeypatch.setattr(download_images, "get_bulk_folder", lambda tags: tmp_path)
     monkeypatch.setattr(async_loop, "run", lambda coro: asyncio.run(coro))
     t = BulkThread(_Dl([True, False, RuntimeError("x"), True]), "tag", 4)

@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from ui import settings_view as settings  # noqa: F401  # avoid circular import
+from core import settings  # noqa: F401  # avoid circular import
 from cloudflare_bypasser import engines
 
 

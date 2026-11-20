@@ -4,9 +4,9 @@ import socket
 
 import pytest
 
-from ui import settings_view as settings  # noqa: F401  # avoid circular import
+from core import settings  # noqa: F401  # avoid circular import
 from cloudflare_bypasser import engines
-from validation import redact_secrets
+from core.validation import redact_secrets
 
 SECRET_PARAMS = {"api_key": "SECRETKEY123", "user_id": "SECRETUID9", "login": "SECRETLOGIN",
                  "pass_hash": "SECRETHASH", "tags": "cat"}

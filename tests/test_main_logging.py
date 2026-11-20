@@ -9,7 +9,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-import app_paths
+from core import app_paths
 
 MAIN = Path(__file__).resolve().parent.parent / "main.py"
 

@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QPainterPath
 
-from ui import settings_view as settings
+from core import settings
 from ui import colors
 from ui.pixmap_cache import PixmapLRU, DEFAULT_MAX_BYTES as PX_CACHE_DEFAULT
 from ui.tile_pool import TilePool

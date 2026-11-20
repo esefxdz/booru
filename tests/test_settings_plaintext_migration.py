@@ -48,8 +48,7 @@ PLAIN_SECRETS = ("FAKE-PLAIN-CF-GEL", "FAKE-PLAIN-CF-R34", "FAKE-PLAIN-SESSION",
 
 @pytest.fixture
 def mgr(monkeypatch):
-    import ui.settings_view  # noqa: F401
-    mod = sys.modules["ui.settings_view.manager"]
+    import core.settings as mod
     m = mod.manager
     for k, v in (("blacklist", ""), ("bypass_data", {}), ("session_keys", {}),
                  ("auth_tokens", {}), ("_save_disabled", False), ("_initialized", True),
@@ -64,7 +63,7 @@ def _write_old(mod, extra=None):
 
 
 def _store():
-    import credentials
+    from core import credentials
     return {k: credentials.get_sensitive(k) for k in ("_bypass_data", "_session_keys", "_auth_tokens")}
 
 
@@ -99,7 +98,7 @@ def test_upgrade_moves_plaintext_into_store_and_out_of_settings(mgr):
 def test_old_plaintext_credentials_block_does_not_drop_secrets_early(mgr):
     # The "credentials" migration re-saves settings.json during load(); the
     # plaintext cookies must still be there until they are in the store.
-    import credentials
+    from core import credentials
     mod, m = mgr
     _write_old(mod, {"credentials": {"danbooru": {"user_id": "u", "api_key": "FAKE-KEY"}}})
     m.load()
@@ -108,7 +107,7 @@ def test_old_plaintext_credentials_block_does_not_drop_secrets_early(mgr):
 
 
 def test_existing_store_entries_win_over_plaintext(mgr):
-    import credentials
+    from core import credentials
     mod, m = mgr
     stored = {"gelbooru": {"cookies": {"cf_clearance": "FAKE-STORED-NEWER"}, "user_agent": "UA2"}}
     credentials.set_sensitive_many({"_bypass_data": stored,
@@ -124,7 +123,7 @@ def test_existing_store_entries_win_over_plaintext(mgr):
 
 
 def test_locked_store_migrates_nothing_and_loses_nothing(mgr, monkeypatch):
-    import credentials
+    from core import credentials
     mod, m = mgr
     credentials.set_sensitive("_bypass_data", {"danbooru": {"cookies": {"a": "FAKE-STORED"}}})
     cred_file = credentials.CredentialManager._get_credentials_file()

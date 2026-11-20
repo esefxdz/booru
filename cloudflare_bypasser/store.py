@@ -16,7 +16,7 @@ from __future__ import annotations
 import copy
 import threading
 from typing import TYPE_CHECKING
-from ui import settings_view as settings
+from core import settings
 
 if TYPE_CHECKING:
     # Avoid a circular import at module load time; settings is always present

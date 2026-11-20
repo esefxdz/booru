@@ -33,7 +33,7 @@ def server(monkeypatch):
     _Counter.hits = 0
     _Counter.status, _Counter.body = 403, b"forbidden"
     monkeypatch.setattr(sess, "_RETRY_BACKOFF_BASE", 0.01)
-    from ui import settings_view as settings
+    from core import settings
     monkeypatch.setattr(settings.manager, "use_rate_limit", False, raising=False)
     yield f"http://127.0.0.1:{srv.server_port}"
     srv.shutdown()

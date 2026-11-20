@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from validation import SameSiteRedirectHandler
+from core.validation import SameSiteRedirectHandler
 from typing import Callable
 
 log = logging.getLogger("image_downloader")
@@ -55,7 +55,7 @@ def _proxy_url() -> str:
     """The user's configured proxy ("" = direct). Read on every download so a
     settings change applies immediately."""
     try:
-        from ui import settings_view as settings
+        from core import settings
         return (getattr(settings.manager, "proxy_url", "") or "").strip()
     except Exception:
         return ""
@@ -184,7 +184,7 @@ def _download_httpx(url: str, dest: Path, headers: dict,
     """Download using ``httpx`` with streaming."""
     import httpx
     global _httpx_client, _httpx_client_key
-    from ui import settings_view as settings
+    from core import settings
 
     use_h2 = getattr(settings.manager, "use_http2", False)
     proxy = _proxy_url()

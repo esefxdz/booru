@@ -94,7 +94,7 @@ def proxy(monkeypatch):
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Proxy)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     _Proxy.seen = []
-    from ui import settings_view as settings
+    from core import settings
     monkeypatch.setattr(settings.manager, "proxy_url", f"http://127.0.0.1:{srv.server_port}", raising=False)
     yield srv
     srv.shutdown()
@@ -112,7 +112,7 @@ def test_engine_uses_configured_proxy(proxy, tmp_path, name):
 
 
 def test_urllib_refuses_socks_proxy_instead_of_going_direct(tmp_path, monkeypatch):
-    from ui import settings_view as settings
+    from core import settings
     monkeypatch.setattr(settings.manager, "proxy_url", "socks5://127.0.0.1:9", raising=False)
     assert engines._download_urllib("http://203.0.113.7/x.png", tmp_path / "x", {}) is False
 
@@ -227,7 +227,7 @@ def test_curl_cffi_stalled_download_times_out_and_leaves_no_file(slow_server, tm
 
 def test_urllib_without_app_proxy_ignores_system_proxy(server, tmp_path, monkeypatch):
     import socket
-    from ui import settings_view as settings
+    from core import settings
     monkeypatch.setattr(settings.manager, "proxy_url", "", raising=False)
     s = socket.socket()
     s.bind(("127.0.0.1", 0))

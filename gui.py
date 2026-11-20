@@ -27,7 +27,7 @@ from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QIcon
 
 from ui import colors
-from ui import settings_view as settings
+from core import settings
 import boorus
 import boorus as boorus_mod
 from download_images import BooruDownloader
@@ -50,7 +50,7 @@ from ui.windows_utils import apply_dark_title_bar
 from ui.bookmarks_main.bookmarks_db import db
 from ui.browser_dialog import run_cf_bypass
 from ui.modals import AddBooruDialog, BulkDownloadDialog
-from validation import validate_search_term
+from core.validation import validate_search_term
 try:
     from displayers.legacy_window import UniversalViewer
 except ImportError:

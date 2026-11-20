@@ -2,7 +2,7 @@
 folder or reach a non-http(s) scheme."""
 import pytest
 
-import validation as v
+from core import validation as v
 from download_images import image_downloader
 
 

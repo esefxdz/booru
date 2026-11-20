@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import QPushButton
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QCursor, QIcon
-from ui import settings_view as settings
+from core import settings
 from ui.icons import Icons
 from ui.server_bar.favicon_fetcher import FaviconFetcher
 

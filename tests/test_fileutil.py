@@ -1,6 +1,6 @@
 import threading
 
-from fileutil import atomic_write_text
+from core.fileutil import atomic_write_text
 
 
 def test_atomic_write_replaces_and_leaves_no_temp(tmp_path):

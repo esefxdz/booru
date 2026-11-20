@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QCursor, QIcon
 from ui.bookmarks_main.bookmarks_db import db
-from ui import settings_view as settings
+from core import settings
 import boorus
 from ui import colors
 from ui.icons import Icons

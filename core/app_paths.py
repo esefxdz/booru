@@ -28,7 +28,7 @@ def app_dir() -> Path:
     """Folder that holds the exe (frozen) or the source tree."""
     if getattr(sys, "frozen", False):
         return Path(os.path.dirname(sys.executable)).resolve()
-    return Path(__file__).resolve().parent
+    return Path(__file__).resolve().parent.parent
 
 
 def fallback_dir() -> Path:

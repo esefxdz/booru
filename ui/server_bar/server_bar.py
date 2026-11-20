@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QMenu
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QCursor
-from ui import settings_view as settings
+from core import settings
 import boorus
 from ui.icons import Icons
 from ui.server_bar.booru_button import BooruButton

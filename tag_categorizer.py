@@ -5,10 +5,10 @@ import threading
 import time
 import shutil
 
-from fileutil import atomic_write_text
+from core.fileutil import atomic_write_text
 
-from app_paths import legacy_appdata_dir
-from ui.settings_view.manager import BASE_DIR
+from core.app_paths import legacy_appdata_dir
+from core.settings import BASE_DIR
 
 # ── Offline meta-tag knowledge base ──────────────────────────────────────
 # These tags describe the *image itself* rather than its content and are

@@ -12,8 +12,8 @@ import threading
 import shutil
 import logging
 
-from app_paths import legacy_appdata_dir
-from ui.settings_view.manager import BASE_DIR
+from core.app_paths import legacy_appdata_dir
+from core.settings import BASE_DIR
 _DB_PATH = BASE_DIR / "tag_cache.db"
 
 _local = threading.local()

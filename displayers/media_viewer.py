@@ -17,7 +17,7 @@ from PyQt6.QtCore import Qt, QTimer, QPoint, pyqtSignal
 from PyQt6.QtGui import QPixmap, QMovie, QPainter
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
-from ui import settings_view as settings
+from core import settings
 import boorus
 from ui import colors
 
@@ -163,7 +163,7 @@ class MediaViewer(QWidget):
         cancel = self._cancel_event
 
         # Clean up any previously viewed temp files to prevent disk leak
-        from ui import settings_view as settings
+        from core import settings
         tmp = settings.manager.get_download_dir() / "temp_media"
         if tmp.exists():
             for f in tmp.glob("view_*"):
@@ -323,10 +323,10 @@ class MediaViewer(QWidget):
                 data = _fetch_bytes(url, self.post.get('_booru'))
                 if cancel.is_set():
                     return
-                from ui import settings_view as settings
+                from core import settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
-                from validation import safe_media_path
+                from core.validation import safe_media_path
                 path = safe_media_path(tmp, self.post.get('id'), "x.gif", prefix="view_")
                 path.write_bytes(data)
                 self._current_temp_path = str(path)
@@ -374,10 +374,10 @@ class MediaViewer(QWidget):
 
         def work():
             try:
-                from ui import settings_view as settings
+                from core import settings
                 tmp = settings.manager.get_download_dir() / "temp_media"
                 tmp.mkdir(exist_ok=True, parents=True)
-                from validation import safe_media_path
+                from core.validation import safe_media_path
                 path = safe_media_path(tmp, self.post.get('id'), url, prefix="view_", default_ext=".mp4")
                 _fetch_to_file(url, path, self.post.get('_booru'))
                 if cancel.is_set():

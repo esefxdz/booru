@@ -11,12 +11,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
-from ui import settings_view as settings
+from core import settings
 import boorus
 import threading
 import httpx
 from adapters import adapter_choices
-from validation import validate_url, validate_filename
+from core.validation import validate_url, validate_filename
 
 
 from ui import colors

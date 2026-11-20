@@ -47,7 +47,7 @@ def _circuit_key(url: str) -> tuple[str, int]:
 
 
 def _solve_key(url: str) -> str:
-    from validation import site_key
+    from core.validation import site_key
     host = _host_of(url)
     return site_key(host) if host else ""
 
@@ -90,7 +90,7 @@ def _circuit_is_open(url: str) -> bool:
 def reset_circuit(site_url: str) -> None:
     """Close the breaker for every host on *site_url*'s site (the API host
     and its CDN hosts alike). Call after the user has solved the challenge."""
-    from validation import site_key
+    from core.validation import site_key
     host = _host_of(site_url)
     if not host:
         return

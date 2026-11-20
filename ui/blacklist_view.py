@@ -5,13 +5,13 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 
-from ui import settings_view as settings
+from core import settings
 from ui.text_bar import BooruTextBar
 # TagChip is shared between BlacklistView and FavoritesView — defined once in tag_chip.py
 from ui.tag_chip import TagChip
 
 
-from validation import sanitize_tag_list
+from core.validation import sanitize_tag_list
 import ui.animations as anims
 from ui import colors
 

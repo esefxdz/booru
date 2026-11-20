@@ -76,7 +76,7 @@ def download_post(
         log.warning("No file URL for post %s", post.get("id"))
         return False
 
-    from validation import ValidationError, require_http_url, safe_media_path
+    from core.validation import ValidationError, require_http_url, safe_media_path
 
     post_id = post.get("id", "unknown")
     try:
@@ -97,7 +97,7 @@ def download_post(
 
 
 def _download_to(url, dest: Path, post: dict, post_id, engine, on_progress) -> bool:
-    from ui import settings_view as settings
+    from core import settings
 
     # ── Resolve engine ────────────────────────────────────────────
     if engine is None:
@@ -164,7 +164,7 @@ def _build_headers(post: dict, url: str = "") -> dict:
     Bypass cookies are attached only when *url* is on the booru's own site;
     a file URL on any other host gets no cookies.
     """
-    from ui import settings_view as settings
+    from core import settings
     import boorus
 
     post_booru = post.get("_booru", settings.manager.active_booru)
@@ -188,7 +188,7 @@ def _build_headers(post: dict, url: str = "") -> dict:
         headers["User-Agent"] = bypass_ua
 
     # Inject CF bypass cookies as a Cookie header — same site only
-    from validation import same_site
+    from core.validation import same_site
     bypass_cookies = cf_store.get_cookies(post_booru) if same_site(url, base_url) else {}
     if bypass_cookies:
         cookie_str = "; ".join(f"{k}={v}" for k, v in bypass_cookies.items())
