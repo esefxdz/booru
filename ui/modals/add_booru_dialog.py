@@ -1,10 +1,4 @@
-"""
-ui/modals/add_booru_dialog.py
-
-Dialog for adding a custom booru site by URL.
-Includes AutoDetectThread which probes the target site with known
-API patterns to automatically identify the engine and path.
-"""
+"""Dialog for adding a custom booru, with API auto-detection."""
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QFormLayout
@@ -21,8 +15,7 @@ from core.validation import validate_url, validate_filename
 
 from ui.style import colors
 
-# Default API paths per engine — auto-filled when the user picks a type
-# or when auto-detect succeeds, so they rarely need to touch this field
+# Default API path per engine, auto-filled on engine pick or auto-detect.
 _DEFAULT_API_PATHS = {
     "gelbooru":    "/index.php",
     "danbooru":    "/posts.json",
@@ -36,33 +29,15 @@ _DEFAULT_API_PATHS = {
 }
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: AutoDetectThread                                            ║
-# ║  Background QThread that probes a URL with multiple known API      ║
-# ║  patterns and emits (status_msg, api_type, api_path) when done.    ║
-# ║  Stops at the first pattern that returns a recognisable response.  ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class AutoDetectThread(QThread):
     finished = pyqtSignal(str, str, str)  # (status_message, api_type, api_path)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — strips trailing slash so path concatenation        │
-    # │  produces clean URLs like "https://site.com/posts.json"        │
-    # └──────────────────────────────────────────────────────────────────┐
     def __init__(self, url):
         super().__init__()
         self.url = url.rstrip("/")
-        # Set by AddBooruDialog.closeEvent() to signal the probe loop to stop
-        # between requests so the thread exits quickly instead of waiting up
-        # to 5 seconds for the current httpx timeout to expire.
+        # Set by closeEvent so the probe loop stops between requests.
         self.cancel_event = threading.Event()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  run  — tries a ranked list of (path, engine, checker) tuples.  │
-    # │  For each one it GETs the URL and calls the checker function on │
-    # │  the JSON response. The first tuple that passes is returned.    │
-    # │  This avoids asking the user which engine their site runs.      │
-    # └──────────────────────────────────────────────────────────────────┐
     def run(self):
         headers = {"User-Agent": settings.manager.get_user_agent()}
 
@@ -80,7 +55,6 @@ class AutoDetectThread(QThread):
             except Exception:
                 return "<?xml" in r.text and "<posts" in r.text
 
-        # Each tuple: (api_path, engine_name, response_checker_function)
         tests = [
             ("/posts.json?limit=1",     "danbooru",   lambda r: is_json_type(r, lambda d: isinstance(d, list) or (isinstance(d, dict) and "posts" in d))),
             ("/post.json?limit=1",      "moebooru",   lambda r: is_json_type(r, lambda d: isinstance(d, list))),
@@ -93,8 +67,6 @@ class AutoDetectThread(QThread):
         try:
             with httpx.Client(timeout=5.0, headers=headers, follow_redirects=True) as client:
                 for path, expected_type, check_fn in tests:
-                    # Check the cancel flag between each probe so closeEvent()
-                    # can stop the loop quickly without waiting for a full timeout.
                     if self.cancel_event.is_set():
                         return
                     try:
@@ -104,26 +76,14 @@ class AutoDetectThread(QThread):
                             self.finished.emit("Detection successful!", expected_type, base_path)
                             return
                     except Exception:
-                        continue  # Try the next pattern if this one errors
+                        continue
             self.finished.emit("Could not automatically detect engine.", "", "")
         except Exception as e:
             self.finished.emit(f"Error checking site: {e}", "", "")
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: AddBooruDialog                                              ║
-# ║  Dialog for registering a new custom booru. The user provides a    ║
-# ║  name and URL; auto-detect fills in the engine and API path.       ║
-# ║  On confirm, the booru is validated and saved to custom_boorus.json║
-# ║  site persists across app restarts.                                ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class AddBooruDialog(QDialog):
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — builds the form: name field, URL field with an     │
-    # │  "Auto-Detect" button beside it, engine type dropdown, and API  │
-    # │  path field that auto-fills when the type changes or detects    │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, parent_gui):
         super().__init__(parent_gui)
         self.parent_gui = parent_gui
@@ -131,8 +91,6 @@ class AddBooruDialog(QDialog):
         self.setMinimumWidth(420)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
         self.setStyleSheet(f"background-color: {colors.PANEL_BG}; color: {colors.TEXT_SECONDARY};")
-        # Always initialize so closeEvent and _on_detect_finished are safe to
-        # call even if the user closes the dialog without clicking Auto-Detect.
         self.detect_thread = None
         self._closed = False
 
@@ -157,7 +115,6 @@ class AddBooruDialog(QDialog):
         url_layout.setContentsMargins(0, 0, 0, 0)
         url_layout.addWidget(self.url_ent)
 
-        # Auto-detect button probes the URL and fills in engine + path
         self.detect_btn = QPushButton("Auto-Detect")
         self.detect_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.detect_btn.setStyleSheet(f"""
@@ -177,7 +134,6 @@ class AddBooruDialog(QDialog):
 
         self.api_combo = QComboBox()
         self.api_combo.addItems(self.labels)
-        # Changing the dropdown auto-fills the API path with a sensible default
         self.api_combo.currentIndexChanged.connect(self._on_api_type_changed)
         form.addRow("API Type:", self.api_combo)
 
@@ -199,20 +155,10 @@ class AddBooruDialog(QDialog):
         add_btn.clicked.connect(self._add_booru)
         layout.addWidget(add_btn)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_api_type_changed  — updates the API path field with the    │
-    # │  known default for the selected engine so the user doesn't      │
-    # │  need to memorise what path each booru engine uses              │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_api_type_changed(self, idx):
         api_type = self.api_types[idx]
         self.path_ent.setText(_DEFAULT_API_PATHS.get(api_type, "/index.php"))
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _auto_detect  — validates the URL then launches AutoDetect-    │
-    # │  Thread in the background. Disables the button while running    │
-    # │  to prevent double-clicks.                                      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _auto_detect(self):
         url = self.url_ent.text().strip()
         if not url:
@@ -233,15 +179,8 @@ class AddBooruDialog(QDialog):
         self.detect_thread.finished.connect(self._on_detect_finished)
         self.detect_thread.start()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_detect_finished  — re-enables the detect button and        │
-    # │  auto-selects the detected engine in the dropdown. Shows green  │
-    # │  on success or orange if detection failed.                      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_detect_finished(self, msg, api_type, api_path):
-        # Guard: if the dialog was already closed, do not touch any Qt widgets.
-        # The thread may emit this signal after closeEvent() has returned if the
-        # current httpx request hadn't finished by the time we called wait().
+        # The thread may emit after closeEvent has returned.
         if self._closed:
             return
 
@@ -260,56 +199,22 @@ class AddBooruDialog(QDialog):
         else:
             self._set_status(msg, "orange")
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  closeEvent  — cleanup background threads so they don't segfault │
-    # │                                                                  │
-    # │  Why we DON'T call quit() + wait() here:                        │
-    # │    - quit() sends a message to the thread's Qt event loop, but  │
-    # │      AutoDetectThread.run() never calls exec(), so there is no  │
-    # │      event loop to receive it — quit() would be a complete no-op.│
-    # │    - wait() would freeze the UI for up to 5s (the httpx timeout) │
-    # │      while the user is trying to close a dialog they gave up on. │
-    # │                                                                  │
-    # │  Instead, we use a two-layer defence and let the thread die      │
-    # │  naturally without blocking:                                     │
-    # │    Layer 1: Disconnect the finished signal. Even if the thread   │
-    # │      runs to completion and emits, the signal goes nowhere —     │
-    # │      _on_detect_finished is never called.                        │
-    # │    Layer 2: Set cancel_event so the probe loop stops starting    │
-    # │      new HTTP requests between probes (fast-exits at the next    │
-    # │      check). Cannot interrupt an in-flight httpx request, but    │
-    # │      it bounds runaway work to at most one more probe (≤5s).     │
-    # └──────────────────────────────────────────────────────────────────┘
     def closeEvent(self, event):
-        # Mark the dialog as closed. _on_detect_finished checks this flag
-        # as a secondary guard in case the signal was already in the Qt
-        # event queue before we had a chance to disconnect it.
+        # Secondary guard in case the signal was already queued before disconnect.
         self._closed = True
         if self.detect_thread is not None and self.detect_thread.isRunning():
-            # Layer 1: Disconnect the signal so _on_detect_finished can never
-            # be called, even if the thread runs to completion in the background.
+            # Layer 1: disconnect so _on_detect_finished is never called.
             try:
                 self.detect_thread.finished.disconnect(self._on_detect_finished)
             except RuntimeError:
                 pass  # Already disconnected or signal was never connected
 
-            # Layer 2: Set the cancel flag so the probe loop stops launching
-            # new HTTP requests. Cannot interrupt an in-flight request, but
-            # limits runaway background work to at most one more probe (≤5s).
+            # Layer 2: cancel flag stops new probes; an in-flight request can't be interrupted.
             self.detect_thread.cancel_event.set()
 
-            # Do NOT call quit() or wait() — quit() is a no-op because
-            # AutoDetectThread.run() has no Qt event loop, and wait() would
-            # freeze the UI for up to 5s (the httpx request timeout).
-            # The thread will finish naturally and be garbage-collected.
+            # No quit()/wait(): run() has no event loop and wait() would freeze the UI for up to 5s.
         super().closeEvent(event)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _add_booru  — validates name + URL, appends a numeric suffix   │
-    # │  if the name already exists (e.g. danbooru_2), then saves       │
-    # │  it to custom_boorus.json and registers it in the in-memory   │
-    # │  registry so the server bar icon appears immediately            │
-    # └──────────────────────────────────────────────────────────────────┘
     def _add_booru(self):
         name = self.name_ent.text().strip().lower().replace(" ", "_")
         url = self.url_ent.text().strip().rstrip("/")
@@ -327,10 +232,7 @@ class AddBooruDialog(QDialog):
             self._set_status("Name and URL are required.", "red")
             return
 
-        # If the name is taken, try name_2, name_3, ... until free.
-        # Built-in boorus (e.g. "gelbooru") live in REGISTRY from startup —
-        # adding one with the same URL but a different name is fine, but we
-        # must never silently shadow an existing entry.
+        # Never shadow an existing registry entry; append _2, _3, ... until the name is free.
         orig_name = name
         counter = 2
         while name in boorus.REGISTRY:
@@ -338,7 +240,6 @@ class AddBooruDialog(QDialog):
             counter += 1
 
         try:
-            # Validates every field and persists to custom_boorus.json.
             try:
                 boorus.add_booru(name, {
                     "url":      url,
@@ -355,7 +256,6 @@ class AddBooruDialog(QDialog):
                 self._set_status("Could not save booru — check folder permissions.", "red")
                 return
 
-            # Add to the persistent sidebar order and save immediately.
             if name not in settings.manager.booru_order:
                 settings.manager.booru_order.append(name)
                 settings.manager.save()
@@ -365,18 +265,11 @@ class AddBooruDialog(QDialog):
             boorus.REGISTRY.pop(name, None)
             self._set_status(f"Error creating booru: {e}", "red")
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _set_status  — helper to update the status label text and      │
-    # │  colour in one call instead of repeating setStyleSheet inline   │
-    # └──────────────────────────────────────────────────────────────────┐
     def _set_status(self, msg: str, color: str):
         self.status_lbl.setText(msg)
         c = colors.DANGER if color == "red" else colors.SUCCESS if color == "green" else colors.WARNING
         self.status_lbl.setStyleSheet(f"color: {c};")
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  show_dialog  — convenience static wrapper                      │
-    # └──────────────────────────────────────────────────────────────────┘
     @staticmethod
     def show_dialog(parent_gui):
         AddBooruDialog(parent_gui).exec()

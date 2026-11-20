@@ -1,8 +1,4 @@
-"""
-ui/settings_view/section_media.py
-
-Media & Playback settings section: video engine, legacy viewer toggle.
-"""
+"""Media and playback settings section."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QComboBox, QCheckBox, QFrame
 )
@@ -21,7 +17,6 @@ class MediaSection(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)
 
-        # ── Video Engine ──────────────────────────────────────────────
         engine_card = QFrame()
         engine_card.setStyleSheet(f"""
             QFrame {{
@@ -52,7 +47,6 @@ class MediaSection(QWidget):
 
         layout.addWidget(engine_card)
 
-        # ── Viewer Mode ───────────────────────────────────────────────
         viewer_card = QFrame()
         viewer_card.setStyleSheet(f"""
             QFrame {{

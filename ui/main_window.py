@@ -1,19 +1,4 @@
-"""
-ui/main_window.py — BooruBrowser main window.
-
-Responsibilities (and ONLY these):
-  - Build the widget tree (sidebar, gallery, tag panel, overlay, stack)
-  - Wire component signals together
-  - Own application-level state (current page, bookmarks mode)
-  - Thin slot methods that delegate to the controller or navigation manager
-
-Everything else has been extracted:
-  - Page routing             → ui/navigation.py
-  - Keyboard shortcuts       → ui/hotkeys.py
-  - Dark title bar           → ui/windows_utils.py
-  - Booru removal            → boorus/__init__.py
-  - Download overlay anchor  → ui/download_window.py (DownloadWindow.reposition)
-"""
+"""BooruBrowser main window: builds the widget tree and wires signals."""
 
 import logging
 import os
@@ -61,7 +46,6 @@ log = logging.getLogger(__name__)
 
 
 class BooruGui(QMainWindow):
-    """Thin main window — assembles components and routes signals."""
 
     def __init__(self):
         super().__init__()
@@ -69,33 +53,27 @@ class BooruGui(QMainWindow):
 
         self.resize(1400, 900)
 
-        # App icon
         icon_path = os.path.join(os.path.dirname(__file__), "assets", "appico.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
         apply_dark_title_bar(int(self.winId()))
 
-        # Window geometry persistence
         self.qsettings = QSettings("BooruBrowser", "BooruBrowser")
         if self.qsettings.value("geometry"):
             self.restoreGeometry(self.qsettings.value("geometry"))
         if self.qsettings.value("windowState"):
             self.restoreState(self.qsettings.value("windowState"))
 
-        # ── Core components ──────────────────────────────────────
         self.downloader = BooruDownloader()
         self.controller = AppController(self.downloader)
 
-        # ── Application state ────────────────────────────────────
         self.current_page = 1
         self.is_bookmarks_mode = False
         self.bookmark_filter = None
 
-        # ── Build UI ─────────────────────────────────────────────
         self._build_ui()
 
-        # ── Wire controller signals ──────────────────────────────
         self.controller.status_updated.connect(self._on_status_updated)
         self.controller.loading_started.connect(self._on_loading_started)
         self.controller.loading_finished.connect(self._on_loading_finished)
@@ -103,11 +81,9 @@ class BooruGui(QMainWindow):
         self.controller.posts_fetched.connect(self._on_posts_fetched)
         self.controller.cf_blocked.connect(self._on_cf_blocked)
 
-        # ── Wire gallery → infinite scroll ───────────────────────
         self.gallery.load_more_requested.connect(self._load_more)
         self.gallery.bookmark_toggled.connect(self._on_bookmark_toggled)
 
-        # ── Download overlay ─────────────────────────────────────
         self.download_overlay = DownloadWindow(self.centralWidget())
         self.download_overlay.hide()
         self.downloader.download_started.connect(self.download_overlay.add_download)
@@ -115,13 +91,9 @@ class BooruGui(QMainWindow):
         self.downloader.download_finished.connect(self.download_overlay.remove_download)
         self.downloader.download_failed.connect(self._on_download_failed_overlay)
 
-        # ── Finalise ─────────────────────────────────────────────
         self.server_bar.rebuild_list()
         self.trigger_fetch(new=True)
 
-    # ══════════════════════════════════════════════════════════════
-    #  UI Construction
-    # ══════════════════════════════════════════════════════════════
 
     def _build_ui(self):
         root = QWidget()
@@ -132,21 +104,17 @@ class BooruGui(QMainWindow):
         main_h.setContentsMargins(0, 0, 0, 0)
         main_h.setSpacing(0)
 
-        # 1. Server Bar (far left)
         self.server_bar = ServerBar(self)
         main_h.addWidget(self.server_bar)
 
-        # 2. Sidebar
         self.sidebar = Sidebar(self)
         main_h.addWidget(self.sidebar)
 
-        # 3. Main content area
         content_v = QVBoxLayout()
         content_v.setContentsMargins(0, 0, 0, 0)
         content_v.setSpacing(0)
         main_h.addLayout(content_v, 1)
 
-        #   3a. Top bar (search)
         self.topbar = QWidget()
         self.topbar.setFixedHeight(64)
         self.topbar.setStyleSheet("background-color: transparent;")
@@ -177,7 +145,6 @@ class BooruGui(QMainWindow):
 
         content_v.addWidget(self.topbar)
 
-        #   3b. Stacked pages
         self.stack = QStackedWidget()
 
         self.gallery_page = QWidget()
@@ -207,22 +174,16 @@ class BooruGui(QMainWindow):
 
         content_v.addWidget(self.stack, 1)
 
-        # 4. Media overlay (top-level, above stack)
         self.overlay = MediaOverlay(self)
 
-        # 5. Navigation manager (page routing)
         self.nav = NavigationManager(self.stack, self.overlay, self.topbar, self)
 
-        # 6. Hotkeys
         self._hotkeys = HotkeyManager(self)
         self._hotkeys.register("Ctrl+F", self.search_bar.entry.setFocus)
         self._hotkeys.register("Right", lambda: self.change_page(1))
         self._hotkeys.register("Left", lambda: self.change_page(-1))
         self._hotkeys.register("Ctrl+S", self._on_bulk_dl)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Page navigation (thin proxies to NavigationManager)
-    # ══════════════════════════════════════════════════════════════
 
     def show_gallery(self):
         self.nav.go_gallery()
@@ -248,9 +209,6 @@ class BooruGui(QMainWindow):
     def show_cheat_sheet(self):
         self.nav.go_cheat_sheet()
 
-    # ══════════════════════════════════════════════════════════════
-    #  Search / pagination
-    # ══════════════════════════════════════════════════════════════
 
     def trigger_fetch(self, new: bool = False):
         if self.is_bookmarks_mode:
@@ -330,20 +288,14 @@ class BooruGui(QMainWindow):
             self.sidebar.set_pagination_visible(True)
             self.sidebar.page_lbl.setText(f"Pg {self.current_page}")
 
-    # ══════════════════════════════════════════════════════════════
-    #  Booru management
-    # ══════════════════════════════════════════════════════════════
 
     def remove_booru(self, name: str):
-        # Remove from settings sidebar order
         if name in settings.manager.booru_order:
             settings.manager.booru_order.remove(name)
             settings.manager.save()
 
-        # Delegate the file/registry cleanup
         fallback = boorus.remove_booru(name)
 
-        # UI updates
         self.server_bar.rebuild_list()
         if settings.manager.active_booru == name:
             settings.manager.active_booru = fallback or "safebooru"
@@ -352,9 +304,6 @@ class BooruGui(QMainWindow):
             self.sidebar.update_active_booru()
             self.trigger_fetch(new=True)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Media
-    # ══════════════════════════════════════════════════════════════
 
     def open_preview(self, post):
         self.tag_panel.update_tags(post)
@@ -367,9 +316,6 @@ class BooruGui(QMainWindow):
         else:
             self.overlay.show_post(post)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Controller signal slots
-    # ══════════════════════════════════════════════════════════════
 
     def _on_status_updated(self, text: str, color: str):
         self.sidebar.status_lbl.setText(text)
@@ -404,7 +350,6 @@ class BooruGui(QMainWindow):
         self.trigger_fetch(new=True)
 
     def _on_bookmark_toggled(self, post: dict, is_now_bookmarked: bool):
-        """Handle bookmark toggle — DB write + sidebar refresh."""
         pid = post.get("id")
         if is_now_bookmarked:
             db.add_bookmark(post)
@@ -422,9 +367,6 @@ class BooruGui(QMainWindow):
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(3000, lambda: self.download_overlay.remove_download(task_id))
 
-    # ══════════════════════════════════════════════════════════════
-    #  Window events
-    # ══════════════════════════════════════════════════════════════
 
     def mousePressEvent(self, event):
         focused = self.focusWidget()
@@ -453,9 +395,6 @@ class BooruGui(QMainWindow):
         self.controller.shutdown()
         event.accept()
 
-    # ══════════════════════════════════════════════════════════════
-    #  Modal launchers
-    # ══════════════════════════════════════════════════════════════
 
     def _on_add_booru(self):
         AddBooruDialog(self).exec()

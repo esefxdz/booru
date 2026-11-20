@@ -1,16 +1,4 @@
-"""
-ui/browser_dialog/auto_solver.py — Hidden Cloudflare auto-solver.
-
-Uses an off-screen QWebEnginePage (no visible browser window) to load a
-Cloudflare-protected URL and wait for the challenge to solve itself.
-JS challenges and Turnstile widgets often auto-resolve without user
-interaction — this captures that case silently.
-
-On success, cookies + User-Agent are persisted via cloudflare_bypasser.store
-and the ``solved`` signal fires.  If the challenge doesn't auto-solve within
-the timeout, ``timed_out`` fires — the caller should then show the manual
-CloudflareBrowserDialog for the user to solve the CAPTCHA.
-"""
+"""Hidden off-screen Cloudflare auto-solver; emits solved or timed_out."""
 
 from __future__ import annotations
 
@@ -29,18 +17,7 @@ _KILL_TIMEOUT_MS = 120_000     # hard kill (prevents zombie pages)
 
 
 class CloudflareAutoSolver(QObject):
-    """
-    Attempt to solve a Cloudflare challenge without user interaction.
-
-    Usage::
-
-        solver = CloudflareAutoSolver("danbooru", "https://danbooru.donmai.us", parent)
-        solver.solved.connect(lambda cookies, ua: print("solved!", cookies))
-        solver.timed_out.connect(lambda: print("need manual CAPTCHA"))
-        solver.start(timeout_ms=30_000)
-
-    On ``solved``, cookies are already persisted via ``store.save_bypass()``.
-    """
+    """Try to pass a Cloudflare challenge without user interaction."""
 
     solved = pyqtSignal(dict, str)   # cookies: dict, user_agent: str
     timed_out = pyqtSignal()
@@ -52,7 +29,6 @@ class CloudflareAutoSolver(QObject):
         self._captured = False
         self._found_cookies: dict[str, str] = {}
 
-        # ── Per-booru isolated profile (matches CloudflareBrowserDialog) ──
         self._profile = QWebEngineProfile(f"cf_auto_{booru_name}", self)
         self._profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
@@ -60,14 +36,12 @@ class CloudflareAutoSolver(QObject):
         self._profile.setHttpUserAgent(_CHROME_UA)
         self._profile.cookieStore().cookieAdded.connect(self._on_cookie_added)
 
-        # ── Off-screen page (no QWebEngineView) ────────────────────────
         self._page = QWebEnginePage(self._profile, None)
         ws = self._page.settings()
         ws.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         ws.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
         self._page.loadFinished.connect(self._on_page_loaded)
 
-        # ── Timers ─────────────────────────────────────────────────────
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(_POLL_INTERVAL_MS)
         self._poll_timer.timeout.connect(self._poll_js_cookies)
@@ -81,15 +55,12 @@ class CloudflareAutoSolver(QObject):
         self._kill_timer.setInterval(_KILL_TIMEOUT_MS)
         self._kill_timer.timeout.connect(self._cleanup)
 
-    # ── Public API ─────────────────────────────────────────────────────
 
     def start(self, timeout_ms: int = _DEFAULT_TIMEOUT_MS) -> None:
-        """Begin the auto-solve attempt.  Emits ``solved`` or ``timed_out``."""
         self._timeout_timer.start(timeout_ms)
         self._kill_timer.start()
         self._page.setUrl(QUrl(self._url))
 
-    # ── Cookie signals ─────────────────────────────────────────────────
 
     def _on_cookie_added(self, cookie) -> None:
         if self._captured:
@@ -105,7 +76,6 @@ class CloudflareAutoSolver(QObject):
         if name in _CF_COOKIE_NAMES or name.startswith("cf_"):
             self._finish()
 
-    # ── JS polling ─────────────────────────────────────────────────────
 
     def _poll_js_cookies(self) -> None:
         if self._captured:
@@ -130,7 +100,6 @@ class CloudflareAutoSolver(QObject):
         if cf_keys:
             self._finish()
 
-    # ── Page lifecycle ─────────────────────────────────────────────────
 
     def _on_page_loaded(self, ok: bool) -> None:
         if self._captured or not ok:
@@ -149,7 +118,6 @@ class CloudflareAutoSolver(QObject):
             lambda result: self._check_js_cookies(result or ""),
         )
 
-    # ── Finish / timeout ───────────────────────────────────────────────
 
     def _finish(self) -> None:
         if self._captured:
@@ -185,7 +153,6 @@ class CloudflareAutoSolver(QObject):
             pass
 
 
-# ── Known Cloudflare cookie names ─────────────────────────────────────
 _CF_COOKIE_NAMES = frozenset({
     "cf_clearance", "__cf_bm", "cf_chl_rc_m", "cf_chl_rc_i",
     "cf_ob_info", "cf_use_ob", "cf_chl_2", "cf_chl_3",

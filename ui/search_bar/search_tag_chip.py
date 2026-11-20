@@ -3,22 +3,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from ui.style import colors
 from ui.style.icons import Icons
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                        CLASS: SearchTagChip                         ║
-# ║  A small interactive pill representing one tag in the search bar.  ║
-# ║  Supports negative tags (red) and normal tags (purple). Clicking   ║
-# ║  the chip itself toggles between positive and negative state.      ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class SearchTagChip(QFrame):
-    # Emits (tag_name, is_negative) when its state changes
     changed = pyqtSignal(str, bool)
-    # Emits the tag name when the 'x' button is clicked
     removed = pyqtSignal(str)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — builds the chip: label on the left, 'x' button on  │
-    # │  the right. Automatically detects if the tag is negative (-tag) │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, tag: str, parent=None):
         super().__init__(parent)
         self.tag = tag.lstrip("-")
@@ -45,7 +33,6 @@ class SearchTagChip(QFrame):
         self._update_color()
 
     def _update_color(self):
-        """Switches theme between red (negative) and purple (positive)."""
         color = colors.DANGER if self.is_neg else colors.ACCENT
         self.setStyleSheet(f"""
             #SearchTagChip {{

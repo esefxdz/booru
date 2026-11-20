@@ -1,10 +1,4 @@
-"""
-ui/settings_view/settings_view.py
-
-Full-page settings widget. Replaces the old popup GlobalSettingsDialog.
-Left side has section navigation, right side shows the active section.
-Follows the same layout pattern as BlacklistView and FavoritesView.
-"""
+"""Full-page settings widget with section navigation on the left."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QStackedWidget, QScrollArea
@@ -23,12 +17,6 @@ from ui.settings_view.section_downloads import DownloadsSection
 from ui.settings_view.section_about import AboutSection
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: SettingsView                                                ║
-# ║  Full-page widget for application settings.                        ║
-# ║  Left nav tabs + right content area, matching the BlacklistView    ║
-# ║  and FavoritesView visual language.                                ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class SettingsView(QWidget):
 
     def __init__(self, main_app):
@@ -40,15 +28,12 @@ class SettingsView(QWidget):
         root.setContentsMargins(40, 40, 40, 40)
         root.setSpacing(24)
 
-        # ── Header ────────────────────────────────────────────────────
         self._build_header(root)
 
-        # ── Body: nav + content ───────────────────────────────────────
         body = QHBoxLayout()
         body.setSpacing(24)
         root.addLayout(body, 1)
 
-        # Left: section navigation
         self._nav_btns = []
         nav_widget = QWidget()
         nav_widget.setFixedWidth(200)
@@ -66,7 +51,6 @@ class SettingsView(QWidget):
 
         body.addWidget(nav_widget)
 
-        # Right: section content (scrollable)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
@@ -75,7 +59,6 @@ class SettingsView(QWidget):
         self.stack = QStackedWidget()
         self.stack.setStyleSheet("background: transparent;")
 
-        # Create all sections
         self.sec_display   = DisplaySection()
         self.sec_media     = MediaSection()
         self.sec_network   = NetworkSection()
@@ -90,24 +73,18 @@ class SettingsView(QWidget):
         for sec in self.sections:
             self.stack.addWidget(sec)
 
-        # Wire the About section's reset button to reset ALL sections
         self.sec_about.reset_btn.clicked.connect(self._reset_all)
 
         self.scroll.setWidget(self.stack)
         body.addWidget(self.scroll, 1)
 
-        # ── Status label ──────────────────────────────────────────────
         self.status_lbl = QLabel("")
         self.status_lbl.setStyleSheet(f"color: {colors.SUCCESS}; font-weight: bold;")
         self.status_lbl.hide()
         root.addWidget(self.status_lbl)
 
-        # Select first tab
         self._select_nav(0)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _build_header  — title + subtitle + save button                │
-    # └──────────────────────────────────────────────────────────────────┘
     def _build_header(self, parent_layout):
         header = QHBoxLayout()
         title_v = QVBoxLayout()
@@ -138,9 +115,6 @@ class SettingsView(QWidget):
 
         parent_layout.addLayout(header)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _add_nav  — adds a navigation button to the left sidebar       │
-    # └──────────────────────────────────────────────────────────────────┘
     def _add_nav(self, label, icon_name, parent_layout, index):
         btn = QPushButton(f"  {label}")
         btn.setFixedHeight(38)
@@ -191,10 +165,6 @@ class SettingsView(QWidget):
         icons = ["settings", "explore", "download", "download", "forum"]
         return icons[index] if index < len(icons) else "settings"
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  load_settings  — refreshes all section widgets from the        │
-    # │  current settings.manager state. Called when the page opens.    │
-    # └──────────────────────────────────────────────────────────────────┘
     def load_settings(self):
         self.status_lbl.hide()
         for sec in self.sections:
@@ -202,10 +172,6 @@ class SettingsView(QWidget):
                 sec.load()
         self._select_nav(0)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _save  — collects values from all sections, saves to disk,     │
-    # │  and applies immediate visual changes to the gallery.           │
-    # └──────────────────────────────────────────────────────────────────┘
     def _save(self):
         for sec in self.sections:
             sec.apply()
@@ -221,16 +187,12 @@ class SettingsView(QWidget):
             except Exception:
                 pass
 
-            # Apply immediate visual changes
             self.main_app.gallery.refresh_layout()
         else:
             self.status_lbl.setText("✕ Failed to save settings to disk")
             self.status_lbl.setStyleSheet(f"color: {colors.DANGER}; font-weight: bold;")
             self.status_lbl.show()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _reset_all  — resets every section to defaults, then saves.    │
-    # └──────────────────────────────────────────────────────────────────┘
     def _reset_all(self):
         for sec in self.sections:
             sec.reset()

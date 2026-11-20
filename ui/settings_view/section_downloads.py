@@ -1,8 +1,4 @@
-"""
-ui/settings_view/section_downloads.py
-
-Download settings section: engine selection, smart folders, download path.
-"""
+"""Download settings section: engine, smart folders, download path."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox, QFrame,
     QPushButton, QFileDialog, QComboBox,
@@ -21,7 +17,6 @@ class DownloadsSection(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)
 
-        # ── Download Engine ───────────────────────────────────────────
         engine_card = QFrame()
         engine_card.setStyleSheet(f"QFrame {{ background-color: {colors.PANEL_BG}; border: 1px solid {colors.BORDER}; border-radius: 12px; }}")
         engine_v = QVBoxLayout(engine_card)
@@ -98,7 +93,6 @@ class DownloadsSection(QWidget):
 
         layout.addWidget(engine_card)
 
-        # ── Folder Organization ───────────────────────────────────────
         card = QFrame()
         card.setStyleSheet(f"QFrame {{ background-color: {colors.PANEL_BG}; border: 1px solid {colors.BORDER}; border-radius: 12px; }}")
         card_v = QVBoxLayout(card)
@@ -128,7 +122,6 @@ class DownloadsSection(QWidget):
 
         layout.addWidget(card)
 
-        # ── Download Location ─────────────────────────────────────────
         path_card = QFrame()
         path_card.setStyleSheet(f"QFrame {{ background-color: {colors.PANEL_BG}; border: 1px solid {colors.BORDER}; border-radius: 12px; }}")
         path_v = QVBoxLayout(path_card)
@@ -183,7 +176,6 @@ class DownloadsSection(QWidget):
         self.smart_folders.setChecked(False)
         self.artist_folder.setChecked(False)
         self.pval.setText(str(settings.DOWNLOAD_DIR.resolve()))
-        # Reset engine to urllib
         for i in range(self.engine_combo.count()):
             if self.engine_combo.itemData(i) == "urllib":
                 self.engine_combo.setCurrentIndex(i)

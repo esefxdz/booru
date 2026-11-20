@@ -7,32 +7,21 @@ from ui.style.icons import Icons
 from download_images.tag_categorizer import get_categorizer
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                         CLASS: TagPanel                             ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 from ui.style import colors
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                         CLASS: TagPanel                             ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class TagPanel(QWidget):
-    """Right panel: static tag display area."""
 
     # Signal carries (cats_dict, generation) — emitted from background thread
     _cats_ready = pyqtSignal(dict, int)
 
     WIDTH = 240
-    _POOL_MAX = 300   # Maximum pooled buttons before we start destroying extras
+    _POOL_MAX = 300
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__                                                        │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
         self.setFixedWidth(self.WIDTH)
         self.setStyleSheet(f"background-color: {colors.PANEL_BG};")
-        # Pool of reusable tag widgets
         self._btn_pool: list[QPushButton] = []
         self._lbl_pool: list[QLabel] = []
         # Generation counter — incremented on every update_tags call so stale
@@ -41,29 +30,23 @@ class TagPanel(QWidget):
         self._cats_ready.connect(self._on_cats_ready)
         self._build()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _build                                                          │
-    # └──────────────────────────────────────────────────────────────────┘
     def _build(self):
         self._main_layout = QHBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_layout.setSpacing(0)
 
-        # Vertical divider
         self.divider = QFrame()
         self.divider.setFrameShape(QFrame.Shape.VLine)
         self.divider.setFixedWidth(1)
         self.divider.setStyleSheet(f"background-color: {colors.DIVIDER}; border: none;")
         self._main_layout.addWidget(self.divider)
 
-        # Content widget
         self.content_widget = QWidget()
         self.content_widget.setStyleSheet(f"background-color: {colors.PANEL_BG};")
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(10, 15, 10, 10)
         self.content_layout.setSpacing(0)
 
-        # Results Header (Top of TagPanel)
         res_h = QHBoxLayout()
         res_h.setContentsMargins(0, 0, 0, 10)
         
@@ -101,15 +84,9 @@ class TagPanel(QWidget):
 
         self._main_layout.addWidget(self.content_widget)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  set_results_count                                               │
-    # └──────────────────────────────────────────────────────────────────┘
     def set_results_count(self, text):
         self.results_count_lbl.setText(text)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  clear_tags  — returns widgets to pool instead of destroying them │
-    # └──────────────────────────────────────────────────────────────────┘
     def clear_tags(self):
         while self.container_layout.count():
             child = self.container_layout.takeAt(0)
@@ -117,7 +94,6 @@ class TagPanel(QWidget):
             if w is None:
                 continue
             if isinstance(w, QPushButton):
-                # Return to pool if not already full
                 w.hide()
                 w.setParent(None)
                 if len(self._btn_pool) < self._POOL_MAX:
@@ -134,9 +110,6 @@ class TagPanel(QWidget):
             else:
                 w.deleteLater()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  update_tags                                                     │
-    # └──────────────────────────────────────────────────────────────────┘
     def update_tags(self, post):
         self.clear_tags()
         self._generation += 1   # invalidate any in-flight background fetch
@@ -168,19 +141,12 @@ class TagPanel(QWidget):
         else:
             self._render_tags(cats)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_cats_ready  — slot connected to _cats_ready signal          │
-    # └──────────────────────────────────────────────────────────────────┘
     @pyqtSlot(dict, int)
     def _on_cats_ready(self, cats: dict, gen: int):
-        # Discard results that belong to a previous post
         if gen != self._generation:
             return
         self._render_tags(cats)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _acquire_btn  — grab a recycled or fresh tag button             │
-    # └──────────────────────────────────────────────────────────────────┘
     def _acquire_btn(self) -> QPushButton:
         if self._btn_pool:
             btn = self._btn_pool.pop()
@@ -199,9 +165,6 @@ class TagPanel(QWidget):
             return self._lbl_pool.pop()
         return QLabel()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _render_tags                                                    │
-    # └──────────────────────────────────────────────────────────────────┘
     def _render_tags(self, cats):
         self.clear_tags()
         

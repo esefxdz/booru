@@ -1,9 +1,4 @@
-"""
-ui/settings_view/section_about.py
-
-About & Maintenance section: version info, update check, cache clearing,
-reset to defaults.
-"""
+"""About and maintenance section: version, updates, cache clearing, reset."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QFrame
 )
@@ -23,7 +18,6 @@ class AboutSection(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)
 
-        # ── App Info ──────────────────────────────────────────────────
         info_card = QFrame()
         info_card.setStyleSheet(f"QFrame {{ background-color: {colors.PANEL_BG}; border: 1px solid {colors.BORDER}; border-radius: 12px; }}")
         info_v = QVBoxLayout(info_card)
@@ -40,7 +34,6 @@ class AboutSection(QWidget):
 
         layout.addWidget(info_card)
 
-        # ── Updates ───────────────────────────────────────────────────
         update_card = QFrame()
         update_card.setStyleSheet(f"QFrame {{ background-color: {colors.PANEL_BG}; border: 1px solid {colors.BORDER}; border-radius: 12px; }}")
         update_v = QVBoxLayout(update_card)
@@ -73,7 +66,6 @@ class AboutSection(QWidget):
 
         layout.addWidget(update_card)
 
-        # ── Cache Management ──────────────────────────────────────────
         cache_card = QFrame()
         cache_card.setStyleSheet(f"QFrame {{ background-color: {colors.PANEL_BG}; border: 1px solid {colors.BORDER}; border-radius: 12px; }}")
         cache_v = QVBoxLayout(cache_card)
@@ -106,7 +98,6 @@ class AboutSection(QWidget):
 
         layout.addWidget(cache_card)
 
-        # ── Danger Zone ───────────────────────────────────────────────
         danger_card = QFrame()
         danger_card.setStyleSheet(f"QFrame {{ background-color: {colors.PANEL_BG}; border: 1px solid {colors.DANGER}; border-radius: 12px; }}")
         danger_v = QVBoxLayout(danger_card)
@@ -134,7 +125,6 @@ class AboutSection(QWidget):
         layout.addWidget(danger_card)
         layout.addStretch()
 
-    # ── Update check ────────────────────────────────────────────────
 
     def _check_for_updates(self):
         self.update_btn.setEnabled(False)
@@ -178,7 +168,6 @@ class AboutSection(QWidget):
         self.update_status.show()
         QTimer.singleShot(5000, self.update_status.hide)
 
-    # ── Cache ───────────────────────────────────────────────────────
 
     def _clear_cache(self):
         try:

@@ -12,44 +12,27 @@ def _cache_filename(domain):
     return re.sub(r"[^A-Za-z0-9._-]", "_", domain) + ".png"
 
 def _cache_dir():
-    """Return the favicon cache directory, resolved lazily so settings are
-    guaranteed to be initialized before the first call."""
+    """Favicon cache directory, resolved lazily so settings are initialized first."""
     return settings.manager.get_download_dir() / ".icons"
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                      CLASS: FaviconFetcher                          ║
-# ║  Background thread — downloads the site favicon from DuckDuckGo's  ║
-# ║  icon proxy so we never request the booru site directly.            ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class FaviconFetcher(QThread):
-    # Signal emits (booru_name, local_file_path) when download completes
     finished = pyqtSignal(str, str)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — stores the booru name and its base URL             │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, name, url):
         super().__init__()
         self.name = name
         self.url = url
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  run  — does the actual network request on a background thread   │
-    # │  Strips https:// to get the bare domain, then checks disk cache  │
-    # │  before hitting the DuckDuckGo favicon proxy.                    │
-    # └──────────────────────────────────────────────────────────────────┘
     def run(self):
         try:
             cache_dir = _cache_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
-            # Extract just "danbooru.donmai.us" from "https://danbooru.donmai.us"
             domain = self.url.replace("https://", "").replace("http://", "").split("/")[0]
             if not domain:
                 return
             
             cache_file = cache_dir / _cache_filename(domain)
 
-            # If we already downloaded this favicon before, emit from cache immediately
             if cache_file.exists():
                 self.finished.emit(self.name, str(cache_file))
                 return
@@ -57,7 +40,6 @@ class FaviconFetcher(QThread):
             # Fetch through DuckDuckGo's icon service — it reliably serves .ico files
             # even for sites that don't advertise them at /favicon.ico
             resp = httpx.get(f"https://icons.duckduckgo.com/ip3/{domain}.ico", timeout=5.0)
-            # Only save if we got a real image back (not an empty 404 response)
             if resp.status_code == 200 and len(resp.content) > 100:
                 with open(cache_file, "wb") as f:
                     f.write(resp.content)

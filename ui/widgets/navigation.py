@@ -1,17 +1,4 @@
-"""
-ui/navigation.py — Page router for the main QStackedWidget.
-
-Extracted from BooruGui so the main window doesn't own every
-page-transition detail.  Owns the stack widget and exposes a
-single ``go(page)`` dispatch plus convenience methods the
-sidebar buttons connect to.
-
-Usage
------
-    nav = NavigationManager(stack, overlay, topbar, parent)
-    nav.go("gallery")
-    nav.go("settings")
-"""
+"""Page router for the main QStackedWidget."""
 
 from __future__ import annotations
 
@@ -20,12 +7,6 @@ from PyQt6.QtCore import QObject
 
 
 class NavigationManager(QObject):
-    """Routes page-switch requests to the QStackedWidget.
-
-    Also handles:
-      - Dismissing the media overlay before switching away from gallery
-      - Showing/hiding the top bar (search row) per page
-    """
 
     def __init__(
         self,
@@ -47,10 +28,8 @@ class NavigationManager(QObject):
         self.DOWNLOADS = 4
         self.CHEAT_SHEET = 5
 
-    # ── Public API ──────────────────────────────────────────────
 
     def go(self, page: str) -> None:
-        """Generic router.  Use the named helpers below."""
         dispatch = {
             "gallery":     self.go_gallery,
             "blacklist":   self.go_blacklist,
@@ -93,7 +72,6 @@ class NavigationManager(QObject):
         self._topbar.hide()
 
     def go_api_settings(self, name: str, parent) -> None:
-        """API settings is dynamic — created on demand per booru."""
         self._dismiss_overlay()
         # Remove any previous instance
         for i in range(self._stack.count() - 1, self.CHEAT_SHEET + 1, -1):
@@ -109,14 +87,8 @@ class NavigationManager(QObject):
         self._stack.setCurrentWidget(view)
         self._topbar.hide()
 
-    # ── Helpers ─────────────────────────────────────────────────
 
     def _dismiss_overlay(self) -> None:
-        """Hide the media overlay before switching to a non-gallery page.
-
-        The overlay is a plain child widget manually raise()'d on top.
-        Switching the QStackedWidget page does NOT hide it automatically,
-        so we must close it explicitly before every page transition.
-        """
+        """Hide the overlay explicitly; switching stack pages does not hide it."""
         if self._overlay is not None and self._overlay.isVisible():
             self._overlay.close_overlay()

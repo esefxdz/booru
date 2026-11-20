@@ -44,10 +44,8 @@ class FetchThread(QThread):
                 for p in posts:
                     p["_booru"] = searched_booru
 
-            # Phase 1: Emit metadata immediately so the UI shows skeletons
             self.posts_ready.emit(posts, self.is_bookmarks_mode)
 
-            # Phase 2: Fetch thumbnails — skip entirely if already cancelled
             if posts and not self.cancel_event.is_set():
                 def on_preview(pil_img, post, idx):
                     if not self.cancel_event.is_set():
@@ -102,9 +100,6 @@ class BulkThread(QThread):
                 if self.cancel_event.is_set():
                     break
                 
-                # Each call to download_file() emits download_started /
-                # download_progress / download_finished|failed — so every
-                # single item shows up in the Downloads view live.
                 task_id = f"bulk-{uuid.uuid4().hex[:8]}"
                 post["_bulk_task_id"] = task_id
                 try:
@@ -143,18 +138,13 @@ class AppController(QObject):
         return self._is_loading
 
     def _cancel_active_thread(self):
-        """Signal the current FetchThread to stop and let it exit asynchronously.
-
-        Must be called while holding ``_thread_lock`` or from the Qt main
-        thread before a new thread is started.
-        """
+        """Ask the current FetchThread to stop. Call under _thread_lock or from the main thread."""
         if self.thread is not None and self.thread.isRunning():
             self.thread.cancel_event.set()
             
             if not hasattr(self, '_orphans'):
                 self._orphans = []
             
-            # Clean up dead orphans to prevent memory leaks
             self._orphans = [t for t in self._orphans if t.isRunning()]
             
             # Keep a reference to the cancelled thread so Qt doesn't crash 
@@ -163,7 +153,6 @@ class AppController(QObject):
             self.thread = None
 
     def shutdown(self):
-        """Cleanly cancel all running threads before app exit."""
         with self._thread_lock:
             self._cancel_active_thread()
             
@@ -183,12 +172,7 @@ class AppController(QObject):
                 self.bulk_thread.wait(1000)
 
     def _wire_thread(self, thread):
-        """Connect a FetchThread's signals, guarded by a generation counter.
-
-        If the user starts a new search while thumbnails are still loading,
-        the old thread keeps running harmlessly but its preview_ready signals
-        are silently discarded because the generation has advanced.
-        """
+        """Connect signals, dropping preview_ready from threads of a stale generation."""
         self._fetch_gen += 1
         gen = self._fetch_gen
 
@@ -200,7 +184,6 @@ class AppController(QObject):
         )
 
     def _on_preview(self, safe_bytes, post, idx, gen):
-        """Forward preview only if this generation is still current."""
         if gen == self._fetch_gen:
             self.preview_ready.emit(safe_bytes, post, idx)
 
@@ -215,7 +198,6 @@ class AppController(QObject):
         self.thread.start()
 
     def trigger_fetch_append(self, tags, current_page, is_bookmarks_mode, bookmark_filter):
-        """Like trigger_fetch but doesn't clear the gallery (infinite scroll)."""
         with self._thread_lock:
             if self._is_loading:
                 return
@@ -228,9 +210,8 @@ class AppController(QObject):
 
     @pyqtSlot(list, bool)
     def _on_posts_ready(self, posts, is_bookmarks_mode, gen):
-        """Metadata arrived — show skeletons immediately and unlock the UI."""
         if gen != self._fetch_gen:
-            return  # stale generation, discard
+            return
         with self._thread_lock:
             self._is_loading = False
         self.loading_finished.emit()
@@ -243,7 +224,6 @@ class AppController(QObject):
 
     @pyqtSlot(list, bool)
     def _on_fetch_finished(self, posts, is_bookmarks_mode, gen):
-        """All thumbnails done. Nothing to do — UI was already unblocked by posts_ready."""
         pass
 
     @pyqtSlot(str)
@@ -253,8 +233,6 @@ class AppController(QObject):
         self.loading_finished.emit()
         import logging
         logging.getLogger(__name__).error("Fetch error: %s", error_msg)
-        # Route Cloudflare-block errors to the dedicated signal so the GUI
-        # can offer to open the CAPTCHA solver automatically.
         if "Cloudflare" in error_msg:
             from core import settings
             self.status_updated.emit("🔐 Cloudflare blocked — solve CAPTCHA?", "orange")

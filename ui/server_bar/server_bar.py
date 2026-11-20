@@ -7,30 +7,17 @@ from ui.style.icons import Icons
 from ui.server_bar.booru_button import BooruButton
 from ui.modals import AddBooruDialog
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                         CLASS: ServerBar                            ║
-# ║  The left-most vertical sidebar (Discord style). Manages the list   ║
-# ║  of booru site icons, bookmark/home buttons, and reordering logic.  ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 from ui.style import colors
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                         CLASS: ServerBar                            ║
-# ║  The left-most vertical sidebar (Discord style). Manages the list   ║
-# ║  of booru site icons, bookmark/home buttons, and reordering logic.  ║
-# ╚══════════════════════════════════════════════════════════════════════╗
 class ServerBar(QWidget):
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — sets up the vertical layout and background cache    │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, main_gui):
         super().__init__()
         self.main_gui = main_gui
         self.setFixedWidth(72)
         self.setStyleSheet(f"background-color: {colors.MAIN_BG};")
-        self.icon_cache = {}  # booru_name -> local path to favicon
-        self.fetchers = {}    # Keeps track of running FaviconFetcher threads
+        self.icon_cache = {}
+        self.fetchers = {}
         
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 12, 0, 12)
@@ -39,19 +26,12 @@ class ServerBar(QWidget):
         
         self.rebuild_list()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  rebuild_list  — clears all buttons and redraws them based on    │
-    # │  BOORU_ORDER and the Booru Registry. Adds the special Bookmark   │
-    # │  and Add Booru buttons at the top/bottom respectively.          │
-    # └──────────────────────────────────────────────────────────────────┘
     def rebuild_list(self):
-        # Clear existing buttons (properly delete widgets to avoid memory leaks)
         while self._main_layout.count():
             item = self._main_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        # ── BOOKMARKS BUTTON (Pinned to top) ──────────────────────────
         self.bookmark_btn = QPushButton()
         self.bookmark_btn.setFixedSize(48, 48)
         self.bookmark_btn.setIcon(Icons.get("bookmarks", colors.TEXT_PRIMARY))
@@ -62,8 +42,6 @@ class ServerBar(QWidget):
         self._main_layout.addWidget(self.bookmark_btn)
 
 
-
-        # ── BOORU SITE BUTTONS ─────────────────────────────────────────
         # Render the user's curated list. boorus.REGISTRY is just the catalog
         # of supported sites; only boorus the user has added (booru_order) show.
         for name in settings.manager.booru_order:
@@ -71,7 +49,6 @@ class ServerBar(QWidget):
                 btn = BooruButton(name, boorus.REGISTRY[name], self)
                 self._main_layout.addWidget(btn)
 
-        # ── ADD BOORU BUTTON (Pinned to bottom) ───────────────────────
         self.add_btn = QPushButton()
         self.add_btn.setFixedSize(48, 48)
         self.add_btn.setIcon(Icons.get("plus", colors.SUCCESS))
@@ -92,16 +69,9 @@ class ServerBar(QWidget):
         self._main_layout.addStretch()
         self._main_layout.addWidget(self.add_btn)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  update_button_styles  — compatibility alias for BooruGui        │
-    # └──────────────────────────────────────────────────────────────────┘
     def update_button_styles(self):
         self.update_active()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  update_active  — called when the user switches boorus. Loops    │
-    # │  over all buttons to refresh their highlight borders/shapes.    │
-    # └──────────────────────────────────────────────────────────────────┘
     def update_active(self):
         for i in range(self._main_layout.count()):
             w = self._main_layout.itemAt(i).widget()
@@ -109,10 +79,6 @@ class ServerBar(QWidget):
                 w.update_style()
         self.update_bookmark_style()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  update_bookmark_style  — specific styling for the Home/Book-   │
-    # │  marks button. Turns accent color when bookmarks mode is active. │
-    # └──────────────────────────────────────────────────────────────────┘
     def update_bookmark_style(self):
         if not hasattr(self, 'bookmark_btn'):
             return
@@ -135,23 +101,13 @@ class ServerBar(QWidget):
                 }}
             """)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_icon_ready  — callback for FaviconFetcher threads. Stores  │
-    # │  the path and forces a style update on the button so the site   │
-    # │  favicon appears immediately once downloaded.                   │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_icon_ready(self, name, path):
         self.icon_cache[name] = path
         self.fetchers.pop(name, None)
         self.update_active()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_context_menu  — right-click menu for booru icons. Allows   │
-    # │  quick access to credentials/engine settings for that site.      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_context_menu(self, name):
         menu = QMenu(self)
-        # Discord-style dark menu styling
         menu.setStyleSheet(f"""
             QMenu {{ background-color: {colors.MODAL_BG}; color: {colors.TEXT_SECONDARY}; border: 1px solid {colors.BORDER}; padding: 4px; }}
             QMenu::item {{ padding: 6px 24px; border-radius: 2px; }}

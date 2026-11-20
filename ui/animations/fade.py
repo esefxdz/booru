@@ -2,11 +2,7 @@ from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QWidget
 from core import settings
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                        ANIMATE_FADE_IN                              ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 def animate_fade_in(widget: QWidget, duration: int = 300):
-    """Smoothly fades a widget in from 0 to 1 opacity."""
     if settings.manager.reduced_motion:
         return
 

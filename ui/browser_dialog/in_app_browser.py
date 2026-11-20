@@ -1,11 +1,3 @@
-###########################################################################################
-# ui/browser_dialog/in_app_browser.py — Base embedded browser widget.
-#
-# Provides a QWebEngineView with a toolbar (URL label, progress bar, close
-# button). Used as the base class for Cloudflare bypass and session login
-# dialogs.
-###########################################################################################
-
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QPushButton, QHBoxLayout, QLabel,
     QProgressBar, QWidget,
@@ -17,11 +9,6 @@ from PyQt6.QtCore import Qt, QUrl
 from ui.style import colors
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                      CLASS: InAppBrowser                             ║
-# ║  A simple embedded browser widget with a loading bar and status      ║
-# ║  text. Used as the base for Cloudflare bypass and login dialogs.    ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class InAppBrowser(QDialog):
 
     def __init__(self, url, title="Browser", parent=None):
@@ -35,7 +22,6 @@ class InAppBrowser(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Toolbar ────────────────────────────────────────────────────
         toolbar_widget = QWidget()
         toolbar_widget.setStyleSheet(
             f"background-color: {colors.MAIN_BG}; "
@@ -67,7 +53,6 @@ class InAppBrowser(QDialog):
 
         layout.addWidget(toolbar_widget)
 
-        # ── Progress Bar ───────────────────────────────────────────────
         self.progress = QProgressBar()
         self.progress.setFixedHeight(3)
         self.progress.setTextVisible(False)
@@ -77,7 +62,6 @@ class InAppBrowser(QDialog):
         """)
         layout.addWidget(self.progress)
 
-        # ── Configure the default profile ──────────────────────────────
         # Enable persistent cookies + real Chrome UA so CF challenges work.
         # Stored as self._profile so subclasses can access it.
         self._profile = QWebEngineProfile.defaultProfile()
@@ -91,10 +75,8 @@ class InAppBrowser(QDialog):
             "Chrome/136.0.0.0 Safari/537.36"
         )
 
-        # ── Web View ───────────────────────────────────────────────────
         self.browser = QWebEngineView()
 
-        # Enable all JS/DOM features CF needs
         ws = self.browser.page().settings()
         ws.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         ws.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
@@ -109,10 +91,8 @@ class InAppBrowser(QDialog):
         layout.addWidget(self.browser)
 
     def load_url(self, url):
-        """Loads a URL into the embedded browser. Accepts str or QUrl."""
         if url is None:
             return
-        # Normalize to str first — callers may pass either type
         if not isinstance(url, str):
             url = url.toString()
         if not url.startswith("http"):
@@ -121,5 +101,4 @@ class InAppBrowser(QDialog):
         self.browser.setUrl(QUrl(url))
 
     def get_user_agent(self):
-        """Returns the current browser User-Agent string."""
         return self.browser.page().profile().httpUserAgent()

@@ -68,7 +68,7 @@ class Sidebar(QWidget):
         self.btn_settings = self._add_item("Settings", "settings")
         self.btn_settings.clicked.connect(self.main_app.show_settings)
         
-        self.btn_cheat = self._add_item("Cheat Sheet", "forum") # Or another icon like 'book' or 'help' if available, forum is close enough
+        self.btn_cheat = self._add_item("Cheat Sheet", "forum")
         self.btn_cheat.clicked.connect(self.main_app.show_cheat_sheet)
         
         layout.addStretch(1)

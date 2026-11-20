@@ -5,30 +5,19 @@ from ui.style.icons import Icons
 
 
 from ui.style import colors
-#this is for favorite tags and blacklist tags
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                       CLASS: BooruTextBar                           ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class BooruTextBar(QWidget):
-    submitted = pyqtSignal(str)  # Emitted when Enter is pressed
+    submitted = pyqtSignal(str)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__                                                        │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, parent, placeholder="Enter text..."):
         super().__init__(parent)
         self.setup_ui(placeholder)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  setup_ui                                                        │
-    # └──────────────────────────────────────────────────────────────────┘
     def setup_ui(self, placeholder):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Main container with border and background
         self.container = QFrame()
         self.container.setFixedHeight(48)
         self.container.setObjectName("TextContainer")
@@ -44,12 +33,10 @@ class BooruTextBar(QWidget):
         container_layout.setContentsMargins(12, 0, 12, 0)
         container_layout.setSpacing(8)
 
-        # Icon
         self.icon_lbl = QLabel()
         self.icon_lbl.setPixmap(Icons.get("search", colors.TEXT_MUTED).pixmap(20, 20))
         container_layout.addWidget(self.icon_lbl)
 
-        # Input field
         self.input = QLineEdit()
         self.input.setPlaceholderText(placeholder)
         self.input.setStyleSheet(f"""
@@ -64,7 +51,6 @@ class BooruTextBar(QWidget):
         self.input.returnPressed.connect(self._on_return)
         container_layout.addWidget(self.input, 1)
 
-        # Clear Button
         self.clear_btn = QPushButton()
         self.clear_btn.setIcon(Icons.get("close", colors.TEXT_MUTED))
         self.clear_btn.setFixedSize(24, 24)
@@ -76,20 +62,16 @@ class BooruTextBar(QWidget):
 
         layout.addWidget(self.container)
 
-        # Shadow
         self.shadow = QGraphicsDropShadowEffect(self)
         self.shadow.setBlurRadius(15)
         self.shadow.setXOffset(0)
         self.shadow.setYOffset(4)
-        self.shadow.setColor(QColor(0, 0, 0, 0))  # Start invisible
+        self.shadow.setColor(QColor(0, 0, 0, 0))
         self.setGraphicsEffect(self.shadow)
 
         self.input.textChanged.connect(self._on_text_changed)
         self.input.installEventFilter(self)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  eventFilter                                                     │
-    # └──────────────────────────────────────────────────────────────────┘
     def eventFilter(self, obj, event):
         if obj == self.input:
             if event.type() == event.Type.FocusIn:
@@ -98,9 +80,6 @@ class BooruTextBar(QWidget):
                 self._set_active_style(False)
         return super().eventFilter(obj, event)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _set_active_style                                               │
-    # └──────────────────────────────────────────────────────────────────┘
     def _set_active_style(self, active):
         if active:
             self.container.setStyleSheet(f"""
@@ -123,33 +102,18 @@ class BooruTextBar(QWidget):
             self.shadow.setColor(QColor(0, 0, 0, 0))
             self.icon_lbl.setPixmap(Icons.get("search", colors.TEXT_MUTED).pixmap(20, 20))
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_text_changed                                                │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_text_changed(self, text):
         self.clear_btn.setVisible(bool(text))
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_return                                                      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_return(self):
         self.submitted.emit(self.input.text())
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  clear                                                           │
-    # └──────────────────────────────────────────────────────────────────┘
     def clear(self):
         self.input.clear()
         self.input.setFocus()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  text                                                            │
-    # └──────────────────────────────────────────────────────────────────┘
     def text(self):
         return self.input.text()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  setText                                                         │
-    # └──────────────────────────────────────────────────────────────────┘
     def setText(self, text):
         self.input.setText(text)

@@ -2,15 +2,10 @@ from PyQt6.QtCore import QPropertyAnimation
 from PyQt6.QtWidgets import QGraphicsOpacityEffect, QWidget
 from core import settings
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                      ANIMATE_BUTTON_PRESS                           ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 def animate_button_press(widget: QWidget):
-    """Quick pop animation when a button is clicked."""
     if settings.manager.reduced_motion:
         return
     
-    # Animate opacity quickly down and up to simulate a click flash
     effect = QGraphicsOpacityEffect(widget)
     widget.setGraphicsEffect(effect)
     

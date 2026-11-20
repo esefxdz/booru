@@ -1,9 +1,4 @@
-"""
-ui/tag_chip.py
-
-Shared TagChip widget used by both BlacklistView and FavoritesView.
-Extracted here so neither view needs to define the same class twice.
-"""
+"""Pill-shaped tag widget shared by BlacklistView and FavoritesView."""
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
 from PyQt6.QtCore import Qt, pyqtSignal
 
@@ -12,22 +7,9 @@ from ui.style.icons import Icons
 
 from ui.style import colors
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: TagChip                                                     ║
-# ║  A small pill-shaped widget representing one tag in a list.        ║
-# ║  Shows the tag name on the left and a delete button on the right.  ║
-# ║  Emits `removed(tag_name)` when the delete button is clicked.      ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class TagChip(QFrame):
-    # Carries the tag string so the parent knows which chip was deleted
     removed = pyqtSignal(str)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — builds the chip: label on the left, small trash    │
-    # │  icon button on the right, inside a rounded dark pill frame.    │
-    # │  The whole frame highlights accent color on hover to signal it's │
-    # │  interactive.                                                   │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, tag: str, parent=None):
         super().__init__(parent)
         self.tag = tag
@@ -49,12 +31,10 @@ class TagChip(QFrame):
         layout.setContentsMargins(10, 2, 6, 2)
         layout.setSpacing(6)
 
-        # Tag name label — transparent background so the frame colour shows
         self.label = QLabel(tag)
         self.label.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-weight: 500; background: transparent;")
         layout.addWidget(self.label)
 
-        # Small delete button that emits removed() with this chip's tag name
         self.del_btn = QPushButton()
         self.del_btn.setIcon(Icons.get("blacklist", colors.TEXT_MUTED, 14))
         self.del_btn.setFixedSize(18, 18)

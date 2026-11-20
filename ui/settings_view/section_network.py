@@ -1,9 +1,4 @@
-"""
-ui/settings_view/section_network.py
-
-Network & Downloads settings section: concurrent downloads, proxy, HTTP/2,
-and Cloudflare bypass engine selection.
-"""
+"""Network settings section: downloads, proxy, HTTP/2 and Cloudflare bypass engine."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QSpinBox, QCheckBox, QFrame, QComboBox, QDoubleSpinBox, QPushButton,
@@ -26,7 +21,6 @@ class NetworkSection(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)
 
-        # ── Cloudflare Bypass Method ──────────────────────────────────
         cf_card = QFrame()
         cf_card.setStyleSheet(f"""
             QFrame {{
@@ -89,7 +83,6 @@ class NetworkSection(QWidget):
             }}
         """)
 
-        # Populate the dropdown from the engine module
         available = get_available_engines()
 
         current_method = getattr(settings.manager, "cf_bypass_method", "auto")
@@ -98,7 +91,6 @@ class NetworkSection(QWidget):
         for i, method in enumerate(BYPASS_METHODS):
             label = BYPASS_METHOD_LABELS.get(method, method)
 
-            # Mark unavailable engines
             if method not in ("auto",) and method not in available:
                 label = f"{label}  ⚠ not installed"
 
@@ -110,14 +102,12 @@ class NetworkSection(QWidget):
 
         cf_v.addWidget(self.cf_method)
 
-        # Show which engines are currently available
         avail_label = QLabel(f"Available engines: {', '.join(available)}")
         avail_label.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 11px; font-style: italic;")
         cf_v.addWidget(avail_label)
 
         layout.addWidget(cf_card)
 
-        # ── Concurrent Downloads ──────────────────────────────────────
         dl_card = QFrame()
         dl_card.setStyleSheet(f"""
             QFrame {{
@@ -165,7 +155,6 @@ class NetworkSection(QWidget):
 
         layout.addWidget(dl_card)
 
-        # ── Proxy ─────────────────────────────────────────────────────
         proxy_card = QFrame()
         proxy_card.setStyleSheet(f"""
             QFrame {{
@@ -194,7 +183,6 @@ class NetworkSection(QWidget):
 
         layout.addWidget(proxy_card)
 
-        # ── User-Agent ────────────────────────────────────────────────
         ua_card = QFrame()
         ua_card.setStyleSheet(f"""
             QFrame {{
@@ -247,7 +235,6 @@ class NetworkSection(QWidget):
 
         layout.addWidget(ua_card)
 
-        # ── Network Limits ────────────────────────────────────────────
         limit_card = QFrame()
         limit_card.setStyleSheet(f"""
             QFrame {{
@@ -329,7 +316,6 @@ class NetworkSection(QWidget):
 
         layout.addWidget(limit_card)
 
-        # ── Protocol Options ──────────────────────────────────────────
         proto_card = QFrame()
         proto_card.setStyleSheet(f"""
             QFrame {{
@@ -423,7 +409,6 @@ class NetworkSection(QWidget):
         self.use_network_semaphore.setChecked(True)
         self.use_rate_limit.setChecked(True)
         self.rate_limit_delay.setValue(0.25)
-        # Reset bypass method to auto
         for i in range(self.cf_method.count()):
             if self.cf_method.itemData(i) == "auto":
                 self.cf_method.setCurrentIndex(i)

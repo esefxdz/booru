@@ -1,8 +1,4 @@
-"""
-ui/settings_view/section_display.py
-
-Display & UI settings section: thumbnail size, resolution, masonry, infinite scroll, animations.
-"""
+"""Display and UI settings section."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QCheckBox, QSlider, QFrame
@@ -23,7 +19,6 @@ class DisplaySection(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)
 
-        # ── Thumbnail Size ────────────────────────────────────────────
         size_card = self._card("Gallery Grid Size")
         size_v = QVBoxLayout(size_card)
         size_v.setContentsMargins(20, 16, 20, 16)
@@ -49,7 +44,6 @@ class DisplaySection(QWidget):
 
         layout.addWidget(size_card)
 
-        # ── Thumbnail Resolution ──────────────────────────────────────
         res_card = self._card("Download Quality")
         res_v = QVBoxLayout(res_card)
         res_v.setContentsMargins(20, 16, 20, 16)
@@ -99,7 +93,6 @@ class DisplaySection(QWidget):
 
         layout.addWidget(res_card)
 
-        # ── Layout Options ────────────────────────────────────────────
         layout_card = self._card("Layout")
         layout_v = QVBoxLayout(layout_card)
         layout_v.setContentsMargins(20, 16, 20, 16)
@@ -128,7 +121,6 @@ class DisplaySection(QWidget):
         layout.addStretch()
 
     def apply(self):
-        """Write values back to settings.manager."""
         settings.manager.thumbnail_size = int(self.size_choices[self.thumb_size.currentIndex()])
         settings.manager.thumbnail_res = self.res_slider.value()
         settings.manager.infinite_scroll = self.infinite_scroll.isChecked()
@@ -136,7 +128,6 @@ class DisplaySection(QWidget):
         settings.manager.reduced_motion = self.reduced_motion.isChecked()
 
     def reset(self):
-        """Reset to defaults."""
         self.thumb_size.setCurrentIndex(4)  # 250
         self.res_slider.setValue(720)
         self.infinite_scroll.setChecked(False)
@@ -144,7 +135,6 @@ class DisplaySection(QWidget):
         self.reduced_motion.setChecked(False)
 
     def load(self):
-        """Load current values from settings.manager to refresh stale UI state."""
         cur_sz = str(settings.manager.thumbnail_size)
         idx = self.size_choices.index(cur_sz) if cur_sz in self.size_choices else 4
         self.thumb_size.setCurrentIndex(idx)
@@ -153,7 +143,6 @@ class DisplaySection(QWidget):
         self.masonry_mode.setChecked(settings.manager.masonry_mode)
         self.reduced_motion.setChecked(settings.manager.reduced_motion)
 
-    # ── Helpers ───────────────────────────────────────────────────
     def _card(self, _name):
         card = QFrame()
         card.setStyleSheet(f"""
