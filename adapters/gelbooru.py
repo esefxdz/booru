@@ -1,6 +1,15 @@
-from urllib.parse import quote as _urlquote
+import html as _html
 import logging
+import re
+from urllib.parse import quote as _urlquote, unquote as _unquote
+
 from .base import BaseAdapter
+
+# Post page sidebar: <li class="tag-type-artist tag"> ... <a href="...&amp;tags=NAME">
+_TAG_ITEM = re.compile(r'<li class="tag-type-([a-z]+)[^"]*">(.*?)</li>', re.S)
+_TAG_LINK = re.compile(r'[?;&]tags=([^"&]+)"')
+_HTML_CATS = {"artist": "artist", "character": "character", "copyright": "copyright",
+              "metadata": "meta", "meta": "meta", "general": "general"}
 
 
 class GelbooruAdapter(BaseAdapter):
@@ -79,6 +88,22 @@ class GelbooruAdapter(BaseAdapter):
             else:
                 cats["general"].append(t)
         return cats
+
+    def tag_types_url(self, post: dict, site_data: dict) -> str:
+        pid = str(post.get("id", ""))
+        base = site_data.get("url", "").rstrip("/")
+        if not (pid.isdigit() and base):
+            return ""
+        return f"{base}{site_data.get('api_path', '/index.php')}?page=post&s=view&id={pid}"
+
+    def parse_tag_types(self, text: str) -> dict:
+        out = {}
+        for kind, body in _TAG_ITEM.findall(text or ""):
+            link = _TAG_LINK.search(body)
+            if link:
+                name = _unquote(_html.unescape(link.group(1))).replace(" ", "_").lower()
+                out[name] = _HTML_CATS.get(kind, "general")
+        return out
 
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         base = site_data.get("url", "")

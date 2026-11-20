@@ -47,7 +47,7 @@ booru/
 │   ├── image_downloader.py  Single-post download (.part + rename)
 │   ├── engines.py           Download engines
 │   ├── smart_folders.py     Organize downloads by artist/character
-│   └── tag_categorizer.py   Tag categories via Danbooru (cached)
+│   └── tag_categorizer.py   Tag categories from the booru's own post page (cached)
 │
 ├── ui/                      PyQt6 interface (to be replaced by Flutter later)
 │   ├── main_window.py       Main window, menus, signal wiring
@@ -211,10 +211,7 @@ Engines whose library is missing are skipped; urllib always works.
 - `session_keys` (session-cookie logins) are captured and stored but not yet
   attached to any request.
 - Responses and downloads have no size cap.
-- Smart folders send tag names to Danbooru's API for categorisation, even
-  when browsing another site.
-- These connect directly and ignore the proxy setting: tag categorizer
-  (Danbooru), tag autocomplete, add-booru auto-detect, favicon fetcher
+- These connect directly and ignore the proxy setting: tag autocomplete, add-booru auto-detect, favicon fetcher
   (sends each booru's domain to icons.duckduckgo.com), update checker
   (GitHub), session login, and the embedded WebEngine browser.
 - `core.validation.same_site` uses a small heuristic, not the Public Suffix List:

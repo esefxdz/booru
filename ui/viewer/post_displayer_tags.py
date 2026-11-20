@@ -31,19 +31,19 @@ _CAT_LABELS = {
 
 
 class _CategorizerThread(QThread):
-    """Runs TagCategorizer.categorize_tags() in a background thread."""
+    """Runs categorize_post() (may fetch the post page) in a background thread."""
     done = pyqtSignal(dict, int)   # (categories, generation)
     failed = pyqtSignal(int)       # generation
 
-    def __init__(self, tags: list[str], generation: int):
+    def __init__(self, post: dict, generation: int):
         super().__init__()
-        self._tags = tags
+        self._post = post
         self._generation = generation
 
     def run(self):
         try:
-            from download_images.tag_categorizer import get_categorizer
-            cats = get_categorizer().categorize_tags(self._tags)
+            from download_images.tag_categorizer import categorize_post
+            cats = categorize_post(self._post)
             self.done.emit(cats, self._generation)
         except Exception as e:
             logging.error("[post_displayer_tags] Categorizer thread failed: %s", e)
@@ -170,14 +170,13 @@ class ClickableTagsDropdown(CollapsibleWidget):
             self._render_all_tags()
             return
 
-        # Pass 2: flat tags → TagCategorizer (async, background thread)
-        tags = adapter.get_tags(post)
-        if not tags:
+        # Pass 2: flat tags → categories from the booru's post page (background thread)
+        if not adapter.get_tags(post):
             self._show_empty()
             return
 
         self._show_loading()
-        self._worker = _CategorizerThread(tags, gen)
+        self._worker = _CategorizerThread(post, gen)
         self._worker.done.connect(self._on_cats_ready)
         self._worker.failed.connect(self._on_cats_failed)
         self._worker.start()
@@ -212,15 +211,6 @@ class ClickableTagsDropdown(CollapsibleWidget):
             cats = {"general": all_tags}
         self._all_cats = cats
         self._render_all_tags()
-
-        # If only meta + general have tags, API categorization didn't work —
-        # show a hint to unlock Danbooru so artist/character/copyright appear.
-        has_meaningful = bool(
-            cats.get("artist") or cats.get("character") or cats.get("copyright")
-        )
-        if not has_meaningful and (cats.get("general") or cats.get("meta")):
-            self._show_unlock_hint()
-
 
     def _render_all_tags(self):
         self._clear()
@@ -262,48 +252,6 @@ class ClickableTagsDropdown(CollapsibleWidget):
         lbl = QLabel("No tags found.")
         lbl.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 12px; font-style: italic;")
         self.tags_layout.addWidget(lbl)
-
-    def _show_unlock_hint(self):
-        """Show a hint when all tags are uncategorized (Danbooru API blocked)."""
-        hint = QLabel(
-            "💡 Tags are not categorized yet.\n"
-            "Click below to unlock Danbooru — solve one CAPTCHA and all "
-            "future tags will show artist/character/copyright groups."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet(
-            f"color: {colors.WARNING}; font-size: 11px; "
-            f"background: {colors.WARNING}15; padding: 8px; border-radius: 6px;"
-        )
-        self.tags_layout.addWidget(hint)
-
-        btn = QPushButton("🔐  Unlock Tag Categories (Solve CAPTCHA)")
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {colors.ACCENT};
-                color: {colors.TEXT_PRIMARY};
-                padding: 8px 16px;
-                border-radius: 6px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{ background: {colors.ACCENT}DD; }}
-        """)
-        btn.clicked.connect(self._open_danbooru_cf_bypass)
-        self.tags_layout.addWidget(btn)
-
-    def _open_danbooru_cf_bypass(self):
-        """Open the Cloudflare bypass dialog for Danbooru."""
-        from ui.browser_dialog import run_cf_bypass
-        run_cf_bypass(
-            "danbooru", "https://danbooru.donmai.us", self,
-            on_success=lambda: self._on_danbooru_unlocked(),
-        )
-
-    def _on_danbooru_unlocked(self):
-        """Called after the user solves the Danbooru CAPTCHA — re-categorize."""
-        if self._current_post:
-            self.load_post(self._current_post)
 
     def _add_section(self, cat: str, tags: list[str]):
         color = _CAT_COLORS.get(cat, colors.TEXT_MUTED)

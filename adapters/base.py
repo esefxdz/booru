@@ -106,6 +106,14 @@ class BaseAdapter:
             "general": self.get_tags(post),
         }
 
+    def tag_types_url(self, post: dict, site_data: dict) -> str:
+        """Page on the booru that lists this post's tag categories, or "" if none."""
+        return ""
+
+    def parse_tag_types(self, text: str) -> dict:
+        """{tag: category} from the page at tag_types_url."""
+        return {}
+
     def get_tag_autocomplete_urls(self, site_data: dict, prefix: str) -> list[str]:
         """Return a list of URLs to try for tag autocomplete (fallback chain)."""
         return []

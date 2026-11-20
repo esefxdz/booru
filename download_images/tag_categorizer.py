@@ -1,9 +1,7 @@
-import logging
 import json
-import httpx
-import threading
-import time
+import logging
 import shutil
+import threading
 
 from core.fileutil import atomic_write_text
 
@@ -57,28 +55,19 @@ _META_TAGS = {
     "icon", "avatar", "wallpaper", "cover_art", "album_art",
 }
 
-# Danbooru categories: 0=general, 1=artist, 3=copyright, 4=character, 5=meta
-CAT_MAP = {
-    0: "general",
-    1: "artist",
-    3: "copyright",
-    4: "character",
-    5: "meta"
-}
+_EMPTY = ("artist", "character", "copyright", "meta", "general")
 
-_UNRESOLVED_RETRY_SECONDS = 300
 
 class TagCategorizer:
+    """Tag -> category cache (tag_cache.json) plus offline rules. Makes no requests."""
+
     def __init__(self):
         self.cache_file = BASE_DIR / "tag_cache.json"
         self._legacy_cache_file = legacy_appdata_dir() / "tag_cache.json"
         self.cache = {}
-        # Unresolved tags, in memory only with an expiry, so a network failure is never persisted.
-        self._unresolved: dict[str, float] = {}
         self._load_cache()
         self._lock = threading.Lock()
-        self._fetch_lock = threading.Lock()
-        
+
     def _load_cache(self):
         if not self.cache_file.exists() and self._legacy_cache_file.exists():
             try:
@@ -103,7 +92,7 @@ class TagCategorizer:
             logging.error(f"[tag_categorizer] Failed to save cache: {e}")
 
     def _apply_heuristics(self, tag: str):
-        """Offline category for *tag*, or None; runs before any API call."""
+        """Offline guess for *tag*, or None."""
         t = tag.lower()
 
         if t.endswith("_(artist)"):   return "artist"
@@ -123,138 +112,68 @@ class TagCategorizer:
 
         return None
 
+    @staticmethod
+    def _key(tag: str) -> str:
+        return tag.replace(" ", "_").lower()
+
+    def _category(self, tag: str):
+        key = self._key(tag)
+        return self.cache.get(key) or self._apply_heuristics(key)  # the booru beats the guesses
+
+    def has_unknown(self, tags: list) -> bool:
+        return any(self._category(t) is None for t in tags)
+
+    def learn(self, mapping: dict) -> None:
+        """Remember {tag: category} pairs read from a booru and save them."""
+        if not mapping:
+            return
+        with self._lock:
+            self.cache.update({self._key(k): v for k, v in mapping.items() if v in _EMPTY})
+            self._save_cache()
+
     def categorize_tags(self, tags: list) -> dict:
-        """Return ``{category: [tags]}``."""
-        result = {"artist": [], "character": [], "copyright": [], "meta": [], "general": []}
-        unknown_tags = []
-
+        """Return {category: [tags]}; tags with no known category go under general."""
+        result = {c: [] for c in _EMPTY}
         for tag in tags:
-            cache_key = tag.replace(" ", "_").lower()
-            cat = self._apply_heuristics(cache_key)
-            if cat:
-                result[cat].append(tag)
-                continue
-                
-            if cache_key in self.cache:
-                result[self.cache[cache_key]].append(tag)
-            elif self._unresolved.get(cache_key, 0) > time.monotonic():
-                result["general"].append(tag)
-            else:
-                unknown_tags.append(tag)
-
-        if unknown_tags:
-            # No async lock (breaks across event loops); duplicate fetches are acceptable.
-            tags_to_fetch = []
-            with self._lock:
-                tags_to_fetch = [t for t in unknown_tags if t.replace(" ", "_").lower() not in self.cache]
-            
-            if tags_to_fetch:
-                self._fetch_from_danbooru(tags_to_fetch)
-            
-            with self._lock:
-                for tag in unknown_tags:
-                    cache_key = tag.replace(" ", "_").lower()
-                    cat = self.cache.get(cache_key)
-                    if cat is None:
-                        # Unresolved: show as general but don't persist; retry later.
-                        cat = "general"
-                        self._unresolved[cache_key] = time.monotonic() + _UNRESOLVED_RETRY_SECONDS
-                    result[cat].append(tag)
-                self._save_cache()
-
+            result[self._category(tag) or "general"].append(tag)
         return result
 
-    def _fetch_from_danbooru(self, tags: list):
-        # Circuit breaker: skip to e621 while Danbooru is blocking.
-        now = time.monotonic()
-        if now < getattr(self, '_danbooru_blocked_until', 0):
-            self._fetch_from_e621(tags)
-            return
 
-        chunk_size = 50
-        resolved = set()
-        blocked = False
+def categorize_post(post: dict) -> dict:
+    """Categorised tags for *post*: from the API response if it has them, else
+    from the booru's own post page (cached per tag). Blocking: call off the GUI thread."""
+    import boorus
+    from adapters import get_adapter
+    from core import settings
 
-        for i in range(0, len(tags), chunk_size):
-            if blocked:
-                break
-            chunk = tags[i:i + chunk_size]
-            chunk_query = [t.replace(" ", "_").lower() for t in chunk]
-            import urllib.parse
-            names = urllib.parse.quote(",".join(chunk_query))
-            url = f"https://danbooru.donmai.us/tags.json?search[name_comma]={names}"
-            try:
-                # Non-blocking: if another thread is fetching, skip rather than queue up.
-                if not self._fetch_lock.acquire(blocking=False):
-                    break
-                try:
-                    from cloudflare_bypasser import store as cf_store
-                    cookies = dict(cf_store.get_cookies("danbooru") or {})
-                    ua = cf_store.get_user_agent("danbooru") or "BooruBrowser/1.0"
+    booru = post.get("_booru") or settings.manager.active_booru
+    site = boorus.REGISTRY.get(booru, {})
+    adapter = get_adapter(site.get("api_type", "gelbooru"))
 
-                    r = httpx.get(
-                        url,
-                        headers={"User-Agent": ua},
-                        cookies=cookies,
-                        timeout=8.0,
-                    )
-                finally:
-                    self._fetch_lock.release()
+    cats = adapter.get_categorized_tags(post)
+    if any(cats.get(c) for c in ("artist", "character", "copyright", "meta")):
+        return cats
 
-                if r.status_code == 200:
-                    data = r.json() if callable(getattr(r, 'json', None)) else []
-                    with self._lock:
-                        for item in data:
-                            name = item.get("name")
-                            if name:
-                                cache_key = name.lower()
-                                cat_id = item.get("category", 0)
-                                self.cache[cache_key] = CAT_MAP.get(cat_id, "general")
-                                resolved.add(cache_key)
-                elif r.status_code in (403, 503):
-                    # Blocked: circuit-break for 5 minutes.
-                    blocked = True
-                    self._danbooru_blocked_until = now + 300
-            except Exception:
-                logging.warning("Tag categorizer: danbooru fetch failed for %d tags (network error)", len(chunk), exc_info=True)
-                blocked = True
+    tags = adapter.get_tags(post)
+    categorizer = get_categorizer()
+    url = adapter.tag_types_url(post, site) if categorizer.has_unknown(tags) else ""
+    if url:
+        try:
+            from cloudflare_bypasser import get_session
+            r = get_session(booru).get_sync(url, timeout=15)
+            if r.status_code == 200:
+                categorizer.learn(adapter.parse_tag_types(r.text))
+        except Exception as e:
+            logging.warning("[tag_categorizer] tag lookup on %s failed: %s", booru, e)
+    return categorizer.categorize_tags(tags)
 
-        remaining = [t for t in tags if t.replace(" ", "_").lower() not in resolved]
-        if remaining:
-            self._fetch_from_e621(remaining)
-
-    def _fetch_from_e621(self, tags: list):
-        chunk_size = 50
-        for i in range(0, len(tags), chunk_size):
-            chunk = tags[i:i + chunk_size]
-            chunk_query = [t.replace(" ", "_").lower() for t in chunk]
-            import urllib.parse
-            names = urllib.parse.quote(",".join(chunk_query))
-            url = f"https://e621.net/tags.json?search[name_comma]={names}&limit={len(chunk)}"
-            try:
-                r = httpx.get(
-                    url,
-                    headers={"User-Agent": "BooruBrowser/1.0"},
-                    timeout=10.0,
-                )
-                if r.status_code == 200:
-                    data = r.json() if callable(getattr(r, 'json', None)) else []
-                    with self._lock:
-                        for item in data:
-                            name = item.get("name")
-                            if name:
-                                cache_key = name.lower()
-                                cat_id = item.get("category", 0)
-                                self.cache[cache_key] = CAT_MAP.get(cat_id, "general")
-            except Exception as e:
-                logging.debug("[tag_categorizer] e621 fallback error: %s", e)
 
 # Created lazily to avoid filesystem access at import.
 _categorizer = None
+
 
 def get_categorizer():
     global _categorizer
     if _categorizer is None:
         _categorizer = TagCategorizer()
     return _categorizer
-

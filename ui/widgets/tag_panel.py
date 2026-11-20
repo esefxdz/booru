@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSlot, QSize, pyqtSignal
 import threading
 from ui.style.icons import Icons
-from download_images.tag_categorizer import get_categorizer
+from download_images.tag_categorizer import categorize_post
 
 
 from ui.style import colors
@@ -133,7 +133,7 @@ class TagPanel(QWidget):
             gen = self._generation
 
             def fetch_and_render():
-                new_cats = get_categorizer().categorize_tags(cats["general"])
+                new_cats = categorize_post(post)
                 # Emit via signal — PyQt6 handles dict natively and queues to GUI thread
                 self._cats_ready.emit(new_cats, gen)
 

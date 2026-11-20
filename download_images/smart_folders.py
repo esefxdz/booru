@@ -105,20 +105,17 @@ def get_bulk_folder(tags: str) -> Path:
 
 
 def _categorize_post_tags(adapter, post: dict, tags: list) -> dict:
-    """Categorised tags from the adapter, falling back to TagCategorizer if it has no artist/character."""
+    """Categorised tags from the API response, else from the booru's own post page."""
     cats = adapter.get_categorized_tags(post)
 
-    if cats.get("artist") or cats.get("character"):
-        return cats
-
-    if not tags:
+    if cats.get("artist") or cats.get("character") or not tags:
         return cats
 
     try:
-        from download_images.tag_categorizer import get_categorizer
-        cats = get_categorizer().categorize_tags(tags)
+        from download_images.tag_categorizer import categorize_post
+        cats = categorize_post(post)
     except Exception as e:
-        log.warning("TagCategorizer fallback failed: %s", e)
+        log.warning("Tag categorization failed: %s", e)
 
     return cats
 
