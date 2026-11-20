@@ -1,14 +1,4 @@
-"""
-ui/gallery_layout.py — Layout engines for the virtualised gallery.
-
-Two layout strategies:
-  - Grid: uniform square tiles arranged in columns
-  - Masonry: waterfall layout where each tile is placed in the shortest
-    column based on its intrinsic aspect ratio
-
-Also contains the Y-index binary search used for O(log n) viewport
-intersection queries.
-"""
+"""Grid and masonry layout engines plus the Y-index for viewport queries."""
 
 from __future__ import annotations
 
@@ -17,11 +7,7 @@ from PyQt6.QtCore import QRect
 
 
 class GalleryLayout:
-    """Stateless layout calculator — call ``apply()`` with post data.
-
-    Does NOT own any widgets or state.  Given a list of aspect ratios
-    and layout parameters, fills a pre-allocated list of QRect objects.
-    """
+    """Stateless layout calculator; fills a pre-allocated list of QRect."""
 
     @staticmethod
     def apply_grid(
@@ -84,7 +70,6 @@ class GalleryLayout:
 
         return max(col_bottoms) + spacing
 
-    # ── Y-index — O(log n) viewport intersection ────────────────
 
     @staticmethod
     def rebuild_y_index(rects: list[QRect]) -> list[tuple[int, int]]:

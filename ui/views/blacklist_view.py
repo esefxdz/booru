@@ -7,7 +7,6 @@ from PyQt6.QtCore import Qt, QTimer
 
 from core import settings
 from ui.widgets.text_bar import BooruTextBar
-# TagChip is shared between BlacklistView and FavoritesView — defined once in tag_chip.py
 from ui.widgets.tag_chip import TagChip
 
 
@@ -15,18 +14,8 @@ from core.validation import sanitize_tag_list
 import ui.animations as anims
 from ui.style import colors
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: BlacklistView                                               ║
-# ║  Full-page widget for managing the global tag blacklist.           ║
-# ║  Tags here are automatically prepended as negatives (-tag) on      ║
-# ║  every search so the user never sees them in results.              ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class BlacklistView(QWidget):
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — sets up the full-page layout with a left tag-chip  │
-    # │  column and a right info/help column, then tracks bulk mode     │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
@@ -36,24 +25,19 @@ class BlacklistView(QWidget):
         self._main_layout.setContentsMargins(40, 40, 40, 40)
         self._main_layout.setSpacing(24)
 
-        # Build the title bar with the Save button
         self._build_header()
 
-        # Split: list of tags vs right-side edit/add panel
         content_h = QHBoxLayout()
         content_h.setContentsMargins(0, 0, 0, 0)
         content_h.setSpacing(32)
         self._main_layout.addLayout(content_h, 1)
 
-        # ── Left Column: all the interactive tag controls ──────────────
         left_v = QVBoxLayout()
         left_v.setSpacing(20)
         content_h.addLayout(left_v, 2)
 
-        # Quick-add row: text input + "Add Tag" button side by side
         add_h = QHBoxLayout()
         self.add_input = BooruTextBar(self, placeholder="Add tags to blacklist...")
-        # Submitting via Enter key also adds the tag
         self.add_input.submitted.connect(self._on_add_tag)
         add_h.addWidget(self.add_input)
 
@@ -74,7 +58,6 @@ class BlacklistView(QWidget):
         add_h.addWidget(self.add_btn)
         left_v.addLayout(add_h)
 
-        # Scrollable chip area — one TagChip per blacklisted tag
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet(f"""
@@ -93,7 +76,6 @@ class BlacklistView(QWidget):
         self.scroll.setWidget(self.chip_container)
         left_v.addWidget(self.scroll, 1)
 
-        # Toggle link that switches between visual chip mode and raw text mode
         self.bulk_toggle = QPushButton("📝 Switch to Raw Text Mode")
         self.bulk_toggle.setStyleSheet(f"""
             color: {colors.LINK}; 
@@ -106,7 +88,6 @@ class BlacklistView(QWidget):
         self.bulk_toggle.clicked.connect(self._toggle_bulk_mode)
         left_v.addWidget(self.bulk_toggle)
 
-        # Raw text editor — hidden initially, shown when bulk mode is active
         self.raw_edit = QTextEdit()
         self.raw_edit.hide()
         self.raw_edit.setStyleSheet(f"""
@@ -120,7 +101,6 @@ class BlacklistView(QWidget):
         """)
         left_v.addWidget(self.raw_edit, 1)
 
-        # ── Right Column: static info card + clear button ──────────────
         right_v = QVBoxLayout()
         right_v.setSpacing(20)
         content_h.addLayout(right_v, 1)
@@ -149,7 +129,6 @@ class BlacklistView(QWidget):
         info_v.addStretch()
         right_v.addWidget(info_card)
 
-        # Danger-style clear button with red border that fills red on hover
         clear_btn = QPushButton("🗑 Clear All Tags")
         clear_btn.setFixedHeight(40)
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -167,19 +146,13 @@ class BlacklistView(QWidget):
         right_v.addWidget(clear_btn)
         right_v.addStretch()
 
-        # Status label that shows "✔ Changes saved" briefly after saving
         self.status_lbl = QLabel("")
         self.status_lbl.setStyleSheet(f"color: {colors.SUCCESS}; font-weight: bold;")
         self._main_layout.addWidget(self.status_lbl)
-        self._main_layout.addWidget(QLabel(""))  # visual spacer at the bottom
+        self._main_layout.addWidget(QLabel(""))
 
-        # Tracks whether we are in raw text edit mode (True) or chip mode (False)
         self._bulk_mode = False
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _build_header  — creates the big title + subtitle row and the  │
-    # │  "Save Changes" button in the top-right corner                  │
-    # └──────────────────────────────────────────────────────────────────┘
     def _build_header(self):
         header = QHBoxLayout()
         title_v = QVBoxLayout()
@@ -205,53 +178,31 @@ class BlacklistView(QWidget):
         header.addWidget(self.save_btn)
         self._main_layout.addLayout(header)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  load_blacklist  — called every time this page becomes visible  │
-    # │  Reads from settings and repopulates chips + raw text editor    │
-    # └──────────────────────────────────────────────────────────────────┘
     def load_blacklist(self):
-        # Hide any stale "saved" message from a previous visit
         self.status_lbl.hide()
         tags = settings.manager.blacklist.split()
         self._clear_chips()
         for tag in tags:
             self._add_chip_ui(tag)
-        # Keep the raw editor in sync too (even if it's currently hidden)
         self.raw_edit.setPlainText(settings.manager.blacklist)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _clear_chips  — removes every TagChip widget from the scroll   │
-    # │  area and schedules them for deletion to free memory            │
-    # └──────────────────────────────────────────────────────────────────┘
     def _clear_chips(self):
         while self.chip_layout.count():
             item = self.chip_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _add_chip_ui  — creates one TagChip and connects its removed   │
-    # │  signal so clicking ✕ automatically updates the list            │
-    # └──────────────────────────────────────────────────────────────────┘
     def _add_chip_ui(self, tag):
         chip = TagChip(tag)
         chip.removed.connect(self._on_tag_removed)
         self.chip_layout.addWidget(chip)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  mousePressEvent  — clicking blank space clears the text input  │
-    # │  focus, making the UX feel more native                          │
-    # └──────────────────────────────────────────────────────────────────┘
     def mousePressEvent(self, event):
         focused = self.focusWidget()
         if isinstance(focused, QLineEdit):
             focused.clearFocus()
         super().mousePressEvent(event)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_add_tag  — adds one or more space-separated tags from the  │
-    # │  input box, skipping duplicates, then auto-saves                │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_add_tag(self, text=None):
         # `text` is a str when the text bar emits `submitted`, but a bool
         # when the Add button is clicked.  Only use `text` if it's a string.
@@ -267,7 +218,7 @@ class BlacklistView(QWidget):
 
         added = False
         for t in new_tags:
-            if t not in current_tags:  # Skip tags already in the list
+            if t not in current_tags:
                 self._add_chip_ui(t)
                 current_tags.append(t)
                 added = True
@@ -276,18 +227,9 @@ class BlacklistView(QWidget):
             self.add_input.clear()
             self.save_blacklist()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  add_tag  — public helper so other parts of the app can push a  │
-    # │  tag into the blacklist programmatically                        │
-    # └──────────────────────────────────────────────────────────────────┘
     def add_tag(self, tag: str):
         self._on_add_tag(tag)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_tag_removed  — walks the chip list to find the matching    │
-    # │  TagChip by its tag string, removes it, then saves after a     │
-    # │  short delay (so the UI deletes the widget before saving)       │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_tag_removed(self, tag):
         for i in range(self.chip_layout.count()):
             w = self.chip_layout.itemAt(i).widget()
@@ -297,11 +239,6 @@ class BlacklistView(QWidget):
         # 100ms delay lets Qt process the deleteLater before we read the list again
         QTimer.singleShot(100, self.save_blacklist)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _get_current_tags  — returns the current tag list depending on │
-    # │  which mode is active: reads chips in visual mode, or splits    │
-    # │  the raw text box in bulk mode                                  │
-    # └──────────────────────────────────────────────────────────────────┘
     def _get_current_tags(self):
         if self._bulk_mode:
             return self.raw_edit.toPlainText().split()
@@ -312,21 +249,14 @@ class BlacklistView(QWidget):
                 tags.append(w.tag)
         return tags
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _toggle_bulk_mode  — switches between visual chip mode and raw │
-    # │  text mode. On entering bulk mode, serialises chips into the    │
-    # │  text box. On leaving, parses the text back into chips.         │
-    # └──────────────────────────────────────────────────────────────────┘
     def _toggle_bulk_mode(self):
         self._bulk_mode = not self._bulk_mode
         if self._bulk_mode:
-            # Dump all chip tags into the raw text box as a space-separated string
             self.raw_edit.setPlainText(" ".join(self._get_current_tags()))
             self.scroll.hide()
             self.raw_edit.show()
             self.bulk_toggle.setText("✨ Switch to Visual Mode")
         else:
-            # Parse the edited text back into individual chip widgets
             tags = self.raw_edit.toPlainText().split()
             self._clear_chips()
             for t in tags:
@@ -335,21 +265,11 @@ class BlacklistView(QWidget):
             self.scroll.show()
             self.bulk_toggle.setText("📝 Switch to Raw Text Mode")
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _clear_all  — wipes chips and the raw editor, then saves the  │
-    # │  now-empty blacklist to disk immediately                        │
-    # └──────────────────────────────────────────────────────────────────┘
     def _clear_all(self):
         self._clear_chips()
         self.raw_edit.clear()
         self.save_blacklist()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  save_blacklist  — collects the current tag list, optionally    │
-    # │  sanitises it via the validation module, writes it to           │
-    # │  settings.manager.blacklist, persists to disk, and shows a brief       │
-    # │  green "✔ Changes saved" confirmation label                     │
-    # └──────────────────────────────────────────────────────────────────┘
     def save_blacklist(self):
         tags = self._get_current_tags()
         cleaned = " ".join(tags)
@@ -363,10 +283,8 @@ class BlacklistView(QWidget):
         settings.manager.blacklist = cleaned
         settings.manager.save()
 
-        # Show the confirmation label and animate the save button
         self.status_lbl.setText("✔ Changes saved")
         self.status_lbl.show()
         anims.animate_button_press(self.save_btn)
 
-        # Auto-hide the confirmation after 2 seconds so it doesn't linger
         QTimer.singleShot(2000, self.status_lbl.hide)

@@ -1,15 +1,4 @@
-"""
-ui/downloads_view.py — Full-page Downloads tab.
-
-Shows four sections:
-  • Queued    — downloads waiting to start
-  • Active    — currently downloading, with live progress bars
-  • Completed — finished successfully (filename, path, timestamp)
-  • Failed    — errored out (filename, reason, retry button)
-
-Driven by BooruDownloader signals: download_started, download_progress,
-download_finished, download_failed.
-"""
+"""Full-page Downloads tab (queued, active, completed, failed)."""
 from __future__ import annotations
 import logging
 import time
@@ -53,7 +42,6 @@ class _DownloadEntry(QFrame):
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(6)
 
-        # ── Top row: filename + status ────────────────────────────
         top = QHBoxLayout()
         top.setSpacing(8)
         self.name_lbl = QLabel(filename)
@@ -70,7 +58,6 @@ class _DownloadEntry(QFrame):
         top.addWidget(self.status_lbl)
         layout.addLayout(top)
 
-        # ── Progress bar ──────────────────────────────────────────
         self.progress = QProgressBar()
         self.progress.setFixedHeight(5)
         self.progress.setTextVisible(False)
@@ -87,7 +74,6 @@ class _DownloadEntry(QFrame):
         """)
         layout.addWidget(self.progress)
 
-        # ── Bottom row: path / error / elapsed ────────────────────
         self.info_lbl = QLabel("")
         self.info_lbl.setStyleSheet(
             f"color: {colors.TEXT_MUTED}; font-size: 11px; border: none;"
@@ -97,7 +83,6 @@ class _DownloadEntry(QFrame):
         self.info_lbl.mousePressEvent = self._open_folder
         layout.addWidget(self.info_lbl)
 
-        # ── Retry button (hidden by default) ──────────────────────
         self.retry_btn = QPushButton("Retry")
         self.retry_btn.setFixedHeight(28)
         self.retry_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -192,24 +177,19 @@ class DownloadsView(QWidget):
         self.main_app = main_app
         self.setStyleSheet(f"background-color: {colors.MAIN_BG}; color: {colors.TEXT_SECONDARY};")
 
-        # ── Data stores ───────────────────────────────────────────
-        self._entries: dict[str, _DownloadEntry] = {}  # task_id → widget
+        self._entries: dict[str, _DownloadEntry] = {}
         self._active_ids: set[str] = set()
         self._completed_ids: list[str] = []
 
         self._build_ui()
         self._wire_signals()
 
-    # ─────────────────────────────────────────────────────────────
-    # UI construction
-    # ─────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(40, 40, 40, 40)
         root.setSpacing(20)
 
-        # ── Header ────────────────────────────────────────────────
         header_row = QHBoxLayout()
 
         title = QLabel("Downloads")
@@ -219,7 +199,6 @@ class DownloadsView(QWidget):
         header_row.addWidget(title)
         header_row.addStretch()
 
-        # Live badge: "2 active · 14 completed"
         self._badge_lbl = QLabel("idle")
         self._badge_lbl.setStyleSheet(
             f"color: {colors.TEXT_MUTED}; font-size: 13px; padding: 4px 12px;"
@@ -232,7 +211,6 @@ class DownloadsView(QWidget):
         subtitle.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_MUTED};")
         root.addWidget(subtitle)
 
-        # ── Scroll area for all sections ──────────────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -244,21 +222,18 @@ class DownloadsView(QWidget):
         self._sections_layout.setContentsMargins(0, 0, 0, 0)
         self._sections_layout.setSpacing(20)
 
-        # ── Active section ────────────────────────────────────────
         self._active_section = self._make_section("⬇ Active")
         self._sections_layout.addWidget(self._active_section["card"])
         self._active_empty = QLabel("No active downloads.")
         self._active_empty.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 13px;")
         self._active_section["layout"].addWidget(self._active_empty)
 
-        # ── Queued section ────────────────────────────────────────
         self._queued_section = self._make_section("⏳ Queued")
         self._sections_layout.addWidget(self._queued_section["card"])
         self._queued_empty = QLabel("No downloads queued.")
         self._queued_empty.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-size: 13px;")
         self._queued_section["layout"].addWidget(self._queued_empty)
 
-        # ── Completed section ─────────────────────────────────────
         self._completed_section = self._make_section("✔ Completed")
         self._sections_layout.addWidget(self._completed_section["card"])
 
@@ -285,7 +260,6 @@ class DownloadsView(QWidget):
         completed_ctrl.addWidget(clear_btn)
         self._completed_section["layout"].addLayout(completed_ctrl)
 
-        # ── Failed section ────────────────────────────────────────
         self._failed_section = self._make_section("✕ Failed")
         self._sections_layout.addWidget(self._failed_section["card"])
         self._failed_empty = QLabel("No failed downloads.")
@@ -324,9 +298,6 @@ class DownloadsView(QWidget):
         dl.download_finished.connect(self._on_download_finished)
         dl.download_failed.connect(self._on_download_failed)
 
-    # ─────────────────────────────────────────────────────────────
-    # Badge update
-    # ─────────────────────────────────────────────────────────────
 
     def _update_badge(self):
         active = len(self._active_ids)
@@ -346,12 +317,8 @@ class DownloadsView(QWidget):
 
         self._badge_lbl.setText(" · ".join(parts) if parts else "idle")
 
-    # ─────────────────────────────────────────────────────────────
-    # Helper: move entry between section layouts
-    # ─────────────────────────────────────────────────────────────
 
     def _move_to_section(self, entry: _DownloadEntry, section: dict):
-        # Remove from any existing layout ownership
         if entry.parent() is not None:
             old_layout = None
             for sec in [self._queued_section, self._active_section,
@@ -365,9 +332,6 @@ class DownloadsView(QWidget):
         section["layout"].addWidget(entry)
         entry.show()
 
-    # ─────────────────────────────────────────────────────────────
-    # Signal handlers
-    # ─────────────────────────────────────────────────────────────
 
     @pyqtSlot(str, str)
     def _on_download_started(self, task_id: str, filename: str):
@@ -404,7 +368,6 @@ class DownloadsView(QWidget):
         self._move_to_section(entry, self._completed_section)
         self._completed_empty.hide()
 
-        # Hide active empty label only if there really are no active entries
         if not self._active_ids:
             self._active_empty.show()
 
@@ -428,14 +391,9 @@ class DownloadsView(QWidget):
 
         self._update_badge()
 
-    # ─────────────────────────────────────────────────────────────
-    # Clear completed
-    # ─────────────────────────────────────────────────────────────
 
     def clear_completed(self):
-        """Remove all completed entries from the view."""
         layout = self._completed_section["layout"]
-        # Iterate in reverse to safely remove widgets
         for i in range(layout.count() - 1, -1, -1):
             item = layout.itemAt(i)
             if item is None:

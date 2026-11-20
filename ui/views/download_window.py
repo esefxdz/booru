@@ -10,7 +10,6 @@ class DownloadProgressBar(QWidget):
         self._main_layout.setContentsMargins(5, 5, 5, 5)
         self._main_layout.setSpacing(2)
 
-        # Top row: Filename and percentage text
         self.top_row = QHBoxLayout()
         self.filename_lbl = QLabel(filename)
         self.filename_lbl.setStyleSheet(f"color: {colors.TEXT_PRIMARY}; font-size: 11px; font-weight: bold;")
@@ -22,7 +21,6 @@ class DownloadProgressBar(QWidget):
         self.top_row.addWidget(self.pct_lbl)
         self._main_layout.addLayout(self.top_row)
 
-        # Progress bar
         self.progress = QProgressBar()
         self.progress.setFixedHeight(8)
         self.progress.setTextVisible(False)
@@ -50,12 +48,10 @@ class DownloadProgressBar(QWidget):
 
 
 class DownloadWindow(QWidget):
-    """
-    Floating or docked widget displaying active download progress bars.
-    """
+    """Floating widget showing active download progress bars."""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.bars = {}  # Map of task_id -> DownloadProgressBar
+        self.bars = {}
 
         self.setStyleSheet(f"""
             DownloadWindow {{
@@ -93,16 +89,11 @@ class DownloadWindow(QWidget):
             self._main_layout.removeWidget(bar)
             bar.deleteLater()
 
-        # Hide if no downloads are active
         if not self.bars:
             self.hide()
 
     def reposition(self, sidebar_width: int = 0, server_bar_width: int = 0) -> None:
-        """Anchor to the bottom-left of the main content area.
-
-        Call from the parent's ``resizeEvent`` or whenever the sidebars
-        are shown/hidden.
-        """
+        """Anchor to the bottom-left of the main content area."""
         parent = self.parent()
         if parent is None:
             return

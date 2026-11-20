@@ -1,23 +1,10 @@
-"""
-ui/viewer/details.py — Collapsible metadata sections.
-
-Provides reusable components for displaying post metadata like ID,
-resolution, and rating in a clean, space-saving format.
-"""
+"""Collapsible post metadata sections."""
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel
 from ui.style import colors
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: CollapsibleWidget                                           ║
-# ║  A generic widget with a clickable header button that shows or     ║
-# ║  hides its content area.                                            ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class CollapsibleWidget(QWidget):
     
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — creates the toggle button and content container.   │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, title, parent=None):
         super().__init__(parent)
         self._main_layout = QVBoxLayout(self)
@@ -53,11 +40,6 @@ class CollapsibleWidget(QWidget):
         self.content_area.setVisible(self.is_expanded)
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: FileDetails                                                 ║
-# ║  Subclasses CollapsibleWidget to show a simple text block with     ║
-# ║  post ID, rating, resolution, and format.                           ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class FileDetails(CollapsibleWidget):
     
     def __init__(self, sidebar):
@@ -69,9 +51,6 @@ class FileDetails(CollapsibleWidget):
         self.info_lbl.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 13px; line-height: 1.5;")
         self.content_layout.addWidget(self.info_lbl)
         
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  load_post  — extracts basic metadata from the post dict.       │
-    # └──────────────────────────────────────────────────────────────────┘
     def load_post(self, post):
         pid = post.get('id', 'Unknown')
         rating = post.get('rating', 'Unknown')
@@ -89,10 +68,6 @@ class FileDetails(CollapsibleWidget):
         
         self._update_text()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  update_resolution  — called by media_viewer when the actual    │
-    # │  image is loaded and we know its true dimensions.               │
-    # └──────────────────────────────────────────────────────────────────┘
     def update_resolution(self, w, h):
         self.w = w
         self.h = h

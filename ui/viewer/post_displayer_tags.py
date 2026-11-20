@@ -1,14 +1,4 @@
-"""
-ui/viewer/post_displayer_tags.py — Categorized clickable tags view.
-
-Two-pass categorization strategy:
-  1. Adapter-native (instant for Danbooru / e621 — tags come pre-sorted)
-  2. TagCategorizer fallback (Danbooru API + heuristics + local cache) for
-     every other booru whose API returns a flat tag string.
-
-Each tag renders as a compact colored chip that adds the tag to the search
-bar on click.
-"""
+"""Categorized, clickable tag chips for the viewer sidebar."""
 from __future__ import annotations
 import logging
 
@@ -21,15 +11,12 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from ui.viewer.details import CollapsibleWidget
 from ui.style import colors
 
-# ---------------------------------------------------------------------------
-# Per-category accent colors (matches the tag_chip palette)
-# ---------------------------------------------------------------------------
 _CAT_COLORS = {
-    "artist":    colors.TAG_ARTIST,     # red
-    "character": colors.TAG_CHARACTER,  # green
-    "copyright": colors.TAG_COPYRIGHT,  # pink/magenta
-    "meta":      colors.TAG_METADATA,   # yellow
-    "general":   colors.TAG_GENERAL,    # white/grey
+    "artist":    colors.TAG_ARTIST,
+    "character": colors.TAG_CHARACTER,
+    "copyright": colors.TAG_COPYRIGHT,
+    "meta":      colors.TAG_METADATA,
+    "general":   colors.TAG_GENERAL,
 }
 
 _CAT_ORDER = ["artist", "character", "copyright", "meta", "general"]
@@ -43,9 +30,6 @@ _CAT_LABELS = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Background worker — runs TagCategorizer off the UI thread
-# ---------------------------------------------------------------------------
 class _CategorizerThread(QThread):
     """Runs TagCategorizer.categorize_tags() in a background thread."""
     done = pyqtSignal(dict, int)   # (categories, generation)
@@ -66,9 +50,6 @@ class _CategorizerThread(QThread):
             self.failed.emit(self._generation)
 
 
-# ---------------------------------------------------------------------------
-# Chip widget — a single clickable tag pill
-# ---------------------------------------------------------------------------
 class _TagChip(QPushButton):
     def __init__(self, tag: str, color: str, on_click):
         super().__init__(tag)
@@ -112,9 +93,6 @@ class _TagChip(QPushButton):
         super().leaveEvent(e)
 
 
-# ---------------------------------------------------------------------------
-# Wrapping flow layout for chips
-# ---------------------------------------------------------------------------
 class _FlowLayout(QWidget):
     """Renders tag chips in a wrapping left-to-right flow."""
 
@@ -142,14 +120,8 @@ class _FlowLayout(QWidget):
             self._outer.addLayout(row)
 
 
-# ---------------------------------------------------------------------------
-# Main widget
-# ---------------------------------------------------------------------------
 class ClickableTagsDropdown(CollapsibleWidget):
-    """Modern tag panel with an accordion toggle.
-    
-    Uses a bounded scroll area so it always fits on the UI.
-    """
+    """Tag panel with an accordion toggle and a bounded scroll area."""
 
     def __init__(self, sidebar):
         super().__init__("Tags")
@@ -158,7 +130,6 @@ class ClickableTagsDropdown(CollapsibleWidget):
         self._current_post: dict | None = None
         self._all_cats: dict = {}
 
-        # Scroll Area for Tags
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
@@ -172,16 +143,12 @@ class ClickableTagsDropdown(CollapsibleWidget):
         self.scroll.setWidget(self.content_widget)
         self.content_layout.addWidget(self.scroll)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def load_post(self, post: dict):
         self._current_post = post
         self._generation = getattr(self, '_generation', 0) + 1
         gen = self._generation
 
-        # Stop any running worker
         if self._worker and self._worker.isRunning():
             self._worker.quit()
             self._worker.wait(500)
@@ -209,16 +176,12 @@ class ClickableTagsDropdown(CollapsibleWidget):
             self._show_empty()
             return
 
-        # Show a loading state while the categorizer works
         self._show_loading()
         self._worker = _CategorizerThread(tags, gen)
         self._worker.done.connect(self._on_cats_ready)
         self._worker.failed.connect(self._on_cats_failed)
         self._worker.start()
 
-    # ------------------------------------------------------------------
-    # Slots
-    # ------------------------------------------------------------------
 
     def _on_cats_ready(self, cats: dict, generation: int):
         if generation != getattr(self, '_generation', 0):
@@ -228,7 +191,6 @@ class ClickableTagsDropdown(CollapsibleWidget):
     def _on_cats_failed(self, generation: int):
         if generation != getattr(self, '_generation', 0):
             return
-        # Fallback: show all tags as general
         try:
             from adapters import get_adapter
             import boorus
@@ -243,7 +205,6 @@ class ClickableTagsDropdown(CollapsibleWidget):
             self._apply_cats({"general": []})
 
     def _apply_cats(self, cats: dict):
-        # If categorizer returned nothing useful, flatten into general
         if not any(cats.values()):
             all_tags = []
             for v in cats.values():
@@ -260,9 +221,6 @@ class ClickableTagsDropdown(CollapsibleWidget):
         if not has_meaningful and (cats.get("general") or cats.get("meta")):
             self._show_unlock_hint()
 
-    # ------------------------------------------------------------------
-    # Rendering
-    # ------------------------------------------------------------------
 
     def _render_all_tags(self):
         self._clear()
@@ -275,7 +233,6 @@ class ClickableTagsDropdown(CollapsibleWidget):
             if cat not in _CAT_ORDER and tag_list:
                 self._add_section(cat, tag_list)
                 
-        # Add stretch at bottom to prevent weird spacing
         self.tags_layout.addStretch()
 
     def _clear(self):
@@ -352,7 +309,6 @@ class ClickableTagsDropdown(CollapsibleWidget):
         color = _CAT_COLORS.get(cat, colors.TEXT_MUTED)
         label_text = _CAT_LABELS.get(cat, cat.capitalize())
 
-        # ── Category header ──────────────────────────────────────────
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(6)
@@ -375,11 +331,9 @@ class ClickableTagsDropdown(CollapsibleWidget):
         sec_v.setSpacing(6)
         sec_v.addLayout(header)
 
-        # ── Chips ────────────────────────────────────────────────────
         flow = _FlowLayout(tags, color, self._tag_clicked)
         sec_v.addWidget(flow)
 
-        # ── Divider ──────────────────────────────────────────────────
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
         divider.setStyleSheet(f"background-color: {colors.BORDER}; margin-top: 4px; margin-bottom: 4px;")
@@ -388,9 +342,6 @@ class ClickableTagsDropdown(CollapsibleWidget):
 
         self.tags_layout.addWidget(section)
 
-    # ------------------------------------------------------------------
-    # Tag click
-    # ------------------------------------------------------------------
 
     def _tag_clicked(self, tag: str):
         try:

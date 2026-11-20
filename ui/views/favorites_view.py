@@ -7,7 +7,6 @@ from PyQt6.QtCore import Qt, QTimer
 
 from core import settings
 from ui.widgets.text_bar import BooruTextBar
-# TagChip is shared with BlacklistView — defined once in tag_chip.py
 from ui.widgets.tag_chip import TagChip
 
 
@@ -15,18 +14,8 @@ from core.validation import sanitize_tag_list
 import ui.animations as anims
 from ui.style import colors
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: FavoritesView                                               ║
-# ║  Full-page widget for managing the global favorites tag list.      ║
-# ║  Tags here are automatically appended to EVERY search query so the ║
-# ║  user always sees content that matches at least one of them.       ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class FavoritesView(QWidget):
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — identical layout to BlacklistView, two-column:     │
-    # │  left side has tag controls, right side has info + clear button │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, main_app):
         super().__init__()
         self.main_app = main_app
@@ -42,15 +31,12 @@ class FavoritesView(QWidget):
         content_h.setSpacing(32)
         self._main_layout.addLayout(content_h, 1)
 
-        # ── Left Column: all interactive tag controls ──────────────────
         left_v = QVBoxLayout()
         left_v.setSpacing(20)
         content_h.addLayout(left_v, 2)
 
-        # Quick-add row: a text input bar next to an "Add Tag" button
         add_h = QHBoxLayout()
         self.add_input = BooruTextBar(self, placeholder="Add tags to favorites...")
-        # Pressing Enter in the input bar also triggers the add
         self.add_input.submitted.connect(self._on_add_tag)
         add_h.addWidget(self.add_input)
 
@@ -71,7 +57,6 @@ class FavoritesView(QWidget):
         add_h.addWidget(self.add_btn)
         left_v.addLayout(add_h)
 
-        # Scrollable chip area — one TagChip widget per saved favorite tag
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet(f"""
@@ -90,7 +75,6 @@ class FavoritesView(QWidget):
         self.scroll.setWidget(self.chip_container)
         left_v.addWidget(self.scroll, 1)
 
-        # Toggle link for switching between visual chips and raw text editing
         self.bulk_toggle = QPushButton("📝 Switch to Raw Text Mode")
         self.bulk_toggle.setStyleSheet(f"""
             color: {colors.LINK}; 
@@ -103,7 +87,6 @@ class FavoritesView(QWidget):
         self.bulk_toggle.clicked.connect(self._toggle_bulk_mode)
         left_v.addWidget(self.bulk_toggle)
 
-        # The raw text editor is hidden by default; it appears in bulk edit mode
         self.raw_edit = QTextEdit()
         self.raw_edit.hide()
         self.raw_edit.setStyleSheet(f"""
@@ -117,7 +100,6 @@ class FavoritesView(QWidget):
         """)
         left_v.addWidget(self.raw_edit, 1)
 
-        # ── Right Column: static info card + clear-all button ──────────
         right_v = QVBoxLayout()
         right_v.setSpacing(20)
         content_h.addLayout(right_v, 1)
@@ -146,7 +128,6 @@ class FavoritesView(QWidget):
         info_v.addStretch()
         right_v.addWidget(info_card)
 
-        # Danger-style clear button — outline red, fills red on hover
         clear_btn = QPushButton("🗑 Clear All Tags")
         clear_btn.setFixedHeight(40)
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -164,18 +145,13 @@ class FavoritesView(QWidget):
         right_v.addWidget(clear_btn)
         right_v.addStretch()
 
-        # Confirmation label that briefly appears after saving
         self.status_lbl = QLabel("")
         self.status_lbl.setStyleSheet(f"color: {colors.SUCCESS}; font-weight: bold;")
         self._main_layout.addWidget(self.status_lbl)
-        self._main_layout.addWidget(QLabel(""))  # Visual bottom spacer
+        self._main_layout.addWidget(QLabel(""))
 
-        # Tracks whether the user is currently in raw text bulk edit mode
         self._bulk_mode = False
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _build_header  — large title + subtitle + the Save button      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _build_header(self):
         header = QHBoxLayout()
         title_v = QVBoxLayout()
@@ -201,52 +177,31 @@ class FavoritesView(QWidget):
         header.addWidget(self.save_btn)
         self._main_layout.addLayout(header)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  load_favorites  — called every time this page becomes visible  │
-    # │  Reads settings.manager.favorites and repopulates the chip list         │
-    # └──────────────────────────────────────────────────────────────────┘
     def load_favorites(self):
-        self.status_lbl.hide()  # Clear any stale confirmation from last visit
+        self.status_lbl.hide()
         tags = settings.manager.favorites.split()
         self._clear_chips()
         for tag in tags:
             self._add_chip_ui(tag)
-        # Mirror into the raw text editor even while it's hidden
         self.raw_edit.setPlainText(settings.manager.favorites)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _clear_chips  — destroys all TagChip widgets and frees memory  │
-    # └──────────────────────────────────────────────────────────────────┘
     def _clear_chips(self):
         while self.chip_layout.count():
             item = self.chip_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _add_chip_ui  — instantiates one TagChip and wires up its     │
-    # │  removed signal to auto-update the list when ✕ is clicked      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _add_chip_ui(self, tag):
         chip = TagChip(tag)
         chip.removed.connect(self._on_tag_removed)
         self.chip_layout.addWidget(chip)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  mousePressEvent  — clicking blank space blurs any focused      │
-    # │  text field for a more native-feeling interaction               │
-    # └──────────────────────────────────────────────────────────────────┘
     def mousePressEvent(self, event):
         focused = self.focusWidget()
         if isinstance(focused, QLineEdit):
             focused.clearFocus()
         super().mousePressEvent(event)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_add_tag  — parses space-separated tags from the input,     │
-    # │  deduplicates against the existing list, adds new ones as chips │
-    # │  and immediately saves to disk                                  │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_add_tag(self, text=None):
         if not isinstance(text, str):
             text = self.add_input.text().strip()
@@ -260,7 +215,7 @@ class FavoritesView(QWidget):
 
         added = False
         for t in new_tags:
-            if t not in current_tags:  # Skip duplicates silently
+            if t not in current_tags:
                 self._add_chip_ui(t)
                 current_tags.append(t)
                 added = True
@@ -269,18 +224,9 @@ class FavoritesView(QWidget):
             self.add_input.clear()
             self.save_favorites()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  add_tag  — public API so the rest of the app can programmatic- │
-    # │  ally add a tag to the favorites list (e.g. from the tag panel) │
-    # └──────────────────────────────────────────────────────────────────┘
     def add_tag(self, tag: str):
         self._on_add_tag(tag)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _on_tag_removed  — scans the chip list for the matching tag,   │
-    # │  deletes that chip widget, then saves after a short delay so    │
-    # │  Qt has time to process the widget deletion before we read list │
-    # └──────────────────────────────────────────────────────────────────┘
     def _on_tag_removed(self, tag):
         for i in range(self.chip_layout.count()):
             w = self.chip_layout.itemAt(i).widget()
@@ -289,11 +235,6 @@ class FavoritesView(QWidget):
                 break
         QTimer.singleShot(100, self.save_favorites)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _get_current_tags  — returns the tag list from wherever it     │
-    # │  currently lives: the raw text box in bulk mode, or the chip   │
-    # │  widgets in visual mode                                         │
-    # └──────────────────────────────────────────────────────────────────┘
     def _get_current_tags(self):
         if self._bulk_mode:
             return self.raw_edit.toPlainText().split()
@@ -304,20 +245,14 @@ class FavoritesView(QWidget):
                 tags.append(w.tag)
         return tags
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _toggle_bulk_mode  — flips between visual chip mode and raw   │
-    # │  text edit mode, syncing the data both ways on each toggle      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _toggle_bulk_mode(self):
         self._bulk_mode = not self._bulk_mode
         if self._bulk_mode:
-            # Serialise all chips to a single space-separated string for editing
             self.raw_edit.setPlainText(" ".join(self._get_current_tags()))
             self.scroll.hide()
             self.raw_edit.show()
             self.bulk_toggle.setText("✨ Switch to Visual Mode")
         else:
-            # Parse the edited text back into individual chip widgets
             tags = self.raw_edit.toPlainText().split()
             self._clear_chips()
             for t in tags:
@@ -326,20 +261,11 @@ class FavoritesView(QWidget):
             self.scroll.show()
             self.bulk_toggle.setText("📝 Switch to Raw Text Mode")
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _clear_all  — empties both the chips and the raw editor then   │
-    # │  saves the empty list to disk                                   │
-    # └──────────────────────────────────────────────────────────────────┘
     def _clear_all(self):
         self._clear_chips()
         self.raw_edit.clear()
         self.save_favorites()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  save_favorites  — collects the current tags, sanitises them,   │
-    # │  writes to settings.manager.favorites and persists to disk, then shows  │
-    # │  a brief green confirmation label that fades after 2 seconds    │
-    # └──────────────────────────────────────────────────────────────────┘
     def save_favorites(self):
         tags = self._get_current_tags()
         cleaned = " ".join(tags)
@@ -358,5 +284,4 @@ class FavoritesView(QWidget):
 
         anims.animate_button_press(self.save_btn)
 
-        # Auto-hide the confirmation after 2 seconds
         QTimer.singleShot(2000, self.status_lbl.hide)

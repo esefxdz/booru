@@ -1,14 +1,4 @@
-"""
-ui/viewer/media_viewer.py — Central media display widget.
-
-Handles three content types:
-  • Images  — fetched in a background thread, displayed via QPixmap
-  • GIFs    — downloaded to temp_media/, played via QMovie
-  • Videos  — delegated to VideoPlayerWidget (video_player.py)
-
-All network fetches use the CF-bypass session so Cloudflare-protected
-sites work without extra configuration.
-"""
+"""Central media display widget for images, GIFs and video."""
 import logging
 import threading
 from pathlib import Path
@@ -22,13 +12,7 @@ import boorus
 from ui.style import colors
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE HELPERS
-# ══════════════════════════════════════════════════════════════════════
-
-# User-Agent is intentionally omitted here — it is injected dynamically
-# inside _fetch_bytes() via settings.manager.get_user_agent() so it always
-# reflects the user's current setting without needing a restart.
+# User-Agent is injected per request in _fetch_bytes(), not set here.
 _IMAGE_HEADERS = {
     "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
@@ -82,22 +66,11 @@ def _fetch_to_file(url, dest, booru_name=None):
         raise RuntimeError(f"HTTP {resp.status_code} from {url}")
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: MediaViewer                                                 ║
-# ║  Owns a QLabel (for images/GIFs) and lazily creates a              ║
-# ║  VideoPlayerWidget when a video post is opened. Signals are used   ║
-# ║  to marshal data from background download threads back to the      ║
-# ║  GUI thread safely.                                                ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class MediaViewer(QWidget):
     image_ready = pyqtSignal(bytes)
     gif_ready = pyqtSignal(str)
     video_ready = pyqtSignal(str)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — a single QLabel used for images/GIFs/loading text │
-    # │  plus a slot for the video widget that gets created on demand.  │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, overlay):
         super().__init__()
         self.overlay = overlay
@@ -118,13 +91,11 @@ class MediaViewer(QWidget):
         )
         self._main_layout.addWidget(self.lbl)
 
-        # ── Loading animation ────────────────────────────────────
         self._loading_dots = 0
         self._loading_timer = QTimer(self)
         self._loading_timer.timeout.connect(self._pulse_loading)
         self._loading_timer.setInterval(400)
 
-        # Cross-thread signals → GUI-thread slots
         self.image_ready.connect(self._show_image)
         self.gif_ready.connect(self._show_gif)
         self.video_ready.connect(self._show_video)
@@ -144,20 +115,11 @@ class MediaViewer(QWidget):
         self._loading_timer.stop()
         self.lbl.setText("")
 
-    # ══════════════════════════════════════════════════════════════════
-    #  PUBLIC API
-    # ══════════════════════════════════════════════════════════════════
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  load_post  — determines media type from the file extension    │
-    # │  and dispatches to the appropriate loader.                     │
-    # └──────────────────────────────────────────────────────────────────┘
     def load_post(self, post, original=False):
         self.stop()
 
-        # Cancel any in-flight background threads from the previous post.
-        # Without this, rapidly clicking through posts could cause a
-        # late-arriving signal to overwrite the current post's media.
+        # Cancel in-flight threads so a late signal cannot overwrite the current post.
         self._cancel_event.set()
         self._cancel_event = threading.Event()
         cancel = self._cancel_event
@@ -191,30 +153,18 @@ class MediaViewer(QWidget):
             self._media_type = "image"
             self._load_image(optimized=not original)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  stop  — tears down whichever media is currently playing so    │
-    # │  the next post (or overlay close) starts clean.                │
-    # └──────────────────────────────────────────────────────────────────┘
     def stop(self):
-        # Stop video player if it exists
         if self._video_widget is not None:
             self._video_widget.stop()
             self._video_widget.hide()
 
-        # Stop GIF animation if running
         if hasattr(self, "_movie") and self._movie is not None:
             self._movie.stop()
             self.lbl.setMovie(None)
             self._movie = None
 
-        # Clear any leftover pixmap
         self.lbl.setPixmap(QPixmap())
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _cleanup_previous_temp  — deletes the last-viewed GIF/video    │
-    # │  temp file so the temp_media folder doesn't grow unbounded      │
-    # │  during long browsing sessions (Part 6 §3).                     │
-    # └──────────────────────────────────────────────────────────────────┘
     def _cleanup_previous_temp(self):
         if hasattr(self, "_current_temp_path"):
             try:
@@ -222,9 +172,6 @@ class MediaViewer(QWidget):
             except Exception:
                 pass
 
-    # ══════════════════════════════════════════════════════════════════
-    #  PRIVATE — adapter / URL helpers
-    # ══════════════════════════════════════════════════════════════════
 
     def _get_site_data(self):
         post_booru = self.post.get("_booru", settings.manager.active_booru)
@@ -244,14 +191,7 @@ class MediaViewer(QWidget):
             url = adapter.get_file_url(self.post) or self.file_url
         return _resolve_url(url, site_data)
 
-    # ══════════════════════════════════════════════════════════════════
-    #  PRIVATE — image loading
-    # ══════════════════════════════════════════════════════════════════
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _load_image  — fetches image bytes in a background thread,    │
-    # │  then emits image_ready to hand the data back to the GUI.      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _load_image(self, optimized):
         url = self._get_image_url(optimized)
         cancel = self._cancel_event
@@ -266,10 +206,6 @@ class MediaViewer(QWidget):
 
         threading.Thread(target=work, daemon=True).start()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _show_image  — slot (GUI thread): decodes the raw bytes into  │
-    # │  a QPixmap, scales it to fit, and updates the sidebar details. │
-    # └──────────────────────────────────────────────────────────────────┘
     def _show_image(self, data):
         self._stop_loading()
         pix = QPixmap()
@@ -286,10 +222,6 @@ class MediaViewer(QWidget):
             self.overlay.sidebar.set_original_loaded(self._viewing_original)
             self.overlay.sidebar.details.update_resolution(pix.width(), pix.height())
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _fit_pixmap  — scales the stored pixmap to the current widget │
-    # │  size while keeping aspect ratio. Called on every resizeEvent. │
-    # └──────────────────────────────────────────────────────────────────┘
     def _fit_pixmap(self):
         if not hasattr(self, "_pixmap"):
             return
@@ -301,21 +233,13 @@ class MediaViewer(QWidget):
         )
         self.lbl.setPixmap(scaled)
 
-    # ══════════════════════════════════════════════════════════════════
-    #  PRIVATE — GIF loading
-    # ══════════════════════════════════════════════════════════════════
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _load_gif  — downloads the GIF to a temp file (QMovie needs  │
-    # │  a file path, not raw bytes) then signals the GUI thread.      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _load_gif(self, optimized):
         site_data = self._get_site_data()
         url = _resolve_url(self.file_url, site_data)
         self._gif_optimized = optimized
         cancel = self._cancel_event
 
-        # ── Clean up previous temp file to prevent unbounded disk growth ──
         self._cleanup_previous_temp()
 
         def work():
@@ -336,11 +260,6 @@ class MediaViewer(QWidget):
 
         threading.Thread(target=work, daemon=True).start()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _show_gif  — slot (GUI thread): plays the downloaded GIF via  │
-    # │  QMovie, optionally scaling it down if viewing the optimised   │
-    # │  sample version.                                               │
-    # └──────────────────────────────────────────────────────────────────┘
     def _show_gif(self, path):
         self._stop_loading()
         self._movie = QMovie(path)
@@ -356,20 +275,12 @@ class MediaViewer(QWidget):
         if hasattr(self.overlay, "sidebar"):
             self.overlay.sidebar.set_original_loaded(self._viewing_original)
 
-    # ══════════════════════════════════════════════════════════════════
-    #  PRIVATE — video loading
-    # ══════════════════════════════════════════════════════════════════
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _load_video  — fetches video into temp_media to avoid FFmpeg    │
-    # │  errors and CF blocks when streaming directly via Qt/libVLC.     │
-    # └──────────────────────────────────────────────────────────────────┘
     def _load_video(self):
         site_data = self._get_site_data()
         url = _resolve_url(self.file_url, site_data)
         cancel = self._cancel_event
 
-        # ── Clean up previous temp file to prevent unbounded disk growth ──
         self._cleanup_previous_temp()
 
         def work():
@@ -393,10 +304,6 @@ class MediaViewer(QWidget):
 
         threading.Thread(target=work, daemon=True).start()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _show_video  — lazily creates a VideoPlayerWidget on first      │
-    # │  use, then loads the local file path into it.                    │
-    # └──────────────────────────────────────────────────────────────────┘
     def _show_video(self, path):
         self.lbl.hide()
 
@@ -415,13 +322,6 @@ class MediaViewer(QWidget):
         if hasattr(self.overlay, "sidebar"):
             self.overlay.sidebar.set_original_loaded(True)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  resizeEvent  — re-scales image to fit when the overlay is     │
-    # │  resized (e.g. window maximise/restore).                       │
-    # └──────────────────────────────────────────────────────────────────┘
-    # ══════════════════════════════════════════════════════════════════
-    #  Zoom & Pan
-    # ══════════════════════════════════════════════════════════════════
 
     def wheelEvent(self, event):
         if self._media_type != "image" or not hasattr(self, "_pixmap"):
@@ -474,7 +374,6 @@ class MediaViewer(QWidget):
             target_size * zoom, Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
-        # Create a larger pixmap to pan within, then crop to the widget
         result = QPixmap(target_size)
         result.fill(Qt.GlobalColor.transparent)
         painter = QPainter(result)

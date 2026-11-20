@@ -6,9 +6,6 @@ from PyQt6.QtSvg import QSvgRenderer
 from ui.style import colors
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                          CLASS: Icons                               ║
-# ╚══════════════════════════════════════════════════════════════════════╗
 class Icons:
     SVG_DEFAULTS = 'xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
 
@@ -30,9 +27,6 @@ class Icons:
         "close":     f'<svg {SVG_DEFAULTS}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
     }
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  get                                                             │
-    # └──────────────────────────────────────────────────────────────────┘
     @classmethod
     def get(cls, name: str, color: str = None, size: int = 24) -> QIcon:
         """Renders a named SVG icon in the given color and size."""
@@ -42,7 +36,6 @@ class Icons:
         if not svg_str:
             return QIcon()
         
-        # Replace stroke color
         svg_str = svg_str.replace('stroke="currentColor"', f'stroke="{color}"')
         
         svg_bytes = svg_str.encode('utf-8')

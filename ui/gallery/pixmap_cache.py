@@ -1,9 +1,4 @@
-"""
-ui/pixmap_cache.py — Byte-bounded LRU cache for decoded QPixmap thumbnails.
-
-Extracted from ui/gallery.py so the cache is self-contained and testable
-independently of the gallery widget.
-"""
+"""Byte-bounded LRU cache for decoded thumbnails."""
 
 from __future__ import annotations
 
@@ -16,12 +11,7 @@ DEFAULT_MAX_BYTES = 48 * 1024 * 1024
 
 
 class PixmapLRU:
-    """Byte-bounded LRU cache for decoded QPixmap thumbnails.
-
-    Tracks actual pixel memory (width × height × 4 bytes/pixel) and
-    evicts the least-recently-used entries when the total exceeds
-    *max_bytes*.
-    """
+    """Byte-bounded LRU cache; evicts least-recently-used entries past *max_bytes*."""
 
     __slots__ = ("_data", "_sizes", "_total", "_max")
 
@@ -36,7 +26,6 @@ class PixmapLRU:
         """Estimate memory footprint (ARGB32 = 4 bytes per pixel)."""
         return max(pm.width() * pm.height() * 4, 1)
 
-    # ── Public API ──────────────────────────────────────────────
 
     def get(self, key) -> QPixmap | None:
         key = str(key)

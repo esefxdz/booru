@@ -1,9 +1,4 @@
-"""
-ui/viewer/sidebar.py — Overlay info sidebar.
-
-A dark right-aligned panel that contains all the metadata panels
-(Details, Actions, Tags).
-"""
+"""Right-hand info sidebar of the media overlay."""
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
 
 from ui.viewer.details import FileDetails
@@ -12,15 +7,8 @@ from ui.viewer.post_displayer_tags import ClickableTagsDropdown
 from ui.style import colors
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: OverlaySidebar                                              ║
-# ║  Houses all metadata and controls alongside the media viewer.       ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class OverlaySidebar(QWidget):
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — constructs the scrolling panel and its children.   │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, overlay):
         super().__init__()
         self.overlay = overlay
@@ -33,7 +21,6 @@ class OverlaySidebar(QWidget):
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_layout.setSpacing(0)
         
-        # Scroll area for everything in sidebar
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
@@ -43,7 +30,6 @@ class OverlaySidebar(QWidget):
         self.content_layout.setContentsMargins(15, 15, 15, 15)
         self.content_layout.setSpacing(20)
         
-        # ── Sidebar Components ──
         self.details = FileDetails(self)
         self.content_layout.addWidget(self.details)
         
@@ -51,14 +37,11 @@ class OverlaySidebar(QWidget):
         self.content_layout.addWidget(self.actions)
         
         self.tags = ClickableTagsDropdown(self)
-        self.content_layout.addWidget(self.tags, 1)  # tags fill remaining space
+        self.content_layout.addWidget(self.tags, 1)
         
         self.scroll.setWidget(self.content_widget)
         self._main_layout.addWidget(self.scroll)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  load_post  — delegates post data to all child sections.        │
-    # └──────────────────────────────────────────────────────────────────┘
     def load_post(self, post):
         self.post = post
         self.details.load_post(post)

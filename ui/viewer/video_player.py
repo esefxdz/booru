@@ -1,13 +1,4 @@
-"""
-ui/viewer/video_player.py — Multi-engine video player widget.
-
-Supports three backends (selectable in Global Settings → Video Engine):
-  1. "qt"  — Built-in QtMultimedia (default, no extra deps)
-  2. "vlc" — python-vlc / libVLC (optional, better codec support)
-  3. "mpv" — python-mpv / libmpv  (optional, best quality)
-
-Falls back to Qt if the selected engine fails to load.
-"""
+"""Video player widget with Qt, VLC and MPV backends (falls back to Qt)."""
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider,
@@ -21,13 +12,6 @@ from ui.style import colors
 from core import settings
 
 
-#creator note, i know this is some yandere dev bullshit here, but im gonna keep all these ifs cause and keep this boilerplated code cuz im lazy
-
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: ClickableSlider                                             ║
-# ║  A QSlider that jumps directly to the clicked position instead of  ║
-# ║  stepping page-by-page (Qt's default behaviour). Used for seek.    ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class ClickableSlider(QSlider):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -42,11 +26,6 @@ class ClickableSlider(QSlider):
         super().mousePressEvent(event)
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: ClickableVideoWidget                                        ║
-# ║  Thin QVideoWidget wrapper that emits `clicked` on left-click so   ║
-# ║  we can wire click-to-pause on the video surface itself.           ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class ClickableVideoWidget(QVideoWidget):
     clicked = pyqtSignal()
 
@@ -56,56 +35,34 @@ class ClickableVideoWidget(QVideoWidget):
         super().mousePressEvent(event)
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: VideoPlayerWidget                                           ║
-# ║  Self-contained video player with seek bar, volume slider, time    ║
-# ║  label, and auto-loop.  Engine selection is read from settings at  ║
-# ║  construction time; if the chosen engine (VLC/MPV) isn't installed ║
-# ║  it silently falls back to the Qt built-in.                        ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class VideoPlayerWidget(QWidget):
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — builds the widget tree: video container (top,     │
-    # │  stretches) + controls bar (bottom, fixed height).  The actual │
-    # │  playback engine is initialised in _init_engine().             │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, parent=None):
         super().__init__(parent)
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # ── Engine type from user settings ──
         self.engine_type = settings.manager.video_engine
 
-        # ── Video render surface container ──
         self.video_container = QWidget()
         self._video_layout = QVBoxLayout(self.video_container)
         self._video_layout.setContentsMargins(0, 0, 0, 0)
         self._main_layout.addWidget(self.video_container, 1)
 
-        # ── Transport controls (seek, time, volume) ──
         self._init_controls()
 
-        # ── Playback state ──
         self.player = None
         self.vlc_instance = None
         self.mpv_player = None
         self._timer = None
 
-        # ── Boot the selected engine ──
         self._init_engine()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _init_controls  — seek bar, time label, volume icon + slider. │
-    # │  Volume is persisted to QSettings so it survives app restarts. │
-    # └──────────────────────────────────────────────────────────────────┘
     def _init_controls(self):
         self.controls_widget = QWidget()
         controls_layout = QVBoxLayout(self.controls_widget)
         controls_layout.setContentsMargins(10, 10, 10, 10)
 
-        # ── Seek slider ──
         self.seek_slider = ClickableSlider(Qt.Orientation.Horizontal)
         self.seek_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.seek_slider.setStyleSheet(f"""
@@ -123,7 +80,6 @@ class VideoPlayerWidget(QWidget):
         self.seek_slider.sliderMoved.connect(self._set_position)
         controls_layout.addWidget(self.seek_slider)
 
-        # ── Bottom bar: time label + volume ──
         bottom_bar = QHBoxLayout()
 
         self.time_lbl = QLabel("0:00 / 0:00")
@@ -149,13 +105,7 @@ class VideoPlayerWidget(QWidget):
 
         self._main_layout.addWidget(self.controls_widget)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _init_engine  — tries the user's preferred engine; falls back │
-    # │  to Qt if VLC or MPV can't be imported.  Each engine gets a    │
-    # │  QTimer that ticks every 100 ms to update the seek bar.        │
-    # └──────────────────────────────────────────────────────────────────┘
     def _init_engine(self):
-        # ── Try VLC ──
         if self.engine_type == "vlc":
             try:
                 import vlc
@@ -182,7 +132,6 @@ class VideoPlayerWidget(QWidget):
                 logging.info(f"[video_player] VLC unavailable, falling back to Qt: {e}")
                 self.engine_type = "qt"
 
-        # ── Try MPV ──
         if self.engine_type == "mpv":
             try:
                 import mpv
@@ -203,7 +152,6 @@ class VideoPlayerWidget(QWidget):
                 logging.info(f"[video_player] MPV unavailable, falling back to Qt: {e}")
                 self.engine_type = "qt"
 
-        # ── Default: QtMultimedia ──
         self._qt_video_widget = ClickableVideoWidget()
         self._qt_video_widget.clicked.connect(self.toggle_play)
         self._video_layout.addWidget(self._qt_video_widget)
@@ -222,13 +170,7 @@ class VideoPlayerWidget(QWidget):
         self.player.durationChanged.connect(self._qt_duration_changed)
         self.player.mediaStatusChanged.connect(self._qt_status_changed)
 
-    # ══════════════════════════════════════════════════════════════════
-    #  PUBLIC API
-    # ══════════════════════════════════════════════════════════════════
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  load_url  — starts playback of the given URL (http or local). │
-    # └──────────────────────────────────────────────────────────────────┘
     def load_url(self, url):
         if self.engine_type == "vlc":
             media = self.vlc_instance.media_new(url)
@@ -249,9 +191,6 @@ class VideoPlayerWidget(QWidget):
                 self.player.setSource(QUrl(url))
             self.player.play()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  toggle_play  — pause/resume.  Used by click-on-video.         │
-    # └──────────────────────────────────────────────────────────────────┘
     def toggle_play(self):
         if self.engine_type == "vlc":
             if self.player:
@@ -265,10 +204,6 @@ class VideoPlayerWidget(QWidget):
             else:
                 self.player.play()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  stop  — fully stops playback and frees resources so the next  │
-    # │  post can start clean. Also stops the UI-update timer.         │
-    # └──────────────────────────────────────────────────────────────────┘
     def stop(self):
         if self._timer:
             self._timer.stop()
@@ -286,13 +221,7 @@ class VideoPlayerWidget(QWidget):
                 self.player.stop()
                 self.player.setSource(QUrl(""))
 
-    # ══════════════════════════════════════════════════════════════════
-    #  PRIVATE — volume, seek, time formatting
-    # ══════════════════════════════════════════════════════════════════
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _set_volume  — applies volume and persists to QSettings.      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _set_volume(self, v):
         from core.settings import BASE_DIR
         qs = QSettings(str(BASE_DIR / "ui.viewer.ini"), QSettings.Format.IniFormat)
@@ -307,9 +236,6 @@ class VideoPlayerWidget(QWidget):
             if hasattr(self, "_audio"):
                 self._audio.setVolume(v / 100.0)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _set_position  — called when the user drags the seek bar.     │
-    # └──────────────────────────────────────────────────────────────────┘
     def _set_position(self, pos):
         if self.engine_type == "vlc":
             if self.player:
@@ -321,9 +247,6 @@ class VideoPlayerWidget(QWidget):
             if self.player:
                 self.player.setPosition(pos)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _format_time  — converts milliseconds to "M:SS" or "H:MM:SS" │
-    # └──────────────────────────────────────────────────────────────────┘
     @staticmethod
     def _format_time(ms):
         s = max(0, round(ms / 1000))
@@ -331,14 +254,7 @@ class VideoPlayerWidget(QWidget):
         h, m = divmod(m, 60)
         return f"{h}:{m:02}:{s:02}" if h > 0 else f"{m}:{s:02}"
 
-    # ══════════════════════════════════════════════════════════════════
-    #  PRIVATE — per-engine UI updaters (called by QTimer)
-    # ══════════════════════════════════════════════════════════════════
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _update_vlc_ui  — polls VLC for position/duration and auto-   │
-    # │  loops when playback reaches the end (state == 6 == Ended).    │
-    # └──────────────────────────────────────────────────────────────────┘
     def _update_vlc_ui(self):
         if not self.player:
             return
@@ -359,10 +275,6 @@ class VideoPlayerWidget(QWidget):
         except Exception:
             pass
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _update_mpv_ui  — polls MPV properties (seconds-based, not    │
-    # │  ms) and auto-loops on EOF.                                    │
-    # └──────────────────────────────────────────────────────────────────┘
     def _update_mpv_ui(self):
         if not self.mpv_player:
             return
@@ -384,9 +296,6 @@ class VideoPlayerWidget(QWidget):
         except Exception:
             pass
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  Qt-engine callbacks — connected to QMediaPlayer signals.      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _qt_position_changed(self, pos):
         if not self.seek_slider.isSliderDown():
             self.seek_slider.setValue(pos)

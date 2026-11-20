@@ -1,8 +1,4 @@
-"""
-ui/cheat_sheet.py
-
-Full-page widget for the Cheat Sheet (Keyboard Shortcuts & Booru Search syntax).
-"""
+"""Full-page cheat sheet of keyboard shortcuts and search syntax."""
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel,
     QFrame, QScrollArea, QGridLayout, QSizePolicy
@@ -20,7 +16,6 @@ class CheatSheetView(QWidget):
         root.setContentsMargins(40, 40, 40, 40)
         root.setSpacing(24)
 
-        # Header
         header = QVBoxLayout()
         title = QLabel("Cheat Sheet")
         title.setStyleSheet(f"font-size: 32px; font-weight: 800; color: {colors.TEXT_PRIMARY};")
@@ -31,7 +26,6 @@ class CheatSheetView(QWidget):
         header.addWidget(subtitle)
         root.addLayout(header)
 
-        # Scroll Area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -43,10 +37,8 @@ class CheatSheetView(QWidget):
         content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(32)
 
-        # Shortcuts Section
         content.addWidget(self._build_shortcuts_section())
 
-        # Search Syntax Section
         content.addWidget(self._build_search_syntax_section())
 
         content.addStretch()

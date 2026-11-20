@@ -1,13 +1,4 @@
-###########################################################################################
-#ui/viewer/legacy_window.py — Legacy standalone media viewer (subprocess mode).
-#
-#Used only when `use_legacy_viewer` is enabled in Global Settings.
-#Spawns a separate PyQt6 window as a subprocess, keeping it fully decoupled
-#from the main app process.
-#
-#Entry point (called by UniversalViewer):
-#    python -m ui.viewer.legacy_window <url> <post_json>
-############################################################################################
+# Standalone legacy media viewer window.
 
 import logging
 import sys
@@ -27,10 +18,6 @@ import httpx
 from core import settings
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE HELPERS  (standalone — no dependency on the rest of the app)
-# ══════════════════════════════════════════════════════════════════════
-
 _IMAGE_HEADERS_BASE = {
     "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
@@ -48,10 +35,8 @@ def _resolve_url(url):
 
 
 def _fetch_bytes(url, booru_name=None):
-    """Download URL bytes with optional CF bypass cookie injection.
+    """Download *url* bytes, injecting stored CF cookies and User-Agent when *booru_name* is given.
 
-    When *booru_name* is provided, stored cf_clearance cookies and the
-    bypass User-Agent are injected so Cloudflare-protected CDNs work.
     Raises on HTTP failure.
     """
     headers = dict(_IMAGE_HEADERS_BASE)
@@ -87,9 +72,6 @@ def _fetch_bytes(url, booru_name=None):
     return res.content
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: ClickableVideoWidget                                         ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class ClickableVideoWidget(QVideoWidget):
     clicked = pyqtSignal()
 
@@ -99,9 +81,6 @@ class ClickableVideoWidget(QVideoWidget):
         super().mousePressEvent(event)
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: ClickableSlider                                              ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class ClickableSlider(QSlider):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -117,13 +96,10 @@ class ClickableSlider(QSlider):
 
 
 class _WorkerBridge(QObject):
-    """Carries one worker result to the GUI thread.
+    """Delivers one worker result to the GUI thread.
 
-    It is owned by the QApplication, not the window, so it is still alive
-    when a worker finishes after the window was closed and deleted
-    (WA_DeleteOnClose); Qt has then already dropped the connection to the
-    dead window's slot and the emit does nothing. The worker frees it with
-    deleteLater(), which runs on the GUI thread.
+    Owned by the QApplication so it survives a window deleted mid-work
+    (WA_DeleteOnClose); the emit is then dropped. Freed with deleteLater().
     """
     done = pyqtSignal(object)
 
@@ -131,10 +107,9 @@ class _WorkerBridge(QObject):
 def _run_in_worker(job, slot):
     """Run job() on a daemon thread and deliver a non-None result to slot.
 
-    slot must be a Python method of the window: PyQt queues the call to the
-    GUI thread and drops it if the window is destroyed first. (A built-in
-    slot such as ``button.setText`` is NOT dropped and crashes natively on
-    a deleted button.) job must not touch widgets.
+    slot must be a Python method of the window: a built-in slot such as
+    ``button.setText`` is not dropped and crashes on a deleted button.
+    job must not touch widgets.
     """
     bridge = _WorkerBridge(QCoreApplication.instance())
     bridge.done.connect(slot)
@@ -150,10 +125,6 @@ def _run_in_worker(job, slot):
     threading.Thread(target=run, daemon=True).start()
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: DisplayerWindow                                              ║
-# ║  Legacy standalone window launched as a subprocess.                 ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class DisplayerWindow(QMainWindow):
     def __init__(self, post, file_url):
         super().__init__()
@@ -165,7 +136,6 @@ class DisplayerWindow(QMainWindow):
         self.setWindowTitle(f"Media Viewer - Post #{self.post_id}")
         self.setStyleSheet("background-color: #121212; color: #ffffff;")
 
-        # Restore saved window geometry, default 700x550
         from core.settings import BASE_DIR
         self._qs = QSettings(str(BASE_DIR / "ui.viewer.ini"), QSettings.Format.IniFormat)
         w = self._qs.value("window_w", 700, type=int)
@@ -178,7 +148,6 @@ class DisplayerWindow(QMainWindow):
         self.main_layout = QVBoxLayout(central)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # --- Top Bar ---
         topbar = QWidget()
         topbar.setFixedHeight(50)
         topbar.setStyleSheet("background-color: #1e1e1e; border-bottom: 1px solid #333;")
@@ -208,7 +177,6 @@ class DisplayerWindow(QMainWindow):
 
         self.main_layout.addWidget(topbar)
 
-        # --- Content Area ---
         self.content = QWidget()
         self.content_layout = QVBoxLayout(self.content)
         self.content_layout.setContentsMargins(0, 0, 0, 0)
@@ -229,7 +197,6 @@ class DisplayerWindow(QMainWindow):
             self._media_type = "image"
             self._load_image(optimized=True)
 
-    # ----- Styles -----
 
     def _btn_css(self, gold=False):
         c = "gold" if gold else "white"
@@ -241,7 +208,6 @@ class DisplayerWindow(QMainWindow):
         QPushButton:hover {{ background-color: #444; }}
         """
 
-    # ----- Bookmarks -----
 
     def _check_bookmarked(self):
         from storage.bookmarks_db import db
@@ -258,14 +224,12 @@ class DisplayerWindow(QMainWindow):
         self.bm_btn.setText("Bookmarked" if self._is_bookmarked else "Bookmark")
         self.bm_btn.setStyleSheet(self._btn_css(gold=self._is_bookmarked))
 
-    # ----- Download -----
 
     def _download(self):
         self.dl_btn.setText("Downloading...")
         post_id, file_url = self.post_id, self.file_url
         def work():
             try:
-                # Use the global settings manager instead of a hardcoded "files" folder
                 dl_dir = settings.manager.get_download_dir()
                 dl_dir.mkdir(parents=True, exist_ok=True)
                 from core.validation import safe_media_path
@@ -281,7 +245,6 @@ class DisplayerWindow(QMainWindow):
     def _set_download_status(self, text):
         self.dl_btn.setText(text)
 
-    # ----- View Original -----
 
     def _load_original(self):
         if self._viewing_original:
@@ -294,7 +257,6 @@ class DisplayerWindow(QMainWindow):
         elif self._media_type == "gif":
             self._load_gif(optimized=False)
 
-    # ----- Image Loading -----
 
     def _get_image_url(self, optimized):
         if optimized:
@@ -336,7 +298,6 @@ class DisplayerWindow(QMainWindow):
         )
         self.lbl.setPixmap(scaled)
 
-    # ----- GIF Loading -----
 
     def _load_gif(self, optimized):
         url = _resolve_url(self.file_url)
@@ -370,7 +331,6 @@ class DisplayerWindow(QMainWindow):
         if self._viewing_original:
             self.orig_btn.setText("Original")
 
-    # ----- Video -----
 
     def _init_video(self):
         self.lbl.hide()
@@ -481,7 +441,6 @@ class DisplayerWindow(QMainWindow):
             self.player.setPosition(0)
             self.player.play()
 
-    # ----- Resize / Close -----
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -498,18 +457,11 @@ class DisplayerWindow(QMainWindow):
         super().closeEvent(event)
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: UniversalViewer                                              ║
-# ║  Thin launcher used by main_window.py when legacy mode is enabled.          ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class UniversalViewer:
     """Opens the legacy displayer as a separate window in this process.
 
-    It used to spawn ``sys.executable -m ui.viewer.legacy_window``. In the
-    one-file exe ``sys.executable`` is BooruBrowser.exe, which ignores -m, so
-    every click opened a second full copy of the app (writing the same data
-    files); the post JSON on the command line could also exceed Windows'
-    32 KB limit.
+    Not a subprocess: in the one-file exe sys.executable ignores -m and
+    would launch a second copy of the app.
     """
     _open_windows: list = []     # keep references so windows aren't GC'd
 
@@ -525,9 +477,6 @@ class UniversalViewer:
         window.show()
 
 
-# ══════════════════════════════════════════════════════════════════════
-#  MODULE ENTRYPOINT  (python -m ui.viewer.legacy_window <url> <json>)
-# ══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         logging.error("Usage: python -m ui.viewer.legacy_window <url> <post_json>")

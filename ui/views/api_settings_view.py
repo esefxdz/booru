@@ -1,16 +1,4 @@
-"""
-ui/modals/api_settings_dialog.py
-
-Per-booru credentials and authentication settings dialog.
-Opened by right-clicking any booru icon in the server bar.
-
-Tabs:
-  🔑 API Key      — username / API key or szurubooru token
-  🍪 Session Login — cookie-based login (only for supported engines)
-  🛡 Cloudflare   — in-app browser for cf_clearance bypass
-  ⚙ Engine       — switch the API engine for this booru
-  ℹ Info/Delete  — read-only info + delete button
-"""
+"""Per-booru credentials and authentication settings dialog."""
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QMessageBox, QTabWidget,
@@ -29,19 +17,8 @@ import boorus
 
 from ui.style import colors
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: APISettingsView                                             ║
-# ║  The full settings panel for a single booru. Dynamically builds    ║
-# ║  the credential fields based on which engine the booru uses, and   ║
-# ║  only shows the Session Login tab for engines that support it.     ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class APISettingsView(QWidget):
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — looks up the booru's api_type from the registry,   │
-    # │  checks session-login support, then builds a QTabWidget with    │
-    # │  one tab per settings category (credential fields vary by type) │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, parent_gui, name: str):
         super().__init__(parent_gui)
         self.parent_gui = parent_gui
@@ -58,7 +35,6 @@ class APISettingsView(QWidget):
         layout.setContentsMargins(40, 40, 40, 40)
         layout.setSpacing(10)
 
-        # Bold booru name + dimmed engine type in the title row
         title = QLabel(f"<b>{name}</b>  <span style='color:{colors.TEXT_MUTED}'>({self.api_type})</span>")
         title.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_SECONDARY};")
         layout.addWidget(title)
@@ -76,7 +52,6 @@ class APISettingsView(QWidget):
         """)
         layout.addWidget(tabs)
 
-        # ── Tab 1: API Key ─────────────────────────────────────────────
         # Credential fields vary by engine: szurubooru uses token auth,
         # others use a username + API key pair
         api_tab = QWidget()
@@ -97,7 +72,6 @@ class APISettingsView(QWidget):
             api_form.addRow("API Key:", self._api_key)
 
         if self.api_type == "szurubooru":
-            # Szurubooru uses a different token-based auth model
             auth = settings.manager.auth_tokens.get(name, {})
             self._szuru_user = QLineEdit(auth.get("user", ""))
             self._szuru_user.setPlaceholderText("Your Szurubooru username")
@@ -114,7 +88,6 @@ class APISettingsView(QWidget):
         api_form.addRow(save_api_btn)
         tabs.addTab(api_tab, "🔑 API Key")
 
-        # ── Tab 2: Session Login (only for PHP/cookie-based engines) ───
         if self._supports_session:
             sess_tab = QWidget()
             sess_layout = QVBoxLayout(sess_tab)
@@ -138,7 +111,6 @@ class APISettingsView(QWidget):
             sess_form.addRow("Password:", self._sess_pass)
             sess_layout.addLayout(sess_form)
 
-            # Live status label updated by login thread callbacks
             self._sess_status = QLabel("")
             self._sess_status.setWordWrap(True)
             sess_layout.addWidget(self._sess_status)
@@ -155,7 +127,6 @@ class APISettingsView(QWidget):
             browser_btn.clicked.connect(self._do_browser_login)
             sess_layout.addWidget(browser_btn)
 
-            # Show active session info if one is already stored
             cur_session = settings.manager.session_keys.get(name, {})
             if cur_session:
                 active_lbl = QLabel(f"✓ Active session: {list(cur_session.keys())}")
@@ -171,7 +142,6 @@ class APISettingsView(QWidget):
             sess_layout.addStretch()
             tabs.addTab(sess_tab, "🍪 Session Login")
 
-        # ── Tab 3: Cloudflare Bypass ───────────────────────────────────
         cf_tab = QWidget()
         cf_layout = QVBoxLayout(cf_tab)
         cf_layout.setSpacing(8)
@@ -187,7 +157,6 @@ class APISettingsView(QWidget):
 
         bypass = settings.manager.bypass_data.get(name, {})
         if bypass.get("cf_clearance") or bypass.get("cookies"):
-            # A valid bypass is already stored — show details
             cookies = bypass.get("cookies", {})
             cookie_names = list(cookies.keys()) if cookies else ["cf_clearance"]
             cf_active = QLabel(f"✓ Cloudflare bypass is active  ({', '.join(cookie_names)})")
@@ -212,7 +181,6 @@ class APISettingsView(QWidget):
         cf_layout.addStretch()
         tabs.addTab(cf_tab, "🛡 Cloudflare")
 
-        # ── Tab 4: Engine Type ─────────────────────────────────────────
         engine_tab = QWidget()
         engine_layout = QVBoxLayout(engine_tab)
         engine_layout.setSpacing(12)
@@ -246,7 +214,6 @@ class APISettingsView(QWidget):
         engine_layout.addStretch()
         tabs.addTab(engine_tab, "⚙ Engine")
 
-        # ── Tab 5: Info / Delete ───────────────────────────────────────
         info_tab = QWidget()
         info_layout = QVBoxLayout(info_tab)
         info_layout.setSpacing(8)
@@ -275,20 +242,10 @@ class APISettingsView(QWidget):
         close_btn.clicked.connect(self.parent_gui.show_gallery)
         layout.addWidget(close_btn)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  showEvent  — plays a slide-up entrance animation each time the │
-    # │  view is shown                                                  │
-    # └──────────────────────────────────────────────────────────────────┘
     def showEvent(self, event):
         super().showEvent(event)
         anims.animate_slide_up_fade(self, duration=300, offset=15)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _save_api  — reads credential fields (which differ per engine) │
-    # │  sanitises them via the validation module, and stores them      │
-    # │  in settings. Szurubooru writes to AUTH_TOKENS; all others use  │
-    # │  set_credential (DPAPI-encrypted credentials.bin).             │
-    # └──────────────────────────────────────────────────────────────────┘
     def _save_api(self):
         if self.api_type == "szurubooru":
             user  = self._szuru_user.text().strip()
@@ -313,26 +270,18 @@ class APISettingsView(QWidget):
         settings.manager.save()
         QMessageBox.information(self, "Saved", "Credentials saved successfully.")
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _save_engine  — changes the api_type both in the in-memory    │
-    # │  registry and in custom_boorus.json so it survives restart.     │
-    # │  Reads the file line-by-line and rewrites only the API_TYPE     │
-    # │  line to avoid stomping on custom edits to other fields.        │
-    # └──────────────────────────────────────────────────────────────────┘
     def _save_engine(self):
         new_engine = self.engine_types[self._engine_combo.currentIndex()]
         if new_engine == self.api_type:
             QMessageBox.information(self, "No Change", "Engine is already set to this type.")
             return
 
-        # Update in-memory registry…
         if self.name in boorus.REGISTRY:
             boorus.REGISTRY[self.name]["api_type"] = new_engine
         else:
             QMessageBox.warning(self, "Error", "Booru not found in registry.")
             return
 
-        # …then persist it (validated) to custom_boorus.json.
         if not boorus.write_booru_file(self.name):
             QMessageBox.warning(
                 self, "Error",
@@ -351,12 +300,6 @@ class APISettingsView(QWidget):
             f"Reopen this dialog to see updated credential fields."
         )
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _do_session_login  — validates credentials, then spawns a      │
-    # │  LoginThread (inner QThread) to perform the login asynchron-    │
-    # │  ously without freezing the UI. On success the session cookie   │
-    # │  is stored in settings.manager.session_keys for this booru.            │
-    # └──────────────────────────────────────────────────────────────────┘
     def _do_session_login(self):
         username = self._sess_user.text().strip()
         password = self._sess_pass.text()   # leading/trailing spaces are valid
@@ -412,11 +355,6 @@ class APISettingsView(QWidget):
         self._login_thread.done.connect(on_done)
         self._login_thread.start()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _do_browser_login  — opens SessionLoginBrowserDialog so the    │
-    # │  user can log in manually via a real browser embed. The dialog  │
-    # │  captures the session cookie automatically and returns it.      │
-    # └──────────────────────────────────────────────────────────────────┘
     def _do_browser_login(self):
         login_url    = get_login_url(boorus.REGISTRY[self.name]["url"], self.api_type)
         cookie_names = get_session_cookie_names(self.api_type)
@@ -430,10 +368,6 @@ class APISettingsView(QWidget):
                 self._sess_status.setText(f"✓ Session captured: {list(cookies.keys())}")
                 self._sess_status.setStyleSheet(f"color: {colors.SUCCESS}; font-weight: bold;")
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _clear_session  — removes the stored session cookie, forcing   │
-    # │  the next request to go through a fresh login flow              │
-    # └──────────────────────────────────────────────────────────────────┘
     def _clear_session(self):
         settings.manager.session_keys.pop(self.name, None)
         settings.manager.save()
@@ -449,19 +383,10 @@ class APISettingsView(QWidget):
             on_success=lambda: self.parent_gui.trigger_fetch(new=True),
         )
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _clear_cf  — invalidates the in-memory bypass session and      │
-    # │  removes the stored cookies so the next request gets a fresh    │
-    # │  challenge (useful when cf_clearance expires)                   │
-    # └──────────────────────────────────────────────────────────────────┘
     def _clear_cf(self):
         invalidate_session(self.name)
         self.parent_gui.show_gallery()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _delete_booru  — delegates to the main GUI's remove_booru      │
-    # │  which handles both the registry entry and the .py file         │
-    # └──────────────────────────────────────────────────────────────────┘
     def _delete_booru(self):
         self.parent_gui.remove_booru(self.name)
         self.parent_gui.show_gallery()

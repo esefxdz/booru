@@ -1,15 +1,4 @@
-"""
-ui/tile_pool.py — Recycled widget pool for the virtualised gallery.
-
-Instead of creating one QPushButton per post (which would cause Qt
-layout thrash and unbounded RAM growth under infinite scroll), we
-maintain a fixed pool of (tile, star) button pairs.  Posts that scroll
-into view are *assigned* a free slot; posts that scroll out *release*
-their slot back to the free list.
-
-The pool starts empty, grows on demand, and never shrinks (the widgets
-are reused for the lifetime of the Gallery).
-"""
+"""Fixed-size pool of recycled (tile, star) buttons for the gallery."""
 
 from __future__ import annotations
 
@@ -22,17 +11,7 @@ import ui.animations as anims
 
 
 class TilePool:
-    """Manages a fixed-size pool of recycled (tile, star) QPushButton pairs.
-
-    Parameters
-    ----------
-    container : QWidget
-        The parent widget that owns all pool children.
-    pool_min : int
-        Minimum number of slots regardless of viewport size.
-    pool_max : int
-        Hard cap to prevent unbounded memory use.
-    """
+    """Manages the pool; *pool_min* and *pool_max* bound its size."""
 
     def __init__(
         self,
@@ -44,16 +23,13 @@ class TilePool:
         self._pool_min = pool_min
         self._pool_max = pool_max
 
-        # (tile_btn, star_btn) pairs
         self._pool: list[tuple[QPushButton, QPushButton]] = []
-        # Indices of unused slots
         self._free_slots: list[int] = []
 
         # Reverse mappings for O(1) lookup
         self._slot_to_post: dict[int, int] = {}
         self._post_to_slot: dict[int, int] = {}
 
-    # ── Read-only access for Gallery ────────────────────────────
 
     @property
     def slot_to_post(self) -> dict[int, int]:
@@ -73,7 +49,6 @@ class TilePool:
     def __getitem__(self, slot_idx: int) -> tuple[QPushButton, QPushButton]:
         return self._pool[slot_idx]
 
-    # ── Sizing ──────────────────────────────────────────────────
 
     def compute_pool_size(
         self,
@@ -111,7 +86,6 @@ class TilePool:
             self._pool.append((btn, star))
             self._free_slots.append(slot_idx)
 
-    # ── Slot lifecycle ──────────────────────────────────────────
 
     def assign(
         self,
@@ -124,14 +98,9 @@ class TilePool:
         on_clicked,
         on_star_clicked,
     ) -> None:
-        """Bind *slot_idx* to display the post at *post_idx*.
-
-        Disconnects stale signals, positions the tile, sets the icon
-        (or skeleton background), and updates mappings.
-        """
+        """Bind *slot_idx* to display the post at *post_idx*."""
         btn, star = self._pool[slot_idx]
 
-        # Disconnect previous post's signals
         try:
             btn.clicked.disconnect()
         except Exception:
@@ -141,18 +110,15 @@ class TilePool:
         except Exception:
             pass
 
-        # Position
         btn.setGeometry(rect)
         btn.setIconSize(rect.size())
         star_sz = max(24, rect.width() // 8)
         star.setFixedSize(star_sz, star_sz)
         star.move(rect.width() - star_sz - 8, 8)
 
-        # Connect new post
         btn.clicked.connect(on_clicked)
         star.clicked.connect(on_star_clicked)
 
-        # Thumbnail or skeleton
         if pixmap is not None:
             btn.setIcon(QIcon(pixmap))
             border = f"2px solid {colors.FAVORITE}" if is_bookmarked else "none"
@@ -170,7 +136,6 @@ class TilePool:
 
         btn.show()
 
-        # Update mappings
         self._slot_to_post[slot_idx] = post_idx
         self._post_to_slot[post_idx] = slot_idx
 

@@ -1,17 +1,4 @@
-"""
-ui/gallery.py — Virtualised, widget-pooled thumbnail gallery.
-
-Posts are stored as pure data dicts.  A fixed pool of recycled
-(tile, star) QPushButton pairs is maintained by ``TilePool``.
-On each scroll event only posts in the ±2 viewport buffer zone
-are assigned a slot.  Posts that leave the zone release their slot.
-
-Sub-systems extracted:
-  - Pixmap LRU cache    → ui/pixmap_cache.py
-  - Widget tile pool    → ui/tile_pool.py
-  - Layout + Y-index    → ui/gallery_layout.py
-  - Bookmark toggling   → signal emitted; handled by main_window.py
-"""
+"""Virtualised, widget-pooled thumbnail gallery."""
 
 from __future__ import annotations
 
@@ -39,16 +26,12 @@ import ui.animations as anims
 log = logging.getLogger(__name__)
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║                         CLASS: Gallery                              ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class Gallery(QWidget):
     """Scrollable, virtualised thumbnail gallery with widget-pool recycling."""
 
     load_more_requested = pyqtSignal()
     bookmark_toggled = pyqtSignal(dict, bool)  # post, is_now_bookmarked
 
-    # ── Virtualization tunables ────────────────────────────────
     _BUFFER_ZONE_PAGES = 2
     _EVICT_ZONE_PAGES = 4
     _POOL_MIN = 60
@@ -58,16 +41,13 @@ class Gallery(QWidget):
         super().__init__()
         self.main_app = main_app
 
-        # ── Layout tunables ────────────────────────────────────
         self._col_count = 4
         self._col_width = 250
         self._spacing = 16
         self._scroll_guard = False
 
-        # ── Pixmap cache ───────────────────────────────────────
         self._px_cache = PixmapLRU(PX_CACHE_DEFAULT)
 
-        # ── Post data (no widgets — pure data) ─────────────────
         self._posts: list[dict] = []
         self._post_id_set: set = set()
         self._post_id_to_idx: dict = {}
@@ -77,33 +57,24 @@ class Gallery(QWidget):
         self._post_animated: set = set()
         self._aspect_ratios: dict[int, float] = {}
 
-        # ── Y-index for O(log n) viewport queries ──────────────
         self._y_index: list[tuple[int, int]] = []
 
-        # ── Build widget tree ──────────────────────────────────
         self._build_ui()
 
-        # ── Tile pool (recycled widget pairs) ──────────────────
         self._tiles = TilePool(self.container, self._POOL_MIN, self._POOL_MAX)
 
-        # ── Scroll ─────────────────────────────────────────────
         self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
-        # ── Deferred refresh timer (coalesces rapid relayouts) ─
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(50)
         self._refresh_timer.timeout.connect(self._do_refresh)
 
-        # ── Deferred eviction timer (coalesces rapid scroll events) ─
         self._evict_timer = QTimer(self)
         self._evict_timer.setSingleShot(True)
         self._evict_timer.setInterval(200)
         self._evict_timer.timeout.connect(self._evict_offscreen_bytes)
 
-    # ══════════════════════════════════════════════════════════════
-    #  UI Construction
-    # ══════════════════════════════════════════════════════════════
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -131,17 +102,11 @@ class Gallery(QWidget):
 
         layout.addWidget(self.scroll)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Window resize — recalculate column count
-    # ══════════════════════════════════════════════════════════════
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._refresh_timer.start()  # coalesce rapid resizes into one relayout
 
-    # ══════════════════════════════════════════════════════════════
-    #  Scroll + viewport virtualization
-    # ══════════════════════════════════════════════════════════════
 
     def _on_scroll(self, value: int):
         self._update_viewport()
@@ -167,13 +132,10 @@ class Gallery(QWidget):
             self._scroll_guard = True
             self.load_more_requested.emit()
 
-    # ══════════════════════════════════════════════════════════════
-    #  Layout refresh
-    # ══════════════════════════════════════════════════════════════
 
     def refresh_layout(self):
         """Public entry point — called by settings view when layout mode changes."""
-        self._refresh_timer.start()  # coalesced relayout
+        self._refresh_timer.start()
 
     def _do_refresh(self):
         """Recalculate layout, then update which slots are visible."""
@@ -202,7 +164,6 @@ class Gallery(QWidget):
         self._empty_lbl.setVisible(len(self._posts) == 0)
         self._y_index = GalleryLayout.rebuild_y_index(self._rects)
 
-        # Grow pool if needed
         wanted = self._tiles.compute_pool_size(
             self.scroll.viewport().width(),
             self.scroll.viewport().height(),
@@ -240,13 +201,11 @@ class Gallery(QWidget):
 
         currently_mapped = set(self._tiles.post_to_slot.keys())
 
-        # Release scrolled-out posts
         for post_idx in (currently_mapped - wanted):
             slot_idx = self._tiles.post_to_slot.get(post_idx)
             if slot_idx is not None:
                 self._tiles.release(slot_idx)
 
-        # Update geometry for already-mapped posts (resize / column change)
         for post_idx in (wanted & currently_mapped):
             slot_idx = self._tiles.post_to_slot.get(post_idx)
             if slot_idx is None or post_idx >= len(self._rects):
@@ -305,9 +264,6 @@ class Gallery(QWidget):
                 del self._post_bytes[idx]
                 self._post_animated.discard(idx)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Public API
-    # ══════════════════════════════════════════════════════════════
 
     def prepare_skeletons(self, posts):
         """Register posts as pure data. No widgets are created here."""
@@ -337,7 +293,6 @@ class Gallery(QWidget):
         """Called when a thumbnail finishes downloading."""
         key = _post_key(post)
 
-        # Pre-decode and cache the pixmap
         pixmap = self._decode_pixmap(safe_bytes)
         self._px_cache.put(key, pixmap)
 
@@ -346,7 +301,6 @@ class Gallery(QWidget):
             self._post_bytes[post_idx] = safe_bytes
             slot_idx = self._tiles.post_to_slot.get(post_idx)
             if slot_idx is not None:
-                # Refresh the tile in-place
                 rect = self._rects[post_idx] if post_idx < len(self._rects) else QRect()
                 self._tiles.assign(
                     slot_idx, post_idx, rect, pixmap,
@@ -358,7 +312,6 @@ class Gallery(QWidget):
                 self._post_animated.add(post_idx)
             return
 
-        # Fallback: post wasn't pre-registered
         self.prepare_skeletons([post])
         post_idx = self._post_id_to_idx.get(key)
         if post_idx is not None:
@@ -387,13 +340,10 @@ class Gallery(QWidget):
         self.main_app.open_preview(post)
 
     def get_adjacent_post(self, post, direction: str = "next"):
-        """Return the prev/next post dict, or None if at the boundary.
+        """Return the prev/next post dict, or None at the boundary.
 
-        ``post`` is the current post dict. A bare id is still accepted, but
-        it is ambiguous when two boorus share an id: the first match wins.
-
-        Used by the overlay for prev_post / next_post navigation so
-        external code never touches ``_posts`` or ``_post_id_to_idx``.
+        ``post`` is the current post dict; a bare id is accepted but ambiguous
+        across boorus (first match wins).
         """
         if isinstance(post, dict):
             idx = self._post_id_to_idx.get(_post_key(post))
@@ -409,16 +359,9 @@ class Gallery(QWidget):
         return None
 
     def refresh_visible_stars(self):
-        """Re-render bookmark stars for all currently assigned tiles.
-
-        Used after a bookmark toggle so the star icons update without
-        a full viewport rebuild.
-        """
+        """Re-render bookmark stars for all assigned tiles."""
         self._update_viewport()
 
-    # ══════════════════════════════════════════════════════════════
-    #  Helpers
-    # ══════════════════════════════════════════════════════════════
 
     def _on_btn_clicked(self, post, btn):
         anims.animate_button_press(btn)
@@ -426,7 +369,6 @@ class Gallery(QWidget):
 
     def _on_star_clicked(self, post, star_btn):
         """Emit signal so main_window.py handles the DB write."""
-        # Toggle: figure out new state
         post_idx = self._post_id_to_idx.get(_post_key(post))
         is_now_bookmarked = not self._post_bookmarked.get(post_idx, False)
         if post_idx is not None:
@@ -441,15 +383,12 @@ class Gallery(QWidget):
             return None
         post_id = _post_key(post)
 
-        # Try L1 cache first
         cached = self._px_cache.get(post_id)
         if cached is not None:
             return cached
 
-        # Try raw bytes
         safe_bytes = self._post_bytes.get(post_idx)
         if safe_bytes is None:
-            # Try reloading from thumb_cache (L1 memory / L2 disk)
             safe_bytes = thumb_cache.get(f"{post_id[0]}:{post_id[1]}")
             if safe_bytes is not None:
                 self._post_bytes[post_idx] = safe_bytes

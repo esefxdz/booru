@@ -1,9 +1,4 @@
-"""
-ui/viewer/actions.py — Action buttons for the media overlay.
-
-Provides a row of buttons (Bookmark, Download, Share, Original) to
-interact with the currently displayed post.
-"""
+"""Action buttons (bookmark, download, share, original) for the media overlay."""
 import logging
 import threading
 
@@ -14,16 +9,8 @@ from ui.style import colors
 from core import settings
 
 
-# ╔══════════════════════════════════════════════════════════════════════╗
-# ║  CLASS: ActionButtons                                               ║
-# ║  A horizontal strip of buttons. Handles the logic for downloading  ║
-# ║  the file to the smart folders, copying its URL, or bookmarking.   ║
-# ╚══════════════════════════════════════════════════════════════════════╝
 class ActionButtons(QWidget):
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  __init__  — constructs the button row.                         │
-    # └──────────────────────────────────────────────────────────────────┘
     def __init__(self, sidebar):
         super().__init__()
         self.sidebar = sidebar
@@ -50,7 +37,6 @@ class ActionButtons(QWidget):
         self._main_layout.addWidget(self.share_btn)
         self._main_layout.addWidget(self.orig_btn)
 
-        # ── Connect download signals so the button reflects outcome ──
         self._pending_dl_tid = None
         self._dl_signals_connected = False
 
@@ -87,9 +73,6 @@ class ActionButtons(QWidget):
         """)
         return btn
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  load_post  — updates state for the newly selected post.       │
-    # └──────────────────────────────────────────────────────────────────┘
     def load_post(self, post):
         self.post = post
         self.post_id = str(post.get('id', ''))
@@ -101,19 +84,12 @@ class ActionButtons(QWidget):
         self._is_bookmarked = db.is_post_bookmarked(self.post_id, self.post.get("_booru"))
         self._update_bm_style()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  set_original_loaded  — hides the 'Original' button when we    │
-    # │  are already viewing the original file.                        │
-    # └──────────────────────────────────────────────────────────────────┘
     def set_original_loaded(self, loaded):
         if loaded:
             self.orig_btn.hide()
         else:
             self.orig_btn.show()
 
-    # ══════════════════════════════════════════════════════════════════
-    #  PRIVATE — Actions
-    # ══════════════════════════════════════════════════════════════════
 
     def _update_bm_style(self):
         self.bm_btn.setText("★" if self._is_bookmarked else "☆ Bookmark")
@@ -143,10 +119,6 @@ class ActionButtons(QWidget):
         self._update_bm_style()
         self.sidebar.overlay.parent_gui.gallery.refresh_visible_stars()
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _download  — fetches the original file in a background thread │
-    # │  and safely updates the UI text using QTimer.singleShot.       │
-    # └──────────────────────────────────────────────────────────────────┘
     def _download(self):
         if not self.post: return
         self.dl_btn.setText("⏳ ...")
@@ -182,11 +154,9 @@ class ActionButtons(QWidget):
                 }}
                 QPushButton:hover {{ background-color: {colors.BUTTON_HOVER}; }}
             """)
-        # Reset after 3 seconds
         QTimer.singleShot(3000, lambda: self._reset_dl_btn())
 
     def _reset_dl_btn(self):
-        """Restore the download button to its default state."""
         self.dl_btn.setText("Download")
         self.dl_btn.setStyleSheet(f"""
             QPushButton {{
@@ -201,9 +171,6 @@ class ActionButtons(QWidget):
             QPushButton:hover {{ background-color: {colors.BUTTON_HOVER}; }}
         """)
 
-    # ┌──────────────────────────────────────────────────────────────────┐
-    # │  _share  — copies URL to clipboard and resets button text.     │
-    # └──────────────────────────────────────────────────────────────────┘
     def _share(self):
         if not self.post: return
         parent_gui = self.sidebar.overlay.parent_gui
