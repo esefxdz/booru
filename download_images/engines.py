@@ -30,11 +30,11 @@ _TIMEOUT = 60
 _CHUNK = 65536
 
 
-def _proxy_url() -> str:
-    """The configured proxy ("" = direct); read per download so changes apply at once."""
+def _proxy_url(url: str = "") -> str:
+    """App proxy, else system proxy ("" = direct); read per download so changes apply at once."""
     try:
-        from core import settings
-        return (getattr(settings.manager, "proxy_url", "") or "").strip()
+        from core.proxy import effective_proxy
+        return effective_proxy(url)
     except Exception:
         return ""
 
@@ -68,7 +68,7 @@ def _download_urllib(url: str, dest: Path, headers: dict,
     req = urllib.request.Request(url, headers=headers)
     ctx = ssl.create_default_context()
     handlers: list = [urllib.request.HTTPSHandler(context=ctx), SameSiteRedirectHandler()]
-    proxy = _proxy_url()
+    proxy = _proxy_url(url)
     if proxy:
         if not proxy.lower().startswith(("http://", "https://")):
             # urllib has no SOCKS support; fail rather than silently go direct.
@@ -76,7 +76,7 @@ def _download_urllib(url: str, dest: Path, headers: dict,
             return False
         handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
     else:
-        # Without this, build_opener would use the HTTP(S)_PROXY / system proxy.
+        # Direct (no proxy, or a LAN/bypassed host): stop build_opener adding its own.
         handlers.append(urllib.request.ProxyHandler({}))
     opener = urllib.request.build_opener(*handlers)
     try:
@@ -120,7 +120,7 @@ def _download_requests(url: str, dest: Path, headers: dict,
                        on_progress: Callable | None = None) -> bool:
     import requests as _req
 
-    proxy = _proxy_url()
+    proxy = _proxy_url(url)
     proxies = {"http": proxy, "https": proxy} if proxy else None
     try:
         with _requests_session().get(url, headers=headers, stream=True, timeout=_TIMEOUT,
@@ -147,7 +147,7 @@ def _download_httpx(url: str, dest: Path, headers: dict,
     from core import settings
 
     use_h2 = getattr(settings.manager, "use_http2", False)
-    proxy = _proxy_url()
+    proxy = _proxy_url(url)
     key = (use_h2, proxy)
     if _httpx_client is None or _httpx_client_key != key:
         if _httpx_client is not None:
@@ -179,7 +179,7 @@ def _download_curl_cffi(url: str, dest: Path, headers: dict,
     """
     from curl_cffi import requests as cffi_req
 
-    proxy = _proxy_url()
+    proxy = _proxy_url(url)
     with cffi_req.Session(impersonate="chrome136") as s:
         try:
             r = s.request("GET", url, headers=headers, timeout=_TIMEOUT, stream=True,

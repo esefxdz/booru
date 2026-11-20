@@ -106,7 +106,9 @@ async def thumb_fetch(url: str, booru: str = "unknown", timeout: float = 10.0, *
         if extra_cookies:
             cookies.update(extra_cookies)
         use_http2 = getattr(settings.manager, "use_http2", False)
-        proxy_url = getattr(settings.manager, "proxy_url", "")
+        import boorus
+        from core.proxy import effective_proxy
+        proxy_url = effective_proxy(boorus.REGISTRY.get(booru, {}).get("url", ""))
 
         client = await _get_client(booru, cookies, use_http2, proxy_url)
 

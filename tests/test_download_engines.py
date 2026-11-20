@@ -225,7 +225,8 @@ def test_curl_cffi_stalled_download_times_out_and_leaves_no_file(slow_server, tm
     assert list(tmp_path.iterdir()) == []      # no 5.jpg and no 5.jpg.part
 
 
-def test_urllib_without_app_proxy_ignores_system_proxy(server, tmp_path, monkeypatch):
+def test_urllib_direct_ignores_stray_env_proxy(server, tmp_path, monkeypatch):
+    # When core.proxy says direct, urllib must not add an env proxy on its own.
     import socket
     from core import settings
     monkeypatch.setattr(settings.manager, "proxy_url", "", raising=False)
@@ -241,3 +242,19 @@ def test_urllib_without_app_proxy_ignores_system_proxy(server, tmp_path, monkeyp
     dest = tmp_path / "img.jpg"
     assert engines._download_urllib(url, dest, {"User-Agent": "t"})
     assert dest.read_bytes() == b"IMAGEDATA" * 100
+
+
+@pytest.mark.parametrize("name", [e for e in engines.ENGINES if e in engines.get_available_engines()])
+def test_engine_uses_system_proxy_when_app_proxy_empty(proxy, tmp_path, monkeypatch, name):
+    # Users behind a system-wide proxy (e.g. to get around ISP blocks) must not be cut off.
+    from core import proxy as core_proxy, settings
+    app_proxy = settings.manager.proxy_url
+    monkeypatch.setattr(settings.manager, "proxy_url", "", raising=False)
+    monkeypatch.setattr(core_proxy, "_system_proxies",
+                        lambda: {"http": app_proxy, "https": app_proxy})
+    monkeypatch.setattr(core_proxy.urllib.request, "proxy_bypass", lambda host: False)
+    core_proxy._bypassed.cache_clear()
+    url = "http://booru.invalid/img.png"           # never resolves: only the proxy can answer
+    dest = tmp_path / "img.png"
+    assert engines.ENGINE_FNS[name](url, dest, {"User-Agent": "t"})
+    assert dest.read_bytes() == b"VIA-PROXY"

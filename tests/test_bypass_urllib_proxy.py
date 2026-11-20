@@ -1,5 +1,5 @@
-"""With no app proxy set, the bypass urllib engine connects directly and
-ignores system (env / registry) proxies."""
+"""When core.proxy says direct, the bypass urllib engine does not add an
+env/registry proxy on its own."""
 import http.server
 import socket
 import threading

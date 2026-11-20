@@ -19,6 +19,7 @@ booru/
 │   ├── app_paths.py         Where user data lives (portable / %LOCALAPPDATA% / override)
 │   ├── validation.py        Guards for server-supplied URLs, paths, cookies; log redaction
 │   ├── async_loop.py        Shared asyncio event loop (submit() / run())
+│   ├── proxy.py             Which proxy a request uses (app setting, else system)
 │   └── fileutil.py          atomic_write_text
 │
 ├── storage/                 Local databases and caches
@@ -100,8 +101,10 @@ controls every field of its API responses.
   on the booru's registrable domain (`core.validation.same_site`). This applies in
   BypassSession, the thumbnail client, downloads, and on urllib redirects.
 - **TLS** is always verified; there is no insecure retry.
-- **Proxy:** when set, API searches, thumbnails, viewer media and downloads
-  use it. Some helpers still connect directly (see Known gaps).
+- **Proxy:** API searches, thumbnails, viewer media and downloads use the
+  app's proxy setting, or the Windows/env system proxy when it is empty
+  (`core/proxy.py`; LAN and bypass-listed hosts go direct). Some helpers still
+  connect directly (see Known gaps).
 
 ## Key Architectural Decisions
 

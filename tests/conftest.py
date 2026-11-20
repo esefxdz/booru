@@ -45,5 +45,8 @@ def _isolate_user_data(tmp_path_factory, monkeypatch):
     # test server is 127.0.0.1, so one test's block must not leak into the next.
     from cloudflare_bypasser import circuit_breaker as _cf_breaker
     _cf_breaker.reset_all_circuits()
+    # Tests must not route through the developer's own system proxy.
+    from core import proxy as _proxy
+    monkeypatch.setattr(_proxy, "_system_proxies", lambda: {})
     yield
     _cf_breaker.reset_all_circuits()

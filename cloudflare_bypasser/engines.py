@@ -530,7 +530,7 @@ def _try_urllib_sync(
             })
             handlers.append(proxy_handler)
         else:
-            # No app proxy means direct: otherwise build_opener picks up env/registry proxies.
+            # Direct (decided by core.proxy): stop build_opener adding its own env/registry proxy.
             handlers.append(urllib.request.ProxyHandler({}))
 
         opener = urllib.request.build_opener(*handlers)

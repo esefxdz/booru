@@ -28,11 +28,12 @@ def _session_fingerprint(booru_name: str) -> str:
     from core import settings
     cookies = _store.get_cookies(booru_name)
     ua = _store.get_user_agent(booru_name)
-    proxy = settings.manager.proxy_url or ""
+    import boorus
+    from core.proxy import effective_proxy
+    site = boorus.REGISTRY.get(booru_name, {}).get("url", "")
+    proxy = effective_proxy(site)
     method = getattr(settings.manager, "cf_bypass_method", "auto")
     cookie_part = ",".join(f"{k}={v}" for k, v in sorted(cookies.items()))
-    import boorus
-    site = boorus.REGISTRY.get(booru_name, {}).get("url", "")
     return f"{ua}|{cookie_part}|{proxy}|{method}|{site}"
 
 
@@ -49,11 +50,12 @@ def get_session(booru_name: str) -> BypassSession:
         _retire(session)
 
     from core import settings
+    from core.proxy import effective_proxy
     import boorus
     session = BypassSession(
         user_agent=_store.get_user_agent(booru_name),
         cookies=_store.get_cookies(booru_name),
-        proxy_url=settings.manager.proxy_url,
+        proxy_url=effective_proxy(boorus.REGISTRY.get(booru_name, {}).get("url", "")),
         method=getattr(settings.manager, "cf_bypass_method", "auto"),
         site_url=boorus.REGISTRY.get(booru_name, {}).get("url", ""),
     )

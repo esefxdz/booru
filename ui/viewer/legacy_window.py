@@ -65,7 +65,8 @@ def _fetch_bytes(url, booru_name=None):
     site_url = boorus.REGISTRY.get(booru_name or "", {}).get("url", "")
     if cookies and same_site(url, site_url):
         headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items())
-    proxy = (getattr(settings.manager, "proxy_url", "") or "").strip() or None
+    from core.proxy import effective_proxy
+    proxy = effective_proxy(url) or None
     res = httpx.get(url, headers=headers, follow_redirects=True, timeout=30, proxy=proxy)
     if res.status_code != 200:
         raise RuntimeError(f"HTTP {res.status_code} from {url}")
